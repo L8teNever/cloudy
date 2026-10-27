@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import db, warp
+from . import blocklist, db, warp
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -83,6 +83,7 @@ async def lifespan(app: FastAPI):
     if settings.dnsmasq_enabled:
         runner = DnsmasqRunner(settings, Collector(domain_map=domain_map))
         runner.start()
+    app.state.runner = runner
     https_server = None
     if settings.https_port:
         try:
@@ -175,6 +176,9 @@ async def dashboard(request: Request, ip: str | None = None):
     context["warp_default"] = await run_in_threadpool(db.get_setting, warp.DEFAULT_KEY)
     context["warp_names"] = {w["slot"]: w["label"] for w in context["warp"]}
     context["warp_by_mac"] = await run_in_threadpool(db.device_warp)
+    context["blocklist_enabled"] = await run_in_threadpool(blocklist.is_enabled)
+    context["blocklist_paused_until"] = await run_in_threadpool(blocklist.paused_until)
+    context["whitelist"] = await run_in_threadpool(db.whitelist)
     if ip:
         context["device"] = await run_in_threadpool(db.device, ip)
         context["domains"] = await run_in_threadpool(db.top_domains, ip)
@@ -273,3 +277,52 @@ async def warp_set_default(request: Request, slot: str = Form("")):
         _check_slot(request, slot)
     await run_in_threadpool(db.set_setting, warp.DEFAULT_KEY, slot)
     return RedirectResponse("/", status_code=303)
+
+
+def _reload_dnsmasq(request: Request) -> None:
+    runner = getattr(request.app.state, "runner", None)
+    if runner and hasattr(runner, "reload_hosts"):
+        runner.reload_hosts()
+
+
+@app.post("/blocklist/toggle", dependencies=[Depends(require_password)])
+async def blocklist_toggle(request: Request):
+    current = blocklist.is_enabled()
+    blocklist.set_enabled(not current)
+    if current:
+        blocklist.resume()
+    await run_in_threadpool(blocklist.generate_blocklist, request.app.state.settings)
+    _reload_dnsmasq(request)
+    return RedirectResponse("/#blocklist", status_code=303)
+
+
+@app.post("/blocklist/pause", dependencies=[Depends(require_password)])
+async def blocklist_pause(request: Request, minutes: int = Form(15)):
+    blocklist.pause_for_seconds(max(1, min(minutes, 1440)) * 60)
+    await run_in_threadpool(blocklist.generate_blocklist, request.app.state.settings)
+    _reload_dnsmasq(request)
+    return RedirectResponse("/#blocklist", status_code=303)
+
+
+@app.post("/blocklist/resume", dependencies=[Depends(require_password)])
+async def blocklist_resume(request: Request):
+    blocklist.resume()
+    await run_in_threadpool(blocklist.generate_blocklist, request.app.state.settings)
+    _reload_dnsmasq(request)
+    return RedirectResponse("/#blocklist", status_code=303)
+
+
+@app.post("/blocklist/whitelist/add", dependencies=[Depends(require_password)])
+async def blocklist_whitelist_add(request: Request, domain: str = Form(...)):
+    await run_in_threadpool(db.add_whitelist, domain)
+    await run_in_threadpool(blocklist.generate_blocklist, request.app.state.settings)
+    _reload_dnsmasq(request)
+    return RedirectResponse("/#blocklist", status_code=303)
+
+
+@app.post("/blocklist/whitelist/remove", dependencies=[Depends(require_password)])
+async def blocklist_whitelist_remove(request: Request, domain: str = Form(...)):
+    await run_in_threadpool(db.remove_whitelist, domain)
+    await run_in_threadpool(blocklist.generate_blocklist, request.app.state.settings)
+    _reload_dnsmasq(request)
+    return RedirectResponse("/#blocklist", status_code=303)

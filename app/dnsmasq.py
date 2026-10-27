@@ -2,6 +2,7 @@
 
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -75,6 +76,7 @@ def build_config(s: Settings) -> str:
         "domain=lan",
         "local=/lan/",
         f"addn-hosts={s.local_names_path}",
+        f"addn-hosts={s.blocklist_path}",
     ]
     if s.local_name:
         # Name des Dashboards im Heimnetz, z. B. http://cloudy.lan
@@ -124,18 +126,17 @@ def read_leases(path: str) -> list[tuple[str, str, str | None]]:
 
 
 class Collector:
-    """Sammelt Anfragen im Speicher und schreibt sie gebündelt (schont die SD-Karte)."""
+    """Sammelt Anfragen aus dnsmasq, fasst doppelte Anfragen zusammen und schreibt sie in die DB."""
 
-    def __init__(self, dedup_seconds: int = 60, domain_map=None):
-        self.dedup_seconds = dedup_seconds
+    def __init__(self, domain_map=None, dedup_seconds: int = 30):
         self.domain_map = domain_map
+        self.dedup_seconds = dedup_seconds
         self._pending: list[tuple[int, str, str, str]] = []
         self._last: dict[tuple[str, str], int] = {}
         self._lock = threading.Lock()
 
     def feed(self, line: str, now: int | None = None) -> bool:
-        """Gibt True zurück, wenn die Zeile eine DNS-Anfrage war."""
-        if self.domain_map is not None:
+        if self.domain_map:
             self.domain_map.feed(line)
         parsed = parse_query(line)
         if parsed is None:
@@ -178,6 +179,9 @@ class DnsmasqRunner:
         if not os.path.exists(s.local_names_path):
             with open(s.local_names_path, "w", encoding="utf-8") as f:
                 f.write(LOCAL_NAMES_HEADER)
+        if not os.path.exists(s.blocklist_path):
+            from . import blocklist
+            blocklist.generate_blocklist(s)
         with open(s.conf_path, "w", encoding="utf-8") as f:
             f.write(build_config(s))
         print(
@@ -194,6 +198,15 @@ class DnsmasqRunner:
         )
         threading.Thread(target=self._read_log, daemon=True).start()
         threading.Thread(target=self._flush_loop, daemon=True).start()
+
+    def reload_hosts(self) -> None:
+        if self.proc and self.proc.poll() is None:
+            sighup = getattr(signal, "SIGHUP", None)
+            if sighup is not None:
+                try:
+                    self.proc.send_signal(sighup)
+                except OSError:
+                    pass
 
     def _read_log(self) -> None:
         assert self.proc and self.proc.stderr

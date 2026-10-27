@@ -28,8 +28,7 @@ def init() -> None:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(
             """
-            CREATE TABLE IF NOT EXISTS queries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+            CREATE TABLE IF NOT EXISTS queries (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts INTEGER NOT NULL,
                 ip TEXT NOT NULL,
                 domain TEXT NOT NULL,
@@ -37,8 +36,7 @@ def init() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_queries_ip ON queries (ip, id);
 
-            CREATE TABLE IF NOT EXISTS domain_stats (
-                ip TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS domain_stats (\n                ip TEXT NOT NULL,
                 domain TEXT NOT NULL,
                 hits INTEGER NOT NULL,
                 first_seen INTEGER NOT NULL,
@@ -46,8 +44,7 @@ def init() -> None:
                 PRIMARY KEY (ip, domain)
             );
 
-            CREATE TABLE IF NOT EXISTS traffic (
-                ip TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS traffic (\n                ip TEXT NOT NULL,
                 target TEXT NOT NULL,
                 bytes_up INTEGER NOT NULL,
                 bytes_down INTEGER NOT NULL,
@@ -57,27 +54,27 @@ def init() -> None:
                 PRIMARY KEY (ip, target)
             );
 
-            CREATE TABLE IF NOT EXISTS devices (
-                ip TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS devices (\n                ip TEXT PRIMARY KEY,
                 mac TEXT,
                 hostname TEXT,
                 updated INTEGER NOT NULL
             );
 
             -- Welches Gerät (MAC) über welchen WARP-Account ins Internet geht.
-            CREATE TABLE IF NOT EXISTS device_warp (
-                mac TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS device_warp (\n                mac TEXT PRIMARY KEY,
                 slot TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS settings (\n                key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS warp_labels (
-                slot TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS warp_labels (\n                slot TEXT PRIMARY KEY,
                 label TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS whitelist (\n                domain TEXT PRIMARY KEY,
+                added INTEGER NOT NULL
             );
             """
         )
@@ -212,6 +209,32 @@ def set_warp_label(slot: str, label: str) -> None:
         conn.commit()
 
 
+def whitelist() -> list[str]:
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT domain FROM whitelist ORDER BY domain ASC").fetchall()
+    return [r["domain"] for r in rows]
+
+
+def add_whitelist(domain: str) -> None:
+    domain = domain.strip().lower().rstrip(".")
+    if not domain:
+        return
+    now = int(time.time())
+    with closing(_connect()) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO whitelist (domain, added) VALUES (?, ?)",
+            (domain, now),
+        )
+        conn.commit()
+
+
+def remove_whitelist(domain: str) -> None:
+    domain = domain.strip().lower().rstrip(".")
+    with closing(_connect()) as conn:
+        conn.execute("DELETE FROM whitelist WHERE domain = ?", (domain,))
+        conn.commit()
+
+
 def known_ips() -> list[str]:
     """Alle Geräte, die der Pi kennt (DHCP, DNS-Anfragen, Datenverkehr)."""
     with closing(_connect()) as conn:
@@ -281,6 +304,7 @@ def device(ip: str) -> dict | None:
     sites = current_sites()
     res["current_site"] = sites.get(ip)
     return res
+
 
 def top_domains(ip: str, limit: int = 200) -> list[dict]:
     with closing(_connect()) as conn:
