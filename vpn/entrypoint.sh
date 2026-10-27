@@ -47,10 +47,13 @@ tunnel_up() {
   [ -n "$peer" ] && wg set "$IF" peer "$peer" persistent-keepalive 25
   ip route replace default dev "$IF" table 100
   ip rule add iif eth0 lookup 100 priority 100 2>/dev/null || true
+  # IPv6-Schutz: Blockiert IPv6, falls der WireGuard-Tunnel nur IPv4 hat,
+  # damit keine Pakete zurück zur Fritzbox ins deutsche Heimnetz lecken.
+  ip -6 route replace unreachable default table 100 2>/dev/null || true
   if ip -6 addr show dev "$IF" 2>/dev/null | grep -q "inet6"; then
     ip -6 route replace default dev "$IF" table 100 2>/dev/null || true
-    ip -6 rule add iif eth0 lookup 100 priority 100 2>/dev/null || true
   fi
+  ip -6 rule add iif eth0 lookup 100 priority 100 2>/dev/null || true
 }
 
 trap 'tunnel_down; exit 0' TERM INT

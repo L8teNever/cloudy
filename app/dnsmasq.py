@@ -84,14 +84,18 @@ def build_config(s: Settings) -> str:
         short_name = s.local_name.split(".")[0]
         if short_name and short_name != s.local_name:
             lines.append(f"address=/{short_name}/{s.pi_ip}")
-    if s.gateway_enabled:
-        if s.ipv6_enabled:
+    if s.ipv6_enabled:
+        if s.gateway_enabled:
             # IPv6 über den Pi leiten: AAAA-Adressen erlauben und Pi per Router Advertisement ankündigen
-            lines.append("enable-ra")
-            lines.append(f"ra-param={s.lan_interface},high,60")
-        else:
-            # Nur IPv4-Adressen ausliefern: IPv6 würde direkt über die Fritzbox und am Pi vorbei laufen.
-            lines.append("filter-AAAA")
+            lines += [
+                "enable-ra",
+                f"ra-param={s.lan_interface},high,60",
+                f"dhcp-range=::,constructor:{s.lan_interface},ra-stateless,64,12h",
+                "dhcp-option=option6:dns-server,[::]",
+            ]
+    else:
+        # Nur IPv4-Adressen ausliefern: Verhindert zuverlässig IPv6-Leaks an der Fritzbox vorbei
+        lines.append("filter-AAAA")
     if s.dhcp_enabled:
         if s.gateway_enabled:
             # Geräte mit "set:direkt" in dhcp-hosts.conf (z. B. mit Portfreigabe) gehen weiter direkt zur Fritzbox.
