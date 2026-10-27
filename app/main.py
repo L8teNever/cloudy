@@ -138,6 +138,34 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="cloudy", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
 
+@app.middleware("http")
+async def redirect_middleware(request: Request, call_next):
+    raw_host = request.headers.get("host", "").split(":")[0].strip().lower()
+    settings = getattr(request.app.state, "settings", None)
+    own_hosts = {"localhost", "127.0.0.1"}
+    if settings:
+        own_hosts.add(settings.pi_ip.lower())
+        if settings.local_name:
+            own_hosts.add(settings.local_name.lower())
+            short = settings.local_name.split(".")[0].lower()
+            if short:
+                own_hosts.add(short)
+
+    if raw_host and raw_host not in own_hosts:
+        targets = await run_in_threadpool(db.redirect_map)
+        dest = targets.get(raw_host)
+        if not dest and raw_host.startswith("www."):
+            dest = targets.get(raw_host[4:])
+        elif not dest:
+            dest = targets.get(f"www.{raw_host}")
+        if dest:
+            if not dest.startswith(("http://", "https://")):
+                dest = f"https://{dest}"
+            return RedirectResponse(dest, status_code=302)
+
+    return await call_next(request)
+
+
 def require_password(credentials: HTTPBasicCredentials | None = Depends(basic)) -> None:
     password = os.environ.get("DASHBOARD_PASSWORD", "")
     if not password:
@@ -239,6 +267,7 @@ async def dashboard(request: Request, ip: str | None = None):
     context["blocklist_enabled"] = await run_in_threadpool(blocklist.is_enabled)
     context["blocklist_paused_until"] = await run_in_threadpool(blocklist.paused_until)
     context["whitelist"] = await run_in_threadpool(db.whitelist)
+    context["redirects"] = await run_in_threadpool(db.redirects)
     if ip:
         context["device"] = await run_in_threadpool(db.device, ip)
         context["domains"] = await run_in_threadpool(db.top_domains, ip)
@@ -386,3 +415,21 @@ async def blocklist_whitelist_remove(request: Request, domain: str = Form(...)):
     await run_in_threadpool(blocklist.generate_blocklist, request.app.state.settings)
     _reload_dnsmasq(request)
     return RedirectResponse("/#blocklist", status_code=303)
+
+@app.post("/redirects/add", dependencies=[Depends(require_password)])
+async def redirects_add(request: Request, source: str = Form(...), target: str = Form(...)):
+    await run_in_threadpool(db.add_redirect, source, target)
+    from .dnsmasq import sync_redirects_hosts
+    await run_in_threadpool(sync_redirects_hosts, request.app.state.settings)
+    _reload_dnsmasq(request)
+    return RedirectResponse("/#redirects", status_code=303)
+
+
+@app.post("/redirects/remove", dependencies=[Depends(require_password)])
+async def redirects_remove(request: Request, source: str = Form(...)):
+    await run_in_threadpool(db.remove_redirect, source)
+    from .dnsmasq import sync_redirects_hosts
+    await run_in_threadpool(sync_redirects_hosts, request.app.state.settings)
+    _reload_dnsmasq(request)
+    return RedirectResponse("/#redirects", status_code=303)
+

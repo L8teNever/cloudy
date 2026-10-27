@@ -85,6 +85,7 @@ def build_config(s: Settings) -> str:
         "local=/lan/",
         f"addn-hosts={s.local_names_path}",
         f"addn-hosts={s.blocklist_path}",
+        f"addn-hosts={s.redirects_path}",
     ]
     if s.local_name:
         # Name des Dashboards im Heimnetz, z. B. http://cloudy.lan
@@ -197,6 +198,8 @@ class DnsmasqRunner:
         if not os.path.exists(s.blocklist_path):
             from . import blocklist
             blocklist.generate_blocklist(s)
+        if not os.path.exists(s.redirects_path):
+            sync_redirects_hosts(s)
         with open(s.conf_path, "w", encoding="utf-8") as f:
             f.write(build_config(s))
         print(
@@ -260,3 +263,16 @@ class DnsmasqRunner:
 if __name__ == "__main__":
     # Gibt die erzeugte dnsmasq-Konfiguration aus (für Tests: dnsmasq --test).
     print(build_config(Settings.from_env()), end="")
+
+def sync_redirects_hosts(s: Settings) -> None:
+    rules = db.redirects()
+    lines = ["# Cloudy automatische URL- & Domain-Weiterleitungen"]
+    for r in rules:
+        src = r["source"].lower()
+        lines.append(f"{s.pi_ip} {src}")
+        if "." in src and not src.startswith("www."):
+            lines.append(f"{s.pi_ip} www.{src}")
+    os.makedirs(s.data_dir, exist_ok=True)
+    with open(s.redirects_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+

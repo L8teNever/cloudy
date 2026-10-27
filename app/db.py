@@ -95,6 +95,12 @@ def init() -> None:
                 domain TEXT PRIMARY KEY,
                 added INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS redirects (
+                source TEXT PRIMARY KEY,
+                target TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
             """
         )
         conn.commit()
@@ -377,3 +383,35 @@ def recent(limit: int = 100, ip: str | None = None) -> list[dict]:
             (*params, limit),
         ).fetchall()
     return [dict(r) for r in rows]
+
+def redirects() -> list[dict]:
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT source, target, created_at FROM redirects ORDER BY source ASC").fetchall()
+        return [dict(r) for r in rows]
+
+
+def add_redirect(source: str, target: str) -> None:
+    source = source.strip().lower().lstrip("http://").lstrip("https://").rstrip("/")
+    target = target.strip()
+    if not source or not target:
+        return
+    with closing(_connect()) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO redirects (source, target, created_at) VALUES (?, ?, ?)",
+            (source, target, int(time.time())),
+        )
+        conn.commit()
+
+
+def remove_redirect(source: str) -> None:
+    source = source.strip().lower().lstrip("http://").lstrip("https://").rstrip("/")
+    with closing(_connect()) as conn:
+        conn.execute("DELETE FROM redirects WHERE source = ?", (source,))
+        conn.commit()
+
+
+def redirect_map() -> dict[str, str]:
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT source, target FROM redirects").fetchall()
+        return {r["source"].lower(): r["target"] for r in rows}
+

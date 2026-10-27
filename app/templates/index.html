@@ -101,6 +101,33 @@
       {% endfor %}
     </table>
 
+    <h2 id="redirects">URL- &amp; Domain-Weiterleitungen</h2>
+    <p class="muted">Wenn ein Gerät im Heimnetz die Quell-Adresse aufruft, wird es automatisch auf die Ziel-Webseite oder IP weitergeleitet (z. B. Kurz-URLs oder Umleitungen).</p>
+    <form method="post" action="/redirects/add" class="inline" style="margin-bottom:1rem;gap:.5rem;flex-wrap:wrap">
+      <input name="source" placeholder="Von (z. B. fritzbox, router, tiktok.com)" size="30" required>
+      <input name="target" placeholder="Nach (z. B. http://192.168.178.1, https://wikipedia.org)" size="40" required>
+      <button>Weiterleitung hinzufügen</button>
+    </form>
+    {% if redirects %}
+    <table style="margin-bottom:1.5rem">
+      <tr><th>Von (Aufgerufene URL / Domain)</th><th>Weiterleiten nach</th><th>Aktion</th></tr>
+      {% for r in redirects %}
+      <tr>
+        <td class="mono" style="font-weight:600;color:#6b21a8">{{ r.source }}</td>
+        <td><a href="{{ r.target if r.target.startswith('http') else 'https://' + r.target }}" target="_blank" rel="noopener">{{ r.target }}</a></td>
+        <td>
+          <form method="post" action="/redirects/remove" class="inline">
+            <input type="hidden" name="source" value="{{ r.source }}">
+            <button class="secondary" style="padding:.2rem .5rem;font-size:.8rem">Löschen</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="muted" style="margin-bottom:1.5rem">Noch keine Weiterleitungen eingerichtet.</p>
+    {% endif %}
+
     <h2>Letzte Aufrufe</h2>
     <table>
       <tr><th>Zeit</th><th>Domain</th></tr>
@@ -263,6 +290,33 @@
       {% endfor %}
     </table>
     <p class="muted">Geräte zuordnen: in der Geräteliste bei „Internet über“ auswählen, oder oben für alle Geräte auf einmal. Anleitung (Token bzw. WireGuard-Datei) in der README.</p>
+    {% endif %}
+
+    <h2 id="redirects">URL- &amp; Domain-Weiterleitungen</h2>
+    <p class="muted">Wenn ein Gerät im Heimnetz die Quell-Adresse aufruft, wird es automatisch auf die Ziel-Webseite oder IP weitergeleitet (z. B. Kurz-URLs oder Umleitungen).</p>
+    <form method="post" action="/redirects/add" class="inline" style="margin-bottom:1rem;gap:.5rem;flex-wrap:wrap">
+      <input name="source" placeholder="Von (z. B. fritzbox, router, tiktok.com)" size="30" required>
+      <input name="target" placeholder="Nach (z. B. http://192.168.178.1, https://wikipedia.org)" size="40" required>
+      <button>Weiterleitung hinzufügen</button>
+    </form>
+    {% if redirects %}
+    <table style="margin-bottom:1.5rem">
+      <tr><th>Von (Aufgerufene URL / Domain)</th><th>Weiterleiten nach</th><th>Aktion</th></tr>
+      {% for r in redirects %}
+      <tr>
+        <td class="mono" style="font-weight:600;color:#6b21a8">{{ r.source }}</td>
+        <td><a href="{{ r.target if r.target.startswith('http') else 'https://' + r.target }}" target="_blank" rel="noopener">{{ r.target }}</a></td>
+        <td>
+          <form method="post" action="/redirects/remove" class="inline">
+            <input type="hidden" name="source" value="{{ r.source }}">
+            <button class="secondary" style="padding:.2rem .5rem;font-size:.8rem">Löschen</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="muted" style="margin-bottom:1.5rem">Noch keine Weiterleitungen eingerichtet.</p>
     {% endif %}
 
     <h2>Letzte Aufrufe</h2>

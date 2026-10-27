@@ -135,3 +135,25 @@ def test_optional_password(client, monkeypatch):
     assert client.get("/", auth=("x", "falsch")).status_code == 401
     assert client.get("/", auth=("x", "geheim")).status_code == 200
     assert client.get("/healthz").status_code == 200
+
+def test_url_redirects(client):
+    # 1. Weiterleitung hinzufügen
+    r = client.post("/redirects/add", data={"source": "fritzbox", "target": "http://192.168.178.1"}, follow_redirects=False)
+    assert r.status_code == 303
+
+    # 2. Aufruf mit Host: fritzbox -> 302 Weiterleitung
+    redir = client.get("/", headers={"host": "fritzbox"}, follow_redirects=False)
+    assert redir.status_code == 302
+    assert redir.headers["location"] == "http://192.168.178.1"
+
+    # 3. Aufruf des Dashboards selbst -> normales Dashboard (200)
+    dash = client.get("/", headers={"host": "cloudy.lan"})
+    assert dash.status_code == 200
+    assert "fritzbox" in dash.text
+    assert "http://192.168.178.1" in dash.text
+
+    # 4. Weiterleitung löschen
+    r_del = client.post("/redirects/remove", data={"source": "fritzbox"}, follow_redirects=False)
+    assert r_del.status_code == 303
+    assert db.redirect_map() == {}
+

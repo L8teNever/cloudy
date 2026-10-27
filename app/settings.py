@@ -82,6 +82,10 @@ class Settings:
         return os.path.join(self.data_dir, "blocklist.hosts")
 
     @property
+    def redirects_path(self) -> str:
+        return os.path.join(self.data_dir, "redirects.hosts")
+
+    @property
     def dashboard_url(self) -> str:
         host = self.local_name or self.pi_ip
         port = os.environ.get("DASHBOARD_PORT", "8080")
