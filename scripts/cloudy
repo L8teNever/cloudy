@@ -42,7 +42,7 @@ case "${1:-}" in
   update)
     curl -fsSL "$RAW/docker-compose.yml" -o docker-compose.yml.new && mv docker-compose.yml.new docker-compose.yml
     $DOCKER compose pull
-    $DOCKER compose up -d
+    $DOCKER compose up -d --remove-orphans
     $DOCKER image prune -f >/dev/null
     echo "cloudy ist aktuell."
     ;;

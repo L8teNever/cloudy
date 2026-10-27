@@ -27,14 +27,22 @@ docker info >/dev/null 2>&1 || DOCKER="sudo docker"
 mkdir -p "$DIR/data"
 cd "$DIR"
 curl -fsSL "$RAW/docker-compose.yml" -o docker-compose.yml
+curl -fsSL "$RAW/.env.example" -o .env.example
 if [ ! -f .env ]; then
-  curl -fsSL "$RAW/.env.example" -o .env
+  cp .env.example .env
   sed -i \
     -e "s|^PI_IP=.*|PI_IP=$PI_IP|" \
     -e "s|^ROUTER_IP=.*|ROUTER_IP=$ROUTER_IP|" \
     -e "s|^UPSTREAM_DNS=.*|UPSTREAM_DNS=$UPSTREAM_DNS|" \
     -e "s|^LAN_INTERFACE=.*|LAN_INTERFACE=$IFACE|" \
     .env
+else
+  # Ältere Installation: neue Einstellungen ergänzen, vorhandene bleiben wie sie sind.
+  while IFS= read -r line; do
+    case "$line" in ''|\#*) continue ;; esac
+    key="${line%%=*}"
+    grep -q "^$key=" .env || echo "$line" >> .env
+  done < .env.example
 fi
 
 # --- 3. Befehl "cloudy" installieren ---
@@ -44,7 +52,8 @@ rm -f /tmp/cloudy-cli
 
 # --- 4. Starten ---
 $DOCKER compose pull
-$DOCKER compose up -d
+# --remove-orphans: entfernt z. B. den Watchtower aus der allerersten Version.
+$DOCKER compose up -d --remove-orphans
 
 # --- 5. Feste IP für den Pi ---
 CURRENT_IP="$(ip -4 -o addr show "$IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)"
