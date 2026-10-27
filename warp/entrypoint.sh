@@ -4,6 +4,7 @@
 set -u
 DIR=/cloudy
 mkdir -p "$DIR/lib" /run/dbus
+[ "$(cat /proc/sys/net/ipv6/conf/default/disable_ipv6 2>/dev/null)" = 1 ]   && echo "warp: WARNUNG – IPv6 ist im Container aus, WARP startet so nicht (docker-compose.yml aktualisieren)"
 svc_pid=""
 
 status() { printf '%s\n' "$1" | head -n1 > "$DIR/status.tmp" && mv "$DIR/status.tmp" "$DIR/status"; }
@@ -83,11 +84,15 @@ while true; do
     fi
   fi
 
-  s="$(warp status 2>&1 | sed -n 's/^Status update: //p' | head -n1)"
+  full="$(warp status 2>&1)"
+  s="$(printf '%s
+' "$full" | sed -n 's/^Status update: //p' | head -n1)"
+  reason="$(printf '%s
+' "$full" | sed -n 's/^Reason: //p' | head -n1)"
   case "$s" in
     Connected*) status "Connected" ;;
     Disconnected*)
-      status "Getrennt – verbinde neu"
+      status "Getrennt${reason:+ ($reason)} – verbinde neu"
       warp connect >/dev/null 2>&1
       ;;
     "") status "Unbekannt: $(warp status 2>&1 | tr '\n' ' ' | cut -c1-120)" ;;
