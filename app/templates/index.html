@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="10">
+  <title>cloudy – Zugriffe</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem; background: #f6f4fb; color: #1f1b2e; }
+    h1 { margin: 0 0 1.5rem; color: #9333ea; }
+    h2 { margin: 2rem 0 .5rem; font-size: 1.1rem; }
+    table { border-collapse: collapse; width: 100%; background: #fff; border-radius: 8px; overflow: hidden; }
+    th, td { text-align: left; padding: .5rem .75rem; border-bottom: 1px solid #eee; font-size: .9rem; vertical-align: top; }
+    th { background: #9333ea; color: #fff; }
+    td.path { font-family: ui-monospace, monospace; word-break: break-all; }
+    td.ua { color: #666; font-size: .8rem; word-break: break-all; }
+    .muted { color: #888; }
+  </style>
+</head>
+<body>
+  <h1>cloudy</h1>
+
+  <h2>Geräte</h2>
+  <table>
+    <tr><th>Gerät</th><th>Aufrufe</th><th>Zuletzt gesehen</th><th>User-Agent</th></tr>
+    {% for d in devices %}
+    <tr>
+      <td>{{ d.hostname or d.ip }}{% if d.hostname %} <span class="muted">({{ d.ip }})</span>{% endif %}</td>
+      <td>{{ d.hits }}</td>
+      <td>{{ fmt_time(d.last_seen) }}</td>
+      <td class="ua">{{ d.user_agent }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="muted">Noch keine Aufrufe.</td></tr>
+    {% endfor %}
+  </table>
+
+  <h2>Letzte Aufrufe</h2>
+  <table>
+    <tr><th>Zeit</th><th>Gerät</th><th>Aufruf</th></tr>
+    {% for r in recent %}
+    <tr>
+      <td>{{ fmt_time(r.ts) }}</td>
+      <td>{{ r.hostname or r.ip }}</td>
+      <td class="path">{{ r.method }} {{ r.path }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3" class="muted">Noch keine Aufrufe.</td></tr>
+    {% endfor %}
+  </table>
+</body>
+</html>

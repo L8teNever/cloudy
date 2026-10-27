@@ -1,0 +1,24 @@
+services:
+  cloudy:
+    image: ghcr.io/l8tenever/cloudy:latest
+    container_name: cloudy
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      TZ: Europe/Berlin
+    volumes:
+      - ./data:/data
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+
+  # Zieht neue Images von GitHub automatisch (alle 5 Minuten) und startet cloudy neu.
+  watchtower:
+    image: containrrr/watchtower
+    container_name: cloudy-watchtower
+    restart: unless-stopped
+    command: --label-enable --cleanup --interval 300
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
