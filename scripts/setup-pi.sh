@@ -79,7 +79,7 @@ fi
 
 echo
 echo "================================================================"
-echo " cloudy läuft. Dashboard: http://$PI_IP:${DASHBOARD_PORT:-8080}"
+echo " cloudy läuft. Dashboard: http://$PI_IP  (oder http://cloudy.lan, sobald ein Gerät den Pi als DNS nutzt)"
 echo " DNS ist an, IP-Verteilung (DHCP) ist noch AUS."
 echo
 echo " Nächste Schritte stehen in der README:"

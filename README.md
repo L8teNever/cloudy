@@ -17,7 +17,8 @@ Drei Stufen, jede einzeln ein- und ausschaltbar:
 Stufe 3:  Gerät ──alles──► Pi (misst) ──► Fritzbox ──► Internet
 ```
 
-- Dashboard: `http://192.168.178.2:8080` – nur im Heimnetz erreichbar (keine Portfreigabe nötig).
+- Dashboard: **`http://cloudy.lan`** (oder `http://<pi-ip>`) – nur im Heimnetz erreichbar (keine Portfreigabe nötig).
+  Der Name `cloudy.lan` funktioniert auf allen Geräten, die den Pi als DNS-Server nutzen.
 - Pro Gerät: Name, IP, MAC, alle aufgerufenen Domains, Datenmenge pro Domain (z. B. `youtube.com 1,2 GB`).
 - Inhalte von HTTPS-Seiten (welches Video, was getippt wurde) sieht man **nicht** – nur Domain und Datenmenge.
 - Die Daten bleiben auf dem Pi (`~/cloudy/data`), 30 Tage Statistik, max. 50 000 Einzel-Aufrufe.
@@ -124,6 +125,16 @@ jedem Push automatisch (`ghcr.io/l8tenever/cloudy`, für Pi und PC).
 
 Einstellungen (Upstream-DNS, DHCP-Bereich, Dashboard-Passwort …) stehen in `~/cloudy/.env`,
 danach `docker compose up -d` in `~/cloudy`.
+
+## Eigene Namen im Heimnetz
+
+- `http://cloudy.lan` zeigt auf den Pi. Anderen Namen: in `~/cloudy/.env` `LOCAL_NAME=...` ändern
+  (nicht `.local`, keine echte Domain wie `cloudy.com` – die würdest du sonst im Internet nicht mehr erreichen).
+- Weitere Namen für andere Geräte: `~/cloudy/data/lokale-namen.hosts` bearbeiten, z. B. `192.168.178.60  nas.lan`,
+  danach `cloudy restart`.
+- Geräte, die ihren Namen per DHCP melden, sind automatisch als `<name>.lan` erreichbar.
+- Im Browser `http://` davor tippen, sonst sucht Chrome bei einem einzelnen Wort evtl. im Internet.
+- Geht nicht bei Cloudflare WARP oder „Sicherem DNS“ im Browser (die gehen am Pi vorbei).
 
 ## Hinweise
 

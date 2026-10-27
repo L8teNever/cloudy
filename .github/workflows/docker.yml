@@ -38,6 +38,8 @@ jobs:
           sleep 8
           IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' cloudy)
           docker run --rm --network cloudy-net busybox nslookup example.com "$IP"
+          docker run --rm --network cloudy-net busybox nslookup cloudy.lan "$IP" | tee /tmp/name.txt
+          grep -q "192.168.178.2" /tmp/name.txt
           sleep 8
           docker exec cloudy python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/api/recent').read().decode())" | tee /tmp/recent.json
           grep -q '"example.com"' /tmp/recent.json

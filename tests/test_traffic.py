@@ -68,6 +68,21 @@ def test_gateway_dhcp_config(monkeypatch):
     assert "dhcp-option=option:router,192.168.178.1" not in conf
 
 
+def test_local_name(monkeypatch, tmp_path):
+    conf = build_config(Settings.from_env())
+    assert "address=/cloudy.lan/192.168.178.2" in conf
+    assert f"addn-hosts={tmp_path}" in conf and "lokale-namen.hosts" in conf
+
+    monkeypatch.setenv("LOCAL_NAME", "Dashboard.Home.Arpa.")
+    monkeypatch.setenv("PI_IP", "192.168.178.3")
+    s = Settings.from_env()
+    assert "address=/dashboard.home.arpa/192.168.178.3" in build_config(s)
+    assert s.dashboard_url == "http://dashboard.home.arpa:8080"
+
+    monkeypatch.setenv("LOCAL_NAME", "")
+    assert "address=/" not in build_config(Settings.from_env())
+
+
 def test_gateway_rules():
     rules = gateway_rules(Settings.from_env())
     assert ["iptables", "-t", "nat", "-A", "CLOUDY-NAT", "-s", "192.168.178.0/24", "!", "-d", "192.168.178.0/24",

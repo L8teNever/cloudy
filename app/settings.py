@@ -22,6 +22,7 @@ class Settings:
     dhcp_lease: str
     gateway_enabled: bool
     traffic_poll_seconds: float
+    local_name: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -41,6 +42,7 @@ class Settings:
             dhcp_lease=os.environ.get("DHCP_LEASE", "1h"),
             gateway_enabled=_flag("GATEWAY_ENABLED", "0"),
             traffic_poll_seconds=float(os.environ.get("TRAFFIC_POLL_SECONDS", "10")),
+            local_name=os.environ.get("LOCAL_NAME", "cloudy.lan").strip().lower().rstrip("."),
         )
 
     @property
@@ -54,6 +56,16 @@ class Settings:
     @property
     def hosts_path(self) -> str:
         return os.path.join(self.data_dir, "dhcp-hosts.conf")
+
+    @property
+    def local_names_path(self) -> str:
+        return os.path.join(self.data_dir, "lokale-namen.hosts")
+
+    @property
+    def dashboard_url(self) -> str:
+        host = self.local_name or self.pi_ip
+        port = os.environ.get("DASHBOARD_PORT", "8080")
+        return f"http://{host}" + ("" if port == "80" else f":{port}")
 
     @property
     def conf_path(self) -> str:

@@ -41,10 +41,22 @@ EOF
 case "${1:-}" in
   update)
     curl -fsSL "$RAW/docker-compose.yml" -o docker-compose.yml.new && mv docker-compose.yml.new docker-compose.yml
+    # Neue Einstellungen aus .env.example ergänzen (vorhandene bleiben).
+    if curl -fsSL "$RAW/.env.example" -o .env.example; then
+      while IFS= read -r line; do
+        case "$line" in ''|\#*) continue ;; esac
+        grep -q "^${line%%=*}=" .env || echo "$line" >> .env
+      done < .env.example
+    fi
+    # Frühere Standardeinstellung 8080 -> 80, damit http://cloudy.lan ohne Port geht.
+    if grep -q "^DASHBOARD_PORT=8080$" .env; then
+      set_env DASHBOARD_PORT 80
+      echo "Dashboard-Port auf 80 gestellt (http://cloudy.lan)."
+    fi
     $DOCKER compose pull
     $DOCKER compose up -d --remove-orphans
     $DOCKER image prune -f >/dev/null
-    echo "cloudy ist aktuell."
+    echo "cloudy ist aktuell. Dashboard: http://$(grep '^LOCAL_NAME=' .env | cut -d= -f2)"
     ;;
   dhcp)
     case "${2:-}" in

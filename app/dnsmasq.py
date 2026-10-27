@@ -11,7 +11,7 @@ from . import db
 from .settings import Settings
 
 QUERY_RE = re.compile(r"query\[(?P<qtype>[A-Za-z0-9]+)\] (?P<domain>\S+) from (?P<ip>\S+)")
-IGNORED_SUFFIXES = (".in-addr.arpa", ".ip6.arpa", ".lan", ".local")
+IGNORED_SUFFIXES = (".in-addr.arpa", ".ip6.arpa", ".lan", ".local", ".home.arpa")
 IGNORED_IPS = {"127.0.0.1", "::1"}
 # Diese Log-Zeilen kommen bei jeder Anfrage und würden die Container-Logs fluten.
 NOISY = (" query[", " forwarded ", " reply ", " cached ", " config ", " validation ")
@@ -29,6 +29,14 @@ HOSTS_HEADER = """\
 # Im Gateway-Modus: "set:direkt" -> Gerät geht NICHT über den Pi, sondern direkt zur Fritzbox
 # (nötig für Geräte mit Portfreigabe, z. B. NAS):
 # aa:bb:cc:dd:ee:01,set:direkt,192.168.178.60,nas
+"""
+
+LOCAL_NAMES_HEADER = """\
+# Eigene Namen fürs Heimnetz. Eine Zeile pro Name:  IP-Adresse  Name
+# Beispiel:
+# 192.168.178.60  nas.lan
+# 192.168.178.50  drucker.lan
+# Nach dem Ändern: cloudy restart
 """
 
 
@@ -66,7 +74,11 @@ def build_config(s: Settings) -> str:
         *(f"local=/{d}/" for d in BYPASS_DOMAINS),
         "domain=lan",
         "local=/lan/",
+        f"addn-hosts={s.local_names_path}",
     ]
+    if s.local_name:
+        # Name des Dashboards im Heimnetz, z. B. http://cloudy.lan
+        lines.append(f"address=/{s.local_name}/{s.pi_ip}")
     if s.gateway_enabled:
         # Nur IPv4-Adressen ausliefern: IPv6 würde direkt über die Fritzbox und am Pi vorbei laufen.
         lines.append("filter-AAAA")
@@ -158,6 +170,9 @@ class DnsmasqRunner:
         if not os.path.exists(s.hosts_path):
             with open(s.hosts_path, "w", encoding="utf-8") as f:
                 f.write(HOSTS_HEADER)
+        if not os.path.exists(s.local_names_path):
+            with open(s.local_names_path, "w", encoding="utf-8") as f:
+                f.write(LOCAL_NAMES_HEADER)
         with open(s.conf_path, "w", encoding="utf-8") as f:
             f.write(build_config(s))
         print(

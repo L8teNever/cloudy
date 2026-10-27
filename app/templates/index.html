@@ -27,7 +27,7 @@
     <span class="pill on">DNS an</span>
     <span class="pill {{ 'on' if settings.dhcp_enabled else '' }}">IP-Verteilung (DHCP) {{ 'an' if settings.dhcp_enabled else 'aus' }}</span>
     <span class="pill {{ 'on' if settings.gateway_enabled else '' }}">Gateway (Datenverkehr) {{ 'an' if settings.gateway_enabled else 'aus' }}</span>
-    <span class="pill">Pi {{ settings.pi_ip }}</span>
+    <span class="pill">Pi {{ settings.pi_ip }}{% if settings.local_name %} · {{ settings.local_name }}{% endif %}</span>
     <span class="pill">Weiter an {{ settings.upstream_dns | join(', ') }}</span>
   </div>
 
