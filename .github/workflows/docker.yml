@@ -102,12 +102,68 @@ jobs:
           echo "Ohne Lease-Datei: a=$A3"
           test "$A1" = "$A3"
 
+      - name: End-to-End – zugeordnetes Gerät läuft durch den WARP-Container, ohne Tunnel über die Fritzbox
+        run: |
+          # Nachgebauter WARP-Container: leitet weiter und zählt die Pakete des Geräts.
+          docker network create --subnet 172.29.86.0/24 warp-test
+          docker run -d --name fake-warp --network warp-test --ip 172.29.86.11 --cap-add NET_ADMIN             --sysctl net.ipv4.ip_forward=1 --sysctl net.ipv4.conf.all.send_redirects=0 alpine sh -c             'apk add -q iptables && ip route add 172.30.0.0/24 via 172.29.86.2 &&
+             iptables -A FORWARD -s 172.30.0.11 -j ACCEPT && iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE &&
+             touch /tmp/bereit && sleep infinity'
+          docker run -d --name cloudy-wr --network gw-net --ip 172.30.0.3 --privileged             -e LAN_INTERFACE=eth0 -e PI_IP=172.30.0.3 -e ROUTER_IP=172.30.0.1 -e UPSTREAM_DNS=1.1.1.1             -e GATEWAY_ENABLED=1 -e WARP_SLOTS=warp1=172.29.86.11 cloudy-test
+          docker network connect --ip 172.29.86.2 warp-test cloudy-wr
+          docker run -d --name geraet --network gw-net --ip 172.30.0.11 --mac-address 02:42:ac:1e:00:11             --cap-add NET_ADMIN alpine sh -c             'echo "nameserver 172.30.0.3" > /etc/resolv.conf && ip route replace default via 172.30.0.3 && sleep infinity'
+          sleep 8
+          docker exec fake-warp test -f /tmp/bereit
+          api() { docker exec cloudy-wr python -c "import sys, urllib.request; urllib.request.urlopen('http://127.0.0.1:8080' + sys.argv[1], data=sys.argv[2].encode())" "$@"; }
+          zaehler() { docker exec fake-warp iptables -L FORWARD -v -n -x | grep 172.30.0.11 | awk '{print $1}'; }
+          tunnel() { docker exec cloudy-wr sh -c "mkdir -p /data/warp/warp1 && echo $1 > /data/warp/warp1/status"; }
+
+          api /devices/warp "mac=02:42:ac:1e:00:11&slot=warp1"
+          tunnel Connected
+          sleep 7
+          docker exec geraet wget -q -O /dev/null https://example.com
+          echo "Pakete durch WARP: $(zaehler)"
+          test "$(zaehler)" -gt 0
+
+          # Tunnel weg -> Gerät geht über die Fritzbox und hat weiter Internet.
+          tunnel Disconnected
+          sleep 7
+          docker exec fake-warp iptables -Z FORWARD
+          docker exec geraet wget -q -O /dev/null https://example.com
+          echo "Pakete durch WARP ohne Tunnel: $(zaehler)"
+          test "$(zaehler)" -eq 0
+
+          # Zuordnung aufheben -> wieder normal, auch bei verbundenem Tunnel.
+          tunnel Connected
+          api /devices/warp "mac=02:42:ac:1e:00:11&slot="
+          sleep 7
+          docker exec fake-warp iptables -Z FORWARD
+          docker exec geraet wget -q -O /dev/null https://example.com
+          test "$(zaehler)" -eq 0
+          echo "WARP-Routing ok"
+
+      - name: WARP-Image – Dienst startet und lehnt einen falschen Token ab
+        run: |
+          docker build -t cloudy-warp-test warp
+          docker run --rm cloudy-warp-test warp-cli --version
+          mkdir -p /tmp/warp && echo ungueltiger-token > /tmp/warp/token
+          docker run -d --name warp-echt --cap-add NET_ADMIN --device /dev/net/tun             --sysctl net.ipv4.ip_forward=1 -v /tmp/warp:/cloudy cloudy-warp-test
+          for i in $(seq 1 30); do
+            s="$(sudo cat /tmp/warp/status 2>/dev/null || true)"
+            echo "Status: $s"
+            case "$s" in "Fehler: Anmeldung abgelehnt"*) echo "WARP-Image ok"; exit 0 ;; esac
+            sleep 3
+          done
+          exit 1
+
       - name: Logs bei Fehler
         if: failure()
         run: |
           docker logs cloudy || true
           docker logs cloudy-gw || true
           docker logs cloudy-dhcp || true
+          docker logs cloudy-wr || true
+          docker logs warp-echt || true
 
   build:
     needs: test
@@ -145,3 +201,21 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - id: meta-warp
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}
+          tags: |
+            type=raw,value=warp
+            type=sha,prefix=warp-
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: warp
+          platforms: linux/arm64,linux/amd64
+          push: true
+          tags: ${{ steps.meta-warp.outputs.tags }}
+          labels: ${{ steps.meta-warp.outputs.labels }}
+          cache-from: type=gha,scope=warp
+          cache-to: type=gha,scope=warp,mode=max

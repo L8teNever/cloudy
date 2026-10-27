@@ -63,6 +63,17 @@ def init() -> None:
                 hostname TEXT,
                 updated INTEGER NOT NULL
             );
+
+            -- Welches Gerät (MAC) über welchen WARP-Account ins Internet geht.
+            CREATE TABLE IF NOT EXISTS device_warp (
+                mac TEXT PRIMARY KEY,
+                slot TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS warp_labels (
+                slot TEXT PRIMARY KEY,
+                label TEXT NOT NULL
+            );
             """
         )
         conn.commit()
@@ -142,6 +153,38 @@ def upsert_devices(devices: list[tuple[str, str, str | None]]) -> None:
                 updated = excluded.updated
             """,
             [(ip, mac, hostname, now) for ip, mac, hostname in devices],
+        )
+        conn.commit()
+
+
+def device_warp() -> dict[str, str]:
+    """MAC -> WARP-Slot"""
+    with closing(_connect()) as conn:
+        return {r["mac"]: r["slot"] for r in conn.execute("SELECT mac, slot FROM device_warp")}
+
+
+def set_device_warp(mac: str, slot: str | None) -> None:
+    with closing(_connect()) as conn:
+        if slot:
+            conn.execute(
+                "INSERT INTO device_warp (mac, slot) VALUES (?, ?) ON CONFLICT (mac) DO UPDATE SET slot = excluded.slot",
+                (mac, slot),
+            )
+        else:
+            conn.execute("DELETE FROM device_warp WHERE mac = ?", (mac,))
+        conn.commit()
+
+
+def warp_labels() -> dict[str, str]:
+    with closing(_connect()) as conn:
+        return {r["slot"]: r["label"] for r in conn.execute("SELECT slot, label FROM warp_labels")}
+
+
+def set_warp_label(slot: str, label: str) -> None:
+    with closing(_connect()) as conn:
+        conn.execute(
+            "INSERT INTO warp_labels (slot, label) VALUES (?, ?) ON CONFLICT (slot) DO UPDATE SET label = excluded.label",
+            (slot, label),
         )
         conn.commit()
 

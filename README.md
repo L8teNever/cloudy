@@ -101,6 +101,42 @@ Damit nichts über IPv6 an ihm vorbeiläuft, liefert er im Gateway-Modus nur IPv
 - **Ausschalten:** `cloudy gateway aus` – Geräte gehen nach spätestens 1 Stunde wieder direkt zur Fritzbox,
   bis dahin leitet der Pi weiter (kein Ausfall).
 
+## 5. Einzelne Geräte durch Cloudflare WARP schicken
+
+Pro Gerät einstellbar: **normal (Fritzbox)**, **WARP-Account 1** oder **WARP-Account 2**. Der gesamte
+Internetverkehr des Geräts läuft dann durch den WARP-Tunnel des gewählten Cloudflare-Zero-Trust-Accounts
+(und damit durch dessen Gateway-Regeln). Am Gerät selbst muss nichts installiert werden.
+
+```
+Gerät ──► Pi ──► WARP-Container (Account 1) ══Tunnel══► Cloudflare ──► Internet
+```
+
+Voraussetzung: Gateway-Modus ist an (Schritt 4).
+
+**Token holen (pro Account einmal):**
+1. [one.dash.cloudflare.com](https://one.dash.cloudflare.com) mit dem Account öffnen.
+2. Unter **Networks → Mesh** (früher „WARP Connector“, je nach Dashboard auch unter Networks → Connectors)
+   einen neuen Knoten anlegen, z. B. `cloudy-pi`. Cloudflare zeigt dann einen Befehl wie
+   `warp-cli connector new eyJh...` – **nur den langen Token** (`eyJh...`) kopieren.
+3. Im Geräteprofil des Knotens den **Split Tunnel** so lassen, dass `192.168.0.0/16` und `172.16.0.0/12`
+   ausgeschlossen sind (Standard). Sonst findet der Verkehr nicht zurück ins Heimnetz.
+
+**Im Dashboard:**
+1. Abschnitt **„Cloudflare WARP“** → Name eintragen (z. B. „Account Max“), Token einfügen → Speichern.
+   Nach ca. 10–30 Sekunden steht dort **„verbunden“**.
+2. Gerät in der Liste anklicken → **„Internet über“** → Account wählen → Übernehmen.
+3. Zweiten Account genauso im zweiten Profil anmelden.
+
+**Gut zu wissen:**
+- **Fällt der Tunnel aus**, gehen die Geräte automatisch wieder normal über die Fritzbox. Soll das Gerät dann
+  lieber gar kein Internet haben: in `~/cloudy/.env` `WARP_KILLSWITCH=1`, dann `cloudy restart`.
+- **Tempo:** Ein Pi 3B+ schafft durch die Tunnel zusammen etwa 50–80 Mbit/s.
+- **DNS** fragt weiterhin der Pi (bei dir an `172.64.36.1`), das Dashboard zeigt also weiter alle Domains.
+- **Abmelden** im Dashboard trägt den Pi auch bei Cloudflare aus.
+- Die Anmeldung bleibt bei `cloudy update` und Neustarts erhalten (`~/cloudy/data/warp/`). Der Token ist ein
+  Zugangsschlüssel zu deinem Zero-Trust-Account – die Datei nicht weitergeben.
+- Status auf dem Pi: `cloudy status`, Logs: `cloudy logs warp1`.
+
 ## Zurück zur Fritzbox (alles wie vorher)
 
 1. Auf dem Pi: `cloudy dhcp aus` (schaltet auch das Gateway aus)
@@ -168,8 +204,6 @@ Ausschalten: in `~/cloudy/.env` `HTTPS_PORT=0`, dann `cloudy restart`.
   zurückgeschaltet. Chrome/Edge mit fest eingestelltem „Sicheres DNS“ oder VPN-Apps gehen trotzdem am Pi vorbei.
 - **Mitbewohner/Familie:** Protokollieren, was andere im Netz aufrufen, ist ein Eingriff in deren
   Privatsphäre – sag ihnen Bescheid.
-- **Später VPN für einzelne Geräte:** baut auf dem Gateway-Modus auf – der Pi schickt dann den Verkehr
-  markierter Geräte durch einen VPN-Tunnel statt direkt zur Fritzbox. (Noch nicht eingebaut.)
 
 ## Entwickeln
 

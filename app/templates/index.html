@@ -3,7 +3,6 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="15">
   <title>cloudy – Wer ruft was auf</title>
   <style>
     body { font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem; background: #f6f4fb; color: #1f1b2e; }
@@ -19,6 +18,10 @@
     td.mono { font-family: ui-monospace, monospace; word-break: break-all; }
     a { color: #7e22ce; }
     .muted { color: #888; }
+    form.inline { display: inline-flex; gap: .35rem; flex-wrap: wrap; margin: 0 .35rem .25rem 0; }
+    input, select, button { font: inherit; padding: .25rem .45rem; }
+    button { background: #9333ea; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
+    button.secondary { background: #e9e3f5; color: #1f1b2e; }
   </style>
 </head>
 <body>
@@ -35,6 +38,24 @@
     <p><a href="/">← alle Geräte</a></p>
     <h2>{{ device.hostname or device.ip }}
       <span class="muted">{{ device.ip }}{% if device.mac %} · {{ device.mac }}{% endif %}</span></h2>
+
+    {% if warp and device.mac %}
+    <h2>Internet über</h2>
+    <form method="post" action="/devices/warp" class="inline">
+      <input type="hidden" name="mac" value="{{ device.mac }}">
+      <input type="hidden" name="ip" value="{{ device.ip }}">
+      <select name="slot">
+        <option value="">normal (Fritzbox)</option>
+        {% for w in warp %}
+        <option value="{{ w.slot }}" {% if warp_by_mac.get(device.mac) == w.slot %}selected{% endif %}>{{ w.label }}</option>
+        {% endfor %}
+      </select>
+      <button>Übernehmen</button>
+    </form>
+    {% if not settings.gateway_enabled %}
+    <p class="muted">Wirkt erst mit Gateway-Modus (<code>cloudy gateway an</code>).</p>
+    {% endif %}
+    {% endif %}
 
     {% if traffic %}
     <h2>Datenverkehr</h2>
@@ -68,7 +89,7 @@
   {% else %}
     <h2>Geräte</h2>
     <table>
-      <tr><th>Gerät</th><th>IP</th><th>MAC</th><th>Aufrufe</th><th>Domains</th><th>↓ Download</th><th>↑ Upload</th><th>Zuletzt aktiv</th></tr>
+      <tr><th>Gerät</th><th>IP</th><th>MAC</th><th>Aufrufe</th><th>Domains</th><th>↓ Download</th><th>↑ Upload</th>{% if warp %}<th>Internet über</th>{% endif %}<th>Zuletzt aktiv</th></tr>
       {% for d in devices %}
       <tr>
         <td><a href="/?ip={{ d.ip | urlencode }}">{{ d.hostname or 'unbekannt' }}</a></td>
@@ -78,12 +99,42 @@
         <td>{{ d.domains }}</td>
         <td>{{ d.bytes_down | bytes }}</td>
         <td>{{ d.bytes_up | bytes }}</td>
+        {% if warp %}<td>{{ warp_names.get(warp_by_mac.get(d.mac), '') if d.mac else '' }}</td>{% endif %}
         <td>{{ fmt_time(d.last_seen) }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="muted">Noch keine Anfragen. Fragt schon ein Gerät den Pi als DNS-Server?</td></tr>
+      <tr><td colspan="9" class="muted">Noch keine Anfragen. Fragt schon ein Gerät den Pi als DNS-Server?</td></tr>
       {% endfor %}
     </table>
+
+    {% if warp %}
+    <h2 id="warp">Cloudflare WARP</h2>
+    {% if not settings.gateway_enabled %}
+    <p class="muted">Geräte laufen erst durch WARP, wenn der Gateway-Modus an ist (<code>cloudy gateway an</code>).</p>
+    {% endif %}
+    <table>
+      <tr><th>Profil</th><th>Status</th><th>Geräte</th><th>Anmelden / ändern</th></tr>
+      {% for w in warp %}
+      <tr>
+        <td>{{ w.label }} <span class="muted">({{ w.slot }})</span></td>
+        <td>{% if w.has_token %}<span class="pill {{ 'on' if w.status.connected else '' }}">{{ w.status.text }}</span>{% else %}<span class="muted">nicht angemeldet</span>{% endif %}</td>
+        <td>{{ warp_by_mac.values() | select('equalto', w.slot) | list | length }}</td>
+        <td>
+          <form method="post" action="/warp/{{ w.slot }}/login" class="inline">
+            <input name="label" value="{{ w.label }}" size="12" aria-label="Name">
+            <input name="token" type="password" autocomplete="off" size="24"
+                   placeholder="{{ 'neuer Token (leer = behalten)' if w.has_token else 'Token aus Zero Trust' }}">
+            <button>Speichern</button>
+          </form>
+          {% if w.has_token %}
+          <form method="post" action="/warp/{{ w.slot }}/logout" class="inline"><button class="secondary">Abmelden</button></form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p class="muted">Geräte zuordnen: Gerät anklicken → „Internet über“. Anleitung für den Token in der README.</p>
+    {% endif %}
 
     <h2>Letzte Aufrufe</h2>
     <table>
@@ -104,5 +155,13 @@
   <p class="muted" style="margin-top:2rem">HTTPS ohne Warnung: <a href="/ca.crt">Zertifikat (CA) herunterladen</a>
     und einmal auf dem Gerät installieren – Anleitung in der README.</p>
   {% endif %}
+  <script>
+    // Alle 15 s neu laden – aber nicht, während du gerade etwas eintippst.
+    setInterval(() => {
+      const typing = document.activeElement?.closest("form") ||
+        [...document.querySelectorAll("input[name=token]")].some((i) => i.value);
+      if (!typing) location.reload();
+    }, 15000);
+  </script>
 </body>
 </html>

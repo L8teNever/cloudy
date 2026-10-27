@@ -33,7 +33,7 @@ cloudy dhcp aus    Pi verteilt keine IP-Adressen mehr (danach DHCP in der Fritzb
 cloudy gateway an  Gesamter Datenverkehr läuft über den Pi und wird gemessen (braucht "dhcp an")
 cloudy gateway aus Datenverkehr geht wieder direkt zur Fritzbox (DNS bleibt beim Pi)
 cloudy status      Zeigt, ob alles läuft
-cloudy logs        Live-Logs anzeigen (Strg+C zum Beenden)
+cloudy logs        Live-Logs anzeigen (Strg+C zum Beenden), nur WARP: cloudy logs warp1
 cloudy restart     Neu starten
 EOF
 }
@@ -103,9 +103,12 @@ case "${1:-}" in
     ;;
   status)
     $DOCKER compose ps
-    grep -E "^(PI_IP|DHCP_ENABLED|GATEWAY_ENABLED|UPSTREAM_DNS)=" .env
+    grep -E "^(PI_IP|DHCP_ENABLED|GATEWAY_ENABLED|UPSTREAM_DNS|WARP_KILLSWITCH)=" .env
+    for f in data/warp/*/status; do
+      [ -f "$f" ] && echo "WARP $(basename "$(dirname "$f")"): $(cat "$f")"
+    done
     ;;
-  logs) $DOCKER compose logs -f --tail 100 ;;
+  logs) $DOCKER compose logs -f --tail 100 ${2:+"$2"} ;;
   restart) $DOCKER compose restart ;;
   *) usage ;;
 esac

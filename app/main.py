@@ -4,14 +4,15 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import db
+from . import db, warp
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .settings import Settings
@@ -37,7 +38,7 @@ templates.env.filters["bytes"] = fmt_bytes
 async def lifespan(app: FastAPI):
     settings = Settings.from_env()
     db.init()
-    runner = traffic_runner = None
+    runner = traffic_runner = warp_router = None
     domain_map = DomainMap()
     if settings.dnsmasq_enabled and settings.gateway_enabled:
         if setup_gateway(settings):
@@ -47,6 +48,11 @@ async def lifespan(app: FastAPI):
             # Ohne funktionierende Weiterleitung den Pi NICHT als Gateway verteilen, sonst ist das Heimnetz offline.
             print("cloudy: Gateway konnte nicht eingerichtet werden – Geräte bleiben bei der Fritzbox", flush=True)
             settings = replace(settings, gateway_enabled=False)
+    if settings.gateway_enabled and settings.warp_slots:
+        warp_router = warp.WarpRouter(settings)
+        warp_router.start()
+    elif settings.dnsmasq_enabled:
+        warp.cleanup()
     app.state.settings = settings
     if settings.dnsmasq_enabled:
         runner = DnsmasqRunner(settings, Collector(domain_map=domain_map))
@@ -66,6 +72,8 @@ async def lifespan(app: FastAPI):
         runner.stop()
     if traffic_runner:
         traffic_runner.stop()
+    if warp_router:
+        warp_router.stop()
 
 
 app = FastAPI(title="cloudy", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -105,9 +113,26 @@ async def ca_certificate(request: Request):
     return FileResponse(path, media_type="application/x-x509-ca-cert", filename="cloudy-ca.crt")
 
 
+def warp_profiles(settings: Settings) -> list[dict]:
+    labels = db.warp_labels()
+    return [
+        {
+            "slot": slot,
+            "label": labels.get(slot) or f"WARP {i}",
+            "has_token": warp.has_token(settings, slot),
+            "status": warp.read_status(settings, slot),
+        }
+        for i, (slot, _) in enumerate(settings.warp_slots, start=1)
+    ]
+
+
 @app.get("/", response_class=HTMLResponse, dependencies=[Depends(require_password)])
 async def dashboard(request: Request, ip: str | None = None):
-    context = {"settings": request.app.state.settings, "fmt_time": fmt_time, "ip": ip}
+    settings = request.app.state.settings
+    context = {"settings": settings, "fmt_time": fmt_time, "ip": ip}
+    context["warp"] = await run_in_threadpool(warp_profiles, settings)
+    context["warp_names"] = {w["slot"]: w["label"] for w in context["warp"]}
+    context["warp_by_mac"] = await run_in_threadpool(db.device_warp)
     if ip:
         context["device"] = await run_in_threadpool(db.device, ip)
         context["domains"] = await run_in_threadpool(db.top_domains, ip)
@@ -136,3 +161,41 @@ async def api_device(ip: str):
 @app.get("/api/recent", dependencies=[Depends(require_password)])
 async def api_recent(limit: int = 100, ip: str | None = None):
     return await run_in_threadpool(db.recent, min(limit, 1000), ip)
+
+
+def _check_slot(request: Request, slot: str) -> Settings:
+    settings = request.app.state.settings
+    if slot not in {name for name, _ in settings.warp_slots}:
+        raise HTTPException(status_code=404, detail="Unbekanntes WARP-Profil")
+    return settings
+
+
+@app.post("/warp/{slot}/login", dependencies=[Depends(require_password)])
+async def warp_login(request: Request, slot: str, token: str = Form(""), label: str = Form("")):
+    settings = _check_slot(request, slot)
+    token = token.strip()
+    if label.strip():
+        await run_in_threadpool(db.set_warp_label, slot, label.strip()[:40])
+    if token:
+        if len(token) > 8192 or any(ch.isspace() for ch in token):
+            raise HTTPException(status_code=400, detail="Ungültiger Token")
+        await run_in_threadpool(warp.save_token, settings, slot, token)
+    return RedirectResponse("/#warp", status_code=303)
+
+
+@app.post("/warp/{slot}/logout", dependencies=[Depends(require_password)])
+async def warp_logout(request: Request, slot: str):
+    settings = _check_slot(request, slot)
+    await run_in_threadpool(warp.remove_token, settings, slot)
+    return RedirectResponse("/#warp", status_code=303)
+
+
+@app.post("/devices/warp", dependencies=[Depends(require_password)])
+async def device_set_warp(request: Request, mac: str = Form(...), slot: str = Form(""), ip: str = Form("")):
+    mac = mac.strip().lower()
+    if not warp.MAC_RE.match(mac):
+        raise HTTPException(status_code=400, detail="Ungültige MAC-Adresse")
+    if slot:
+        _check_slot(request, slot)
+    await run_in_threadpool(db.set_device_warp, mac, slot or None)
+    return RedirectResponse(f"/?ip={quote(ip)}" if ip else "/", status_code=303)

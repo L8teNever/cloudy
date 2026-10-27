@@ -24,6 +24,8 @@ class Settings:
     traffic_poll_seconds: float
     local_name: str
     https_port: int
+    warp_slots: list[tuple[str, str]]
+    warp_killswitch: bool
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -45,6 +47,16 @@ class Settings:
             traffic_poll_seconds=float(os.environ.get("TRAFFIC_POLL_SECONDS", "10")),
             local_name=os.environ.get("LOCAL_NAME", "cloudy.lan").strip().lower().rstrip("."),
             https_port=int(os.environ.get("HTTPS_PORT", "443").strip() or 0),
+            # WARP-Container aus docker-compose.yml: Name=IP im Netz "cloudy-warp".
+            warp_slots=[
+                (name.strip(), ip.strip())
+                for name, _, ip in (
+                    s.partition("=")
+                    for s in os.environ.get("WARP_SLOTS", "warp1=172.29.86.11,warp2=172.29.86.12").split(",")
+                )
+                if name.strip() and ip.strip()
+            ],
+            warp_killswitch=_flag("WARP_KILLSWITCH", "0"),
         )
 
     @property
@@ -68,6 +80,10 @@ class Settings:
         host = self.local_name or self.pi_ip
         port = os.environ.get("DASHBOARD_PORT", "8080")
         return f"http://{host}" + ("" if port == "80" else f":{port}")
+
+    @property
+    def warp_dir(self) -> str:
+        return os.path.join(self.data_dir, "warp")
 
     @property
     def conf_path(self) -> str:
