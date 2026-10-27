@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Steuerung von cloudy auf dem Raspberry Pi.
+set -euo pipefail
+
+DIR="${CLOUDY_DIR:-__CLOUDY_DIR__}"
+REPO="${CLOUDY_REPO:-l8tenever/cloudy}"
+BRANCH="${CLOUDY_BRANCH:-main}"
+RAW="https://raw.githubusercontent.com/$REPO/$BRANCH"
+
+cd "$DIR"
+DOCKER="docker"
+docker info >/dev/null 2>&1 || DOCKER="sudo docker"
+
+set_env() {
+  if grep -q "^$1=" .env; then
+    sed -i "s|^$1=.*|$1=$2|" .env
+  else
+    echo "$1=$2" >> .env
+  fi
+}
+
+ask() {
+  local answer
+  read -r -p "$1 (j/n) " answer </dev/tty
+  [[ "$answer" =~ ^[jJyY] ]]
+}
+
+usage() {
+  cat <<EOF
+cloudy update      Neueste Version von GitHub holen und neu starten
+cloudy dhcp an     Pi verteilt die IP-Adressen (vorher DHCP in der Fritzbox AUS!)
+cloudy dhcp aus    Pi verteilt keine IP-Adressen mehr (danach DHCP in der Fritzbox wieder AN)
+cloudy status      Zeigt, ob alles läuft
+cloudy logs        Live-Logs anzeigen (Strg+C zum Beenden)
+cloudy restart     Neu starten
+EOF
+}
+
+case "${1:-}" in
+  update)
+    curl -fsSL "$RAW/docker-compose.yml" -o docker-compose.yml.new && mv docker-compose.yml.new docker-compose.yml
+    $DOCKER compose pull
+    $DOCKER compose up -d
+    $DOCKER image prune -f >/dev/null
+    echo "cloudy ist aktuell."
+    ;;
+  dhcp)
+    case "${2:-}" in
+      an|on)
+        echo "Wichtig: In der Fritzbox muss der DHCP-Server AUS sein"
+        echo "(Heimnetz → Netzwerk → Netzwerkeinstellungen → IPv4 → Haken bei 'DHCP-Server aktivieren' entfernen)."
+        ask "Ist der DHCP-Server der Fritzbox ausgeschaltet?" || { echo "Abgebrochen."; exit 1; }
+        set_env DHCP_ENABLED 1
+        $DOCKER compose up -d
+        echo "Der Pi verteilt jetzt die IP-Adressen. Geräte kurz WLAN aus/an schalten, damit sie es sofort merken."
+        ;;
+      aus|off)
+        set_env DHCP_ENABLED 0
+        $DOCKER compose up -d
+        echo "Der Pi verteilt keine IP-Adressen mehr."
+        echo "Jetzt in der Fritzbox den DHCP-Server wieder einschalten und 'Lokaler DNS-Server' zurückstellen."
+        ;;
+      *) usage; exit 1 ;;
+    esac
+    ;;
+  status)
+    $DOCKER compose ps
+    grep -E "^(PI_IP|DHCP_ENABLED|UPSTREAM_DNS)=" .env
+    ;;
+  logs) $DOCKER compose logs -f --tail 100 ;;
+  restart) $DOCKER compose restart ;;
+  *) usage ;;
+esac

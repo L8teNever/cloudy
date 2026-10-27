@@ -3,50 +3,88 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="10">
-  <title>cloudy – Zugriffe</title>
+  <meta http-equiv="refresh" content="15">
+  <title>cloudy – Wer ruft was auf</title>
   <style>
     body { font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem; background: #f6f4fb; color: #1f1b2e; }
-    h1 { margin: 0 0 1.5rem; color: #9333ea; }
+    h1 { margin: 0; color: #9333ea; }
+    h1 a { color: inherit; text-decoration: none; }
     h2 { margin: 2rem 0 .5rem; font-size: 1.1rem; }
+    .status { margin: .25rem 0 1.5rem; color: #666; font-size: .85rem; }
+    .pill { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #e9e3f5; margin-right: .35rem; }
+    .pill.on { background: #d6f5dd; }
     table { border-collapse: collapse; width: 100%; background: #fff; border-radius: 8px; overflow: hidden; }
-    th, td { text-align: left; padding: .5rem .75rem; border-bottom: 1px solid #eee; font-size: .9rem; vertical-align: top; }
+    th, td { text-align: left; padding: .45rem .75rem; border-bottom: 1px solid #eee; font-size: .9rem; vertical-align: top; }
     th { background: #9333ea; color: #fff; }
-    td.path { font-family: ui-monospace, monospace; word-break: break-all; }
-    td.ua { color: #666; font-size: .8rem; word-break: break-all; }
+    td.mono { font-family: ui-monospace, monospace; word-break: break-all; }
+    a { color: #7e22ce; }
     .muted { color: #888; }
   </style>
 </head>
 <body>
-  <h1>cloudy</h1>
+  <h1><a href="/">cloudy</a></h1>
+  <div class="status">
+    <span class="pill on">DNS an</span>
+    <span class="pill {{ 'on' if settings.dhcp_enabled else '' }}">IP-Verteilung (DHCP) {{ 'an' if settings.dhcp_enabled else 'aus' }}</span>
+    <span class="pill">Pi {{ settings.pi_ip }}</span>
+    <span class="pill">Weiter an {{ settings.upstream_dns | join(', ') }}</span>
+  </div>
 
-  <h2>Geräte</h2>
-  <table>
-    <tr><th>Gerät</th><th>Aufrufe</th><th>Zuletzt gesehen</th><th>User-Agent</th></tr>
-    {% for d in devices %}
-    <tr>
-      <td>{{ d.hostname or d.ip }}{% if d.hostname %} <span class="muted">({{ d.ip }})</span>{% endif %}</td>
-      <td>{{ d.hits }}</td>
-      <td>{{ fmt_time(d.last_seen) }}</td>
-      <td class="ua">{{ d.user_agent }}</td>
-    </tr>
-    {% else %}
-    <tr><td colspan="4" class="muted">Noch keine Aufrufe.</td></tr>
-    {% endfor %}
-  </table>
+  {% if ip %}
+    <p><a href="/">← alle Geräte</a></p>
+    <h2>{{ device.hostname or device.ip }}
+      <span class="muted">{{ device.ip }}{% if device.mac %} · {{ device.mac }}{% endif %}</span></h2>
 
-  <h2>Letzte Aufrufe</h2>
-  <table>
-    <tr><th>Zeit</th><th>Gerät</th><th>Aufruf</th></tr>
-    {% for r in recent %}
-    <tr>
-      <td>{{ fmt_time(r.ts) }}</td>
-      <td>{{ r.hostname or r.ip }}</td>
-      <td class="path">{{ r.method }} {{ r.path }}</td>
-    </tr>
-    {% else %}
-    <tr><td colspan="3" class="muted">Noch keine Aufrufe.</td></tr>
-    {% endfor %}
-  </table>
+    <h2>Aufgerufene Domains</h2>
+    <table>
+      <tr><th>Domain</th><th>Aufrufe</th><th>Zuerst</th><th>Zuletzt</th></tr>
+      {% for d in domains %}
+      <tr><td class="mono">{{ d.domain }}</td><td>{{ d.hits }}</td><td>{{ fmt_time(d.first_seen) }}</td><td>{{ fmt_time(d.last_seen) }}</td></tr>
+      {% else %}
+      <tr><td colspan="4" class="muted">Noch nichts aufgerufen.</td></tr>
+      {% endfor %}
+    </table>
+
+    <h2>Letzte Aufrufe</h2>
+    <table>
+      <tr><th>Zeit</th><th>Domain</th></tr>
+      {% for r in recent %}
+      <tr><td>{{ fmt_time(r.ts) }}</td><td class="mono">{{ r.domain }}</td></tr>
+      {% else %}
+      <tr><td colspan="2" class="muted">Noch nichts aufgerufen.</td></tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <h2>Geräte</h2>
+    <table>
+      <tr><th>Gerät</th><th>IP</th><th>MAC</th><th>Aufrufe</th><th>Domains</th><th>Zuletzt aktiv</th></tr>
+      {% for d in devices %}
+      <tr>
+        <td><a href="/?ip={{ d.ip | urlencode }}">{{ d.hostname or 'unbekannt' }}</a></td>
+        <td class="mono">{{ d.ip }}</td>
+        <td class="mono">{{ d.mac or '' }}</td>
+        <td>{{ d.hits }}</td>
+        <td>{{ d.domains }}</td>
+        <td>{{ fmt_time(d.last_seen) }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">Noch keine Anfragen. Fragt schon ein Gerät den Pi als DNS-Server?</td></tr>
+      {% endfor %}
+    </table>
+
+    <h2>Letzte Aufrufe</h2>
+    <table>
+      <tr><th>Zeit</th><th>Gerät</th><th>Domain</th></tr>
+      {% for r in recent %}
+      <tr>
+        <td>{{ fmt_time(r.ts) }}</td>
+        <td><a href="/?ip={{ r.ip | urlencode }}">{{ r.hostname or r.ip }}</a></td>
+        <td class="mono">{{ r.domain }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="muted">Noch keine Anfragen.</td></tr>
+      {% endfor %}
+    </table>
+  {% endif %}
 </body>
 </html>

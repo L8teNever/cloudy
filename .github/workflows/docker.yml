@@ -9,7 +9,45 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Tests
+        run: |
+          pip install -r requirements.txt pytest httpx
+          pytest -q
+
+      - name: Image bauen
+        run: docker build -t cloudy-test .
+
+      - name: dnsmasq-Konfiguration prüfen (DNS und DHCP)
+        run: |
+          docker run --rm cloudy-test sh -c 'python -m app.dnsmasq > /tmp/d.conf && dnsmasq --test --conf-file=/tmp/d.conf'
+          docker run --rm -e DHCP_ENABLED=1 cloudy-test sh -c 'python -m app.dnsmasq > /tmp/d.conf && dnsmasq --test --conf-file=/tmp/d.conf'
+
+      - name: End-to-End – DNS-Anfrage erscheint im Dashboard
+        run: |
+          docker network create cloudy-net
+          docker run -d --name cloudy --network cloudy-net -e LAN_INTERFACE=eth0 -e UPSTREAM_DNS=1.1.1.1 cloudy-test
+          sleep 8
+          IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' cloudy)
+          docker run --rm --network cloudy-net busybox nslookup example.com "$IP"
+          sleep 8
+          docker exec cloudy python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/api/recent').read().decode())" | tee /tmp/recent.json
+          grep -q '"example.com"' /tmp/recent.json
+
+      - name: Logs bei Fehler
+        if: failure()
+        run: docker logs cloudy || true
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
