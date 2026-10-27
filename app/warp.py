@@ -171,6 +171,7 @@ def route_device(ip: str) -> str | None:
 def cleanup() -> None:
     """Gateway aus: alte Markierungen aus einem früheren Lauf entfernen (die Regeln liegen im Host-Netz)."""
     _run(["iptables", "-t", "mangle", "-F", MANGLE_CHAIN])
+    _run(["ip6tables", "-t", "mangle", "-F", MANGLE_CHAIN])
 
 
 class WarpRouter:
@@ -189,13 +190,24 @@ class WarpRouter:
         ok &= _run(["iptables", "-t", "mangle", "-F", MANGLE_CHAIN])
         if not _run(["iptables", "-t", "mangle", "-C", "PREROUTING", "-j", MANGLE_CHAIN]):
             ok &= _run(["iptables", "-t", "mangle", "-I", "PREROUTING", "1", "-j", MANGLE_CHAIN])
+
+        _run(["ip6tables", "-t", "mangle", "-N", MANGLE_CHAIN])
+        _run(["ip6tables", "-t", "mangle", "-F", MANGLE_CHAIN])
+        if not _run(["ip6tables", "-t", "mangle", "-C", "PREROUTING", "-j", MANGLE_CHAIN]):
+            _run(["ip6tables", "-t", "mangle", "-I", "PREROUTING", "1", "-j", MANGLE_CHAIN])
+
         for index, _ in enumerate(self.s.warp_slots, start=1):
             prio, table = str(RULE_PRIORITY_BASE + index), str(TABLE_BASE + index)
             while _run(["ip", "rule", "del", "priority", prio]):
                 pass
             ok &= _run(["ip", "rule", "add", "fwmark", mark(index), "table", table, "priority", prio])
+            while _run(["ip", "-6", "rule", "del", "priority", prio]):
+                pass
+            _run(["ip", "-6", "rule", "add", "fwmark", mark(index), "table", table, "priority", prio])
+
         # Antworten kommen über die Docker-Bridge zurück, obwohl der Absender "im Internet" liegt.
         _write_sysctl("/proc/sys/net/ipv4/conf/all/rp_filter", "2")
+        _write_sysctl("/proc/sys/net/ipv6/conf/all/forwarding", "1")
         return ok
 
     def _ensure_forwarding(self) -> None:
@@ -209,19 +221,33 @@ class WarpRouter:
             if _run(["iptables", "-A", FWD_CHAIN, "-i", lan, "-o", dev, "-j", "ACCEPT"]) and _run(
                 ["iptables", "-A", FWD_CHAIN, "-i", dev, "-o", lan, "-j", "ACCEPT"]
             ):
+                _run(["ip6tables", "-A", FWD_CHAIN, "-i", lan, "-o", dev, "-j", "ACCEPT"])
+                _run(["ip6tables", "-A", FWD_CHAIN, "-i", dev, "-o", lan, "-j", "ACCEPT"])
                 self._forwarded.add(dev)
 
     def apply(self, plan: Plan) -> None:
         self._ensure_forwarding()
         if plan.mangle_rules != self._applied_rules:
             _run(["iptables", "-t", "mangle", "-F", MANGLE_CHAIN])
+            _run(["ip6tables", "-t", "mangle", "-F", MANGLE_CHAIN])
             for rule in plan.mangle_rules:
                 _run(["iptables", "-t", "mangle", "-A", MANGLE_CHAIN, *rule])
+                v6_rule = [r if r != str(self.s.lan_network) else "fe80::/10" for r in rule]
+                _run(["ip6tables", "-t", "mangle", "-A", MANGLE_CHAIN, *v6_rule])
             self._applied_rules = plan.mangle_rules
         for index, route in enumerate(plan.routes):
             if self._applied_routes.get(index) != route and _run(["ip", "route", "replace", *route]):
                 print(f"cloudy: WARP {self.s.warp_slots[index][0]}: {' '.join(route)}", flush=True)
                 self._applied_routes[index] = route
+                last_byte = self.s.warp_slots[index][1].split(".")[-1]
+                v6_via = f"fd29:86::{last_byte}"
+                table = route[-1]
+                if "via" in route:
+                    _run(["ip", "-6", "route", "replace", "default", "via", v6_via, "table", table])
+                elif "unreachable" in route:
+                    _run(["ip", "-6", "route", "replace", "unreachable", "default", "table", table])
+                else:
+                    _run(["ip", "-6", "route", "replace", "default", "dev", self.s.lan_interface, "table", table])
 
     def tick(self) -> None:
         connected = {slot: read_status(self.s, slot).connected for slot, _ in self.s.warp_slots}

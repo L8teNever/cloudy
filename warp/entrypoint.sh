@@ -10,12 +10,16 @@ svc_pid=""
 status() { printf '%s\n' "$1" | head -n1 > "$DIR/status.tmp" && mv "$DIR/status.tmp" "$DIR/status"; }
 warp() { warp-cli --accept-tos "$@"; }
 
-# Absender der Geräte auf die WARP-Adresse umschreiben, sonst findet die Antwort nicht zurück.
+# Absender der Geräte auf die WARP-Adresse umschreiben (IPv4 & IPv6), sonst findet die Antwort nicht zurück.
 iptables -t nat -C POSTROUTING -o CloudflareWARP -j MASQUERADE 2>/dev/null \
   || iptables -t nat -A POSTROUTING -o CloudflareWARP -j MASQUERADE
-# Tunnel hat eine kleinere MTU -> TCP-Paketgröße anpassen, sonst hängen manche Seiten.
 iptables -t mangle -C FORWARD -o CloudflareWARP -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null \
   || iptables -t mangle -A FORWARD -o CloudflareWARP -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+
+ip6tables -t nat -C POSTROUTING -o CloudflareWARP -j MASQUERADE 2>/dev/null \
+  || ip6tables -t nat -A POSTROUTING -o CloudflareWARP -j MASQUERADE 2>/dev/null || true
+ip6tables -t mangle -C FORWARD -o CloudflareWARP -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null \
+  || ip6tables -t mangle -A FORWARD -o CloudflareWARP -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
 
 start_svc() {
   if [ -n "$svc_pid" ] && kill -0 "$svc_pid" 2>/dev/null; then return 0; fi
@@ -85,10 +89,8 @@ while true; do
   fi
 
   full="$(warp status 2>&1)"
-  s="$(printf '%s
-' "$full" | sed -n 's/^Status update: //p' | head -n1)"
-  reason="$(printf '%s
-' "$full" | sed -n 's/^Reason: //p' | head -n1)"
+  s="$(printf '%s\n' "$full" | sed -n 's/^Status update: //p' | head -n1)"
+  reason="$(printf '%s\n' "$full" | sed -n 's/^Reason: //p' | head -n1)"
   case "$s" in
     Connected*) status "Connected" ;;
     Disconnected*)

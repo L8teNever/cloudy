@@ -8,7 +8,7 @@ mkdir -p "$DIR"
 
 status() { printf '%s\n' "$1" | head -n1 > "$DIR/status.tmp" && mv "$DIR/status.tmp" "$DIR/status"; }
 
-# Kill-Switch im Container: Pakete der Geräte dürfen NUR in den Tunnel, nie an ihm vorbei ins Internet.
+# Kill-Switch im Container (IPv4 & IPv6): Pakete der Geräte dürfen NUR in den Tunnel, nie an ihm vorbei ins Internet.
 iptables -P FORWARD DROP
 iptables -A FORWARD -i eth0 -o "$IF" -j ACCEPT
 iptables -A FORWARD -i "$IF" -o eth0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
@@ -16,10 +16,18 @@ iptables -t nat -A POSTROUTING -o "$IF" -j MASQUERADE
 # Tunnel hat eine kleinere MTU -> TCP-Paketgröße anpassen, sonst hängen manche Seiten.
 iptables -t mangle -A FORWARD -o "$IF" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
 
+ip6tables -P FORWARD DROP 2>/dev/null || true
+ip6tables -A FORWARD -i eth0 -o "$IF" -j ACCEPT 2>/dev/null || true
+ip6tables -A FORWARD -i "$IF" -o eth0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+ip6tables -t nat -A POSTROUTING -o "$IF" -j MASQUERADE 2>/dev/null || true
+ip6tables -t mangle -A FORWARD -o "$IF" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+
 tunnel_down() {
   wg-quick down "$IF" >/dev/null 2>&1
-  ip rule del iif eth0 lookup 100 priority 100 2>/dev/null
-  ip route flush table 100 2>/dev/null
+  ip rule del iif eth0 lookup 100 priority 100 2>/dev/null || true
+  ip route flush table 100 2>/dev/null || true
+  ip -6 rule del iif eth0 lookup 100 priority 100 2>/dev/null || true
+  ip -6 route flush table 100 2>/dev/null || true
 }
 
 tunnel_up() {
@@ -38,7 +46,11 @@ tunnel_up() {
   peer="$(wg show "$IF" peers | head -n1)"
   [ -n "$peer" ] && wg set "$IF" peer "$peer" persistent-keepalive 25
   ip route replace default dev "$IF" table 100
-  ip rule add iif eth0 lookup 100 priority 100
+  ip rule add iif eth0 lookup 100 priority 100 2>/dev/null || true
+  if ip -6 addr show dev "$IF" 2>/dev/null | grep -q "inet6"; then
+    ip -6 route replace default dev "$IF" table 100 2>/dev/null || true
+    ip -6 rule add iif eth0 lookup 100 priority 100 2>/dev/null || true
+  fi
 }
 
 trap 'tunnel_down; exit 0' TERM INT

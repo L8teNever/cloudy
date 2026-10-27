@@ -80,8 +80,13 @@ def build_config(s: Settings) -> str:
         # Name des Dashboards im Heimnetz, z. B. http://cloudy.lan
         lines.append(f"address=/{s.local_name}/{s.pi_ip}")
     if s.gateway_enabled:
-        # Nur IPv4-Adressen ausliefern: IPv6 würde direkt über die Fritzbox und am Pi vorbei laufen.
-        lines.append("filter-AAAA")
+        if s.ipv6_enabled:
+            # IPv6 über den Pi leiten: AAAA-Adressen erlauben und Pi per Router Advertisement ankündigen
+            lines.append("enable-ra")
+            lines.append(f"ra-param={s.lan_interface},high,60")
+        else:
+            # Nur IPv4-Adressen ausliefern: IPv6 würde direkt über die Fritzbox und am Pi vorbei laufen.
+            lines.append("filter-AAAA")
     if s.dhcp_enabled:
         if s.gateway_enabled:
             # Geräte mit "set:direkt" in dhcp-hosts.conf (z. B. mit Portfreigabe) gehen weiter direkt zur Fritzbox.

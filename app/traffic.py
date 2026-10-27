@@ -175,15 +175,20 @@ def gateway_rules(s: Settings) -> list[list[str]]:
 def setup_gateway(s: Settings) -> bool:
     """Weiterleitung + NAT einschalten. Gibt False zurück, wenn es nicht geklappt hat."""
     ok = _write_sysctl("/proc/sys/net/ipv4/ip_forward", "1")
+    _write_sysctl("/proc/sys/net/ipv6/conf/all/forwarding", "1")
+    _write_sysctl("/proc/sys/net/ipv6/conf/default/forwarding", "1")
     # Sonst sagt der Pi den Geräten "geh direkt zur Fritzbox" (ICMP-Redirect) und der Verkehr läuft vorbei.
     for name in ("all", "default", s.lan_interface):
         _write_sysctl(f"/proc/sys/net/ipv4/conf/{name}/send_redirects", "0")
 
     for table, chain in (("nat", NAT_CHAIN), ("filter", FWD_CHAIN)):
         _run(["iptables", "-t", table, "-N", chain])
+        _run(["ip6tables", "-t", table, "-N", chain])
         ok &= _run(["iptables", "-t", table, "-F", chain])
+        _run(["ip6tables", "-t", table, "-F", chain])
     for rule in gateway_rules(s):
         ok &= _run(rule)
+    _run(["ip6tables", "-A", FWD_CHAIN, "-i", s.lan_interface, "-o", s.lan_interface, "-j", "ACCEPT"])
 
     # Docker setzt FORWARD auf DROP; DOCKER-USER wird vorher durchlaufen.
     jumps = [("nat", "POSTROUTING", NAT_CHAIN)]
@@ -193,10 +198,13 @@ def setup_gateway(s: Settings) -> bool:
         if not _run(["iptables", "-t", table, "-C", parent, "-j", chain]):
             ok &= _run(["iptables", "-t", table, "-I", parent, "1", "-j", chain])
 
+    fwd_v6 = "DOCKER-USER" if _run(["ip6tables", "-L", "DOCKER-USER", "-n"]) else "FORWARD"
+    if not _run(["ip6tables", "-t", "filter", "-C", fwd_v6, "-j", FWD_CHAIN]):
+        _run(["ip6tables", "-t", "filter", "-I", fwd_v6, "1", "-j", FWD_CHAIN])
+
     # Byte-Zähler pro Verbindung (das Modul ist erst nach der NAT-Regel geladen).
     _write_sysctl("/proc/sys/net/netfilter/nf_conntrack_acct", "1")
     return ok
-
 
 class TrafficRunner:
     def __init__(self, meter: TrafficMeter, poll_seconds: float):

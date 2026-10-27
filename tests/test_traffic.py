@@ -102,3 +102,13 @@ def test_fmt_bytes():
     assert fmt_bytes(500) == "500 B"
     assert fmt_bytes(1536) == "1,5 KB"
     assert fmt_bytes(3 * 1024**3) == "3,0 GB"
+
+
+def test_ipv6_gateway_config(monkeypatch):
+    monkeypatch.setenv("DHCP_ENABLED", "1")
+    monkeypatch.setenv("GATEWAY_ENABLED", "1")
+    monkeypatch.setenv("IPV6_ENABLED", "1")
+    conf = build_config(Settings.from_env())
+    assert "filter-AAAA" not in conf
+    assert "enable-ra" in conf
+    assert "ra-param=eth0,high,60" in conf

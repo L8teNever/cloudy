@@ -73,14 +73,21 @@ Die MAC-Adressen stehen in der Fritzbox unter Heimnetz → Netzwerk → Gerät b
 Der Pi gibt allen Geräten weiterhin die **Fritzbox als Gateway** (Internet bleibt gleich schnell)
 und **sich selbst als DNS-Server**.
 
-### IPv6 (wichtig, sonst fragen manche Geräte am Pi vorbei)
+### IPv6 & VPN-Tunnel (IPv4 und IPv6 schützen)
 
-Fritzbox → Heimnetz → Netzwerk → Netzwerkeinstellungen → **IPv6**:
-- „DNSv6-Server auch über Router Advertisement bekanntgeben (RFC 5006)“ **ausschalten**
-- DHCPv6-Server im Heimnetz **ausschalten** (bzw. keine DNS-Server per DHCPv6 zuweisen)
+Damit IPv4 und IPv6 durch den VPN-Tunnel (z. B. Proton VPN oder WARP) laufen und **keine echte IPv6 leakt**:
 
-Die Menünamen können je nach FRITZ!OS-Version leicht abweichen. Kontrolle: Im Dashboard sollten deine
-Geräte auftauchen – nicht die Fritzbox (`192.168.178.1`) als einziges „Gerät“.
+1. **Echtes Dual-Stack (IPv4 & IPv6 durch den VPN-Tunnel):**
+   - Auf dem Pi: `cloudy ipv6 an`
+   - In der Fritzbox: Heimnetz → Netzwerk → Netzwerkeinstellungen → **IPv6-Einstellungen**:
+     - Bei **DNSv6-Server im Heimnetz** die IPv6-Adresse des Pi eintragen
+   - Der Pi kündigt sich als IPv6-Router an (`enable-ra`) und leitet IPv4 sowie IPv6 der Geräte über den VPN-Container ins Internet (NAT/Masquerade in `wg0`).
+
+2. **Standard-Modus (100% Leak-Schutz über IPv4-Tunnel):**
+   - In der Fritzbox unter **IPv6**:
+     - „DNSv6-Server auch über Router Advertisement bekanntgeben (RFC 5006)“ **ausschalten**
+     - DHCPv6-Server im Heimnetz **ausschalten**
+   - cloudy filtert im Gateway-Modus AAAA-Antworten (`filter-AAAA`), sodass alle Verbindungen sicher über IPv4 durch den VPN-Tunnel laufen.
 
 ## 4. Gesamter Datenverkehr über den Pi (Gateway)
 
