@@ -212,6 +212,12 @@ class WarpRouter:
 
     def _ensure_forwarding(self) -> None:
         """Docker blockt Weiterleitung zwischen LAN und Bridge -> in der Gateway-Kette freigeben."""
+        # Verhindern, dass Pakete von Geräten mit VPN-Markierung über eth0 zur Fritzbox lecken:
+        if not _run(["ip6tables", "-C", FWD_CHAIN, "-m", "mark", "!", "--mark", "0x0", "-o", self.s.lan_interface, "-j", "DROP"]):
+            _run(["ip6tables", "-I", FWD_CHAIN, "1", "-m", "mark", "!", "--mark", "0x0", "-o", self.s.lan_interface, "-j", "DROP"])
+        if self.s.warp_killswitch:
+            if not _run(["iptables", "-C", FWD_CHAIN, "-m", "mark", "!", "--mark", "0x0", "-o", self.s.lan_interface, "-j", "DROP"]):
+                _run(["iptables", "-I", FWD_CHAIN, "1", "-m", "mark", "!", "--mark", "0x0", "-o", self.s.lan_interface, "-j", "DROP"])
         for _, ip in self.s.warp_slots:
             dev = route_device(ip)
             if not dev or dev == self.s.lan_interface or dev in self._forwarded:

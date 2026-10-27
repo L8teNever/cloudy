@@ -19,7 +19,15 @@ NOISY = (" query[", " forwarded ", " reply ", " cached ", " config ", " validati
 
 # Schaltet "sicheres DNS" in Firefox und iCloud Private Relay im Heimnetz ab,
 # damit diese Geräte normal über den Pi fragen.
-BYPASS_DOMAINS = ("use-application-dns.net", "mask.icloud.com", "mask-h2.icloud.com")
+BYPASS_DOMAINS = (
+    "use-application-dns.net",
+    "mask.icloud.com",
+    "mask-h2.icloud.com",
+    "cloudflare-dns.com",
+    "chrome.cloudflare-dns.com",
+    "dns.google",
+    "dns.quad9.net",
+)
 
 HOSTS_HEADER = """\
 # Feste IP-Adressen für einzelne Geräte (wie "immer die gleiche IP" in der Fritzbox).
