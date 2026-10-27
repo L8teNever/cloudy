@@ -37,7 +37,8 @@
   {% if ip %}
     <p><a href="/">← alle Geräte</a></p>
     <h2>{{ device.hostname or device.ip }}
-      <span class="muted">{{ device.ip }}{% if device.mac %} · {{ device.mac }}{% endif %}</span></h2>
+      <span class="muted">{{ device.ip }}{% if device.mac %} · {{ device.mac }}{% endif %}</span>
+      {% if device.ip in online %}<span class="pill on">online</span>{% else %}<span class="pill">offline</span>{% endif %}</h2>
 
     {% if warp and device.mac %}
     <h2>Internet über</h2>
@@ -87,11 +88,12 @@
       {% endfor %}
     </table>
   {% else %}
-    <h2>Geräte</h2>
+    <h2>Geräte <span class="muted">({{ online | length }} online)</span></h2>
     <table>
-      <tr><th>Gerät</th><th>IP</th><th>MAC</th><th>Aufrufe</th><th>Domains</th><th>↓ Download</th><th>↑ Upload</th>{% if warp %}<th>Internet über</th>{% endif %}<th>Zuletzt aktiv</th></tr>
+      <tr><th>Status</th><th>Gerät</th><th>IP</th><th>MAC</th><th>Aufrufe</th><th>Domains</th><th>↓ Download</th><th>↑ Upload</th>{% if warp %}<th>Internet über</th>{% endif %}<th>Zuletzt aktiv</th></tr>
       {% for d in devices %}
       <tr>
+        <td>{% if d.ip in online %}<span class="pill on">● online</span>{% else %}<span class="muted">offline</span>{% endif %}</td>
         <td><a href="/?ip={{ d.ip | urlencode }}">{{ d.hostname or 'unbekannt' }}</a></td>
         <td class="mono">{{ d.ip }}</td>
         <td class="mono">{{ d.mac or '' }}</td>
@@ -103,7 +105,7 @@
         <td>{{ fmt_time(d.last_seen) }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="muted">Noch keine Anfragen. Fragt schon ein Gerät den Pi als DNS-Server?</td></tr>
+      <tr><td colspan="10" class="muted">Noch keine Anfragen. Fragt schon ein Gerät den Pi als DNS-Server?</td></tr>
       {% endfor %}
     </table>
 

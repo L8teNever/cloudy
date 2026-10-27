@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 from . import db, warp
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
+from .presence import PresenceMonitor
 from .settings import Settings
 from .traffic import DomainMap, TrafficMeter, TrafficRunner, setup_gateway
 
@@ -38,7 +39,7 @@ templates.env.filters["bytes"] = fmt_bytes
 async def lifespan(app: FastAPI):
     settings = Settings.from_env()
     db.init()
-    runner = traffic_runner = warp_router = None
+    runner = traffic_runner = warp_router = presence = None
     domain_map = DomainMap()
     if settings.dnsmasq_enabled and settings.gateway_enabled:
         if setup_gateway(settings):
@@ -57,6 +58,10 @@ async def lifespan(app: FastAPI):
         except OSError:
             pass
     app.state.settings = settings
+    if settings.dnsmasq_enabled:
+        presence = PresenceMonitor(settings)
+        presence.start()
+    app.state.presence = presence
     if settings.dnsmasq_enabled:
         runner = DnsmasqRunner(settings, Collector(domain_map=domain_map))
         runner.start()
@@ -77,6 +82,8 @@ async def lifespan(app: FastAPI):
         traffic_runner.stop()
     if warp_router:
         warp_router.stop()
+    if presence:
+        presence.stop()
 
 
 app = FastAPI(title="cloudy", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -136,11 +143,17 @@ def warp_profiles(settings: Settings) -> list[dict]:
     ]
 
 
+def online_ips(request: Request) -> frozenset[str]:
+    presence = getattr(request.app.state, "presence", None)
+    return presence.online if presence else frozenset()
+
+
 @app.get("/", response_class=HTMLResponse, dependencies=[Depends(require_password)])
 async def dashboard(request: Request, ip: str | None = None):
     settings = request.app.state.settings
     context = {"settings": settings, "fmt_time": fmt_time, "ip": ip}
     context["warp"] = await run_in_threadpool(warp_profiles, settings)
+    context["online"] = online_ips(request)
     context["warp_names"] = {w["slot"]: w["label"] for w in context["warp"]}
     context["warp_by_mac"] = await run_in_threadpool(db.device_warp)
     if ip:
@@ -155,8 +168,10 @@ async def dashboard(request: Request, ip: str | None = None):
 
 
 @app.get("/api/devices", dependencies=[Depends(require_password)])
-async def api_devices():
-    return await run_in_threadpool(db.devices)
+async def api_devices(request: Request):
+    online = online_ips(request)
+    devices = await run_in_threadpool(db.devices)
+    return [{**d, "online": d["ip"] in online} for d in devices]
 
 
 @app.get("/api/devices/{ip}", dependencies=[Depends(require_password)])

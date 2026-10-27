@@ -189,6 +189,15 @@ def set_warp_label(slot: str, label: str) -> None:
         conn.commit()
 
 
+def known_ips() -> list[str]:
+    """Alle Geräte, die der Pi kennt (DHCP, DNS-Anfragen, Datenverkehr)."""
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT ip FROM devices UNION SELECT ip FROM domain_stats UNION SELECT ip FROM traffic"
+        ).fetchall()
+    return [r["ip"] for r in rows]
+
+
 def devices() -> list[dict]:
     with closing(_connect()) as conn:
         rows = conn.execute(

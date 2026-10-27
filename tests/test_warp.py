@@ -111,3 +111,28 @@ def test_dashboard_vpn_config(client):
     assert not warp.has_token(s, "warp1")
     client.post("/warp/vpn1/logout")
     assert not warp.has_token(s, "vpn1")
+
+
+def test_presence_parse_and_dashboard(client):
+    from types import SimpleNamespace
+
+    from app.presence import parse_neigh
+
+    out = (
+        "192.168.178.25 lladdr aa:bb:cc:dd:ee:01 REACHABLE\n"
+        "192.168.178.26 lladdr aa:bb:cc:dd:ee:02 STALE\n"
+        "192.168.178.27  FAILED\n"
+        "192.168.178.28  INCOMPLETE\n"
+    )
+    assert parse_neigh(out) == {
+        "192.168.178.25": "REACHABLE", "192.168.178.26": "STALE",
+        "192.168.178.27": "FAILED", "192.168.178.28": "FAILED",
+    }
+    now = int(time.time())
+    db.add_traffic([("192.168.178.25", "a.de", 1, 1, 1, now), ("192.168.178.26", "b.de", 1, 1, 1, now)])
+    assert set(db.known_ips()) == {"192.168.178.25", "192.168.178.26"}
+    client.app.state.presence = SimpleNamespace(online=frozenset({"192.168.178.25"}))
+    page = client.get("/").text
+    assert "(1 online)" in page and "● online" in page
+    api = {d["ip"]: d["online"] for d in client.get("/api/devices").json()}
+    assert api == {"192.168.178.25": True, "192.168.178.26": False}

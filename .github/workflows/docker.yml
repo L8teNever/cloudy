@@ -142,6 +142,15 @@ jobs:
           test "$(zaehler)" -eq 0
           echo "WARP-Routing ok"
 
+          # Online-Anzeige: das laufende "Gerät" erscheint als online, nach dem Stoppen als offline.
+          online() { docker exec cloudy-wr python -c "import json, urllib.request; d = json.load(urllib.request.urlopen('http://127.0.0.1:8080/api/devices')); print([x['online'] for x in d if x['ip'] == '172.30.0.11'][0])"; }
+          sleep 35
+          test "$(online)" = "True"
+          docker stop geraet
+          sleep 40
+          test "$(online)" = "False"
+          echo "Online-Anzeige ok"
+
       - name: WARP-Image – Dienst startet und lehnt einen falschen Token ab
         run: |
           docker build -t cloudy-warp-test warp
