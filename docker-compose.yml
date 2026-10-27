@@ -48,6 +48,35 @@ services:
       cloudy-warp:
         ipv4_address: 172.29.86.12
 
+  # WireGuard-VPN (z. B. Proton VPN): ein Container pro Konfiguration. .conf im Dashboard einfügen.
+  vpn1: &vpn
+    image: ghcr.io/l8tenever/cloudy:vpn
+    container_name: cloudy-vpn1
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv4.conf.all.rp_filter: "2"
+    environment:
+      TZ: Europe/Berlin
+    volumes:
+      - ./data/warp/vpn1:/cloudy
+    networks:
+      cloudy-warp:
+        ipv4_address: 172.29.86.21
+
+  vpn2:
+    <<: *vpn
+    container_name: cloudy-vpn2
+    volumes:
+      - ./data/warp/vpn2:/cloudy
+    networks:
+      cloudy-warp:
+        ipv4_address: 172.29.86.22
+
 networks:
   cloudy-warp:
     name: cloudy-warp

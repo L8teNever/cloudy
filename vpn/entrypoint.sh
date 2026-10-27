@@ -1,0 +1,76 @@
+#!/bin/sh
+# WireGuard-Tunnel (z. B. Proton VPN). Wartet auf die .conf aus dem Dashboard (/cloudy/wg.conf), baut den Tunnel auf
+# und leitet den Verkehr, der von den Geräten hier ankommt, durch den Tunnel. Zustand -> /cloudy/status
+set -u
+DIR=/cloudy
+IF=wg0
+mkdir -p "$DIR"
+
+status() { printf '%s\n' "$1" | head -n1 > "$DIR/status.tmp" && mv "$DIR/status.tmp" "$DIR/status"; }
+
+# Kill-Switch im Container: Pakete der Geräte dürfen NUR in den Tunnel, nie an ihm vorbei ins Internet.
+iptables -P FORWARD DROP
+iptables -A FORWARD -i eth0 -o "$IF" -j ACCEPT
+iptables -A FORWARD -i "$IF" -o eth0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -t nat -A POSTROUTING -o "$IF" -j MASQUERADE
+# Tunnel hat eine kleinere MTU -> TCP-Paketgröße anpassen, sonst hängen manche Seiten.
+iptables -t mangle -A FORWARD -o "$IF" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+
+tunnel_down() {
+  wg-quick down "$IF" >/dev/null 2>&1
+  ip rule del iif eth0 lookup 100 priority 100 2>/dev/null
+  ip route flush table 100 2>/dev/null
+}
+
+tunnel_up() {
+  # Nur Adresse und Schlüssel übernehmen. Befehle in der Datei (PostUp ...), DNS und Routen setzen wir selbst.
+  mkdir -p /etc/wireguard
+  tr -d '\r' < "$DIR/wg.conf" \
+    | sed -E '/^[[:space:]]*(PostUp|PreUp|PostDown|PreDown|SaveConfig|DNS|Table)[[:space:]]*=/Id' \
+    | sed '/^\[Interface\]/I a Table = off' > /etc/wireguard/$IF.conf
+  chmod 600 /etc/wireguard/$IF.conf
+  tunnel_down
+  if ! out="$(wg-quick up "$IF" 2>&1)"; then
+    # Kein WireGuard im Kernel -> Programm-Variante
+    tunnel_down
+    out="$(WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go wg-quick up "$IF" 2>&1)" || { echo "vpn: $out"; return 1; }
+  fi
+  peer="$(wg show "$IF" peers | head -n1)"
+  [ -n "$peer" ] && wg set "$IF" peer "$peer" persistent-keepalive 25
+  ip route replace default dev "$IF" table 100
+  ip rule add iif eth0 lookup 100 priority 100
+}
+
+trap 'tunnel_down; exit 0' TERM INT
+
+applied=""
+while true; do
+  if [ ! -s "$DIR/wg.conf" ]; then
+    if [ -n "$applied" ]; then tunnel_down; applied=""; fi
+    status "Nicht angemeldet"
+    sleep 5 & wait $!
+    continue
+  fi
+
+  want="$(sha256sum "$DIR/wg.conf" | cut -c1-16)"
+  if [ "$want" != "$applied" ]; then
+    echo "vpn: baue Tunnel auf"
+    status "Verbindung wird aufgebaut"
+    if tunnel_up; then
+      applied="$want"
+    else
+      status "Fehler: Tunnel konnte nicht gestartet werden (cloudy logs vpn1)"
+      sleep 10 & wait $!
+      continue
+    fi
+  fi
+
+  hs="$(wg show "$IF" latest-handshakes 2>/dev/null | awk '{print $2}' | head -n1)"
+  now="$(date +%s)"
+  if [ -n "$hs" ] && [ "$hs" -gt 0 ] && [ $((now - hs)) -lt 180 ]; then
+    status "Connected"
+  else
+    status "Getrennt – kein Kontakt zum VPN-Server"
+  fi
+  sleep 5 & wait $!
+done

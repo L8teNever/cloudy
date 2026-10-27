@@ -118,14 +118,21 @@ async def ca_certificate(request: Request):
 
 def warp_profiles(settings: Settings) -> list[dict]:
     labels = db.warp_labels()
+    count: dict[str, int] = {}
+    profiles = []
+    for slot, _ in settings.warp_slots:
+        k = warp.kind(slot)
+        count[k] = count.get(k, 0) + 1
+        profiles.append((slot, k, f"{'VPN' if k == 'vpn' else 'WARP'} {count[k]}"))
     return [
         {
             "slot": slot,
-            "label": labels.get(slot) or f"WARP {i}",
+            "kind": k,
+            "label": labels.get(slot) or default_label,
             "has_token": warp.has_token(settings, slot),
             "status": warp.read_status(settings, slot),
         }
-        for i, (slot, _) in enumerate(settings.warp_slots, start=1)
+        for slot, k, default_label in profiles
     ]
 
 
@@ -174,9 +181,18 @@ def _check_slot(request: Request, slot: str) -> Settings:
 
 
 @app.post("/warp/{slot}/login", dependencies=[Depends(require_password)])
-async def warp_login(request: Request, slot: str, token: str = Form(""), label: str = Form("")):
+async def warp_login(
+    request: Request, slot: str, token: str = Form(""), config: str = Form(""), label: str = Form("")
+):
     settings = _check_slot(request, slot)
     token = token.strip()
+    if warp.kind(slot) == "vpn":
+        if config.strip():
+            try:
+                await run_in_threadpool(warp.save_vpn_config, settings, slot, config)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        token = ""
     if label.strip():
         await run_in_threadpool(db.set_warp_label, slot, label.strip()[:40])
     if token:

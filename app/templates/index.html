@@ -19,7 +19,7 @@
     a { color: #7e22ce; }
     .muted { color: #888; }
     form.inline { display: inline-flex; gap: .35rem; flex-wrap: wrap; margin: 0 .35rem .25rem 0; }
-    input, select, button { font: inherit; padding: .25rem .45rem; }
+    input, select, button, textarea { font: inherit; padding: .25rem .45rem; }
     button { background: #9333ea; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
     button.secondary { background: #e9e3f5; color: #1f1b2e; }
   </style>
@@ -108,7 +108,7 @@
     </table>
 
     {% if warp %}
-    <h2 id="warp">Cloudflare WARP</h2>
+    <h2 id="warp">Cloudflare WARP &amp; VPN</h2>
     {% if not settings.gateway_enabled %}
     <p class="muted">Geräte laufen erst durch WARP, wenn der Gateway-Modus an ist (<code>cloudy gateway an</code>).</p>
     {% endif %}
@@ -116,14 +116,19 @@
       <tr><th>Profil</th><th>Status</th><th>Geräte</th><th>Anmelden / ändern</th></tr>
       {% for w in warp %}
       <tr>
-        <td>{{ w.label }} <span class="muted">({{ w.slot }})</span></td>
+        <td>{{ w.label }} <span class="muted">({{ 'WireGuard' if w.kind == 'vpn' else 'Cloudflare' }})</span></td>
         <td>{% if w.has_token %}<span class="pill {{ 'on' if w.status.connected else '' }}">{{ w.status.text }}</span>{% else %}<span class="muted">nicht angemeldet</span>{% endif %}</td>
         <td>{{ warp_by_mac.values() | select('equalto', w.slot) | list | length }}</td>
         <td>
           <form method="post" action="/warp/{{ w.slot }}/login" class="inline">
             <input name="label" value="{{ w.label }}" size="12" aria-label="Name">
+            {% if w.kind == 'vpn' %}
+            <textarea name="config" rows="2" cols="28" autocomplete="off" spellcheck="false"
+                      placeholder="{{ 'neue .conf (leer = behalten)' if w.has_token else 'WireGuard-.conf hier einfügen' }}"></textarea>
+            {% else %}
             <input name="token" type="password" autocomplete="off" size="24"
                    placeholder="{{ 'neuer Token (leer = behalten)' if w.has_token else 'Token aus Zero Trust' }}">
+            {% endif %}
             <button>Speichern</button>
           </form>
           {% if w.has_token %}
@@ -133,7 +138,7 @@
       </tr>
       {% endfor %}
     </table>
-    <p class="muted">Geräte zuordnen: Gerät anklicken → „Internet über“. Anleitung für den Token in der README.</p>
+    <p class="muted">Geräte zuordnen: Gerät anklicken → „Internet über“. Anleitung (Token bzw. WireGuard-Datei) in der README.</p>
     {% endif %}
 
     <h2>Letzte Aufrufe</h2>
@@ -159,7 +164,7 @@
     // Alle 15 s neu laden – aber nicht, während du gerade etwas eintippst.
     setInterval(() => {
       const typing = document.activeElement?.closest("form") ||
-        [...document.querySelectorAll("input[name=token]")].some((i) => i.value);
+        [...document.querySelectorAll("input[name=token], textarea[name=config]")].some((i) => i.value);
       if (!typing) location.reload();
     }, 15000);
   </script>

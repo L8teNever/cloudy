@@ -137,6 +137,35 @@ Voraussetzung: Gateway-Modus ist an (Schritt 4).
   Zugangsschlüssel zu deinem Zero-Trust-Account – die Datei nicht weitergeben.
 - Status auf dem Pi: `cloudy status`, Logs: `cloudy logs warp1`.
 
+## 6. Einzelne Geräte durch Proton VPN (oder anderes WireGuard-VPN) schicken
+
+Gleiches Prinzip wie bei WARP: Im Dashboard stehen **VPN 1** und **VPN 2**. Pro Gerät wählst du unter
+„Internet über“, ob es normal, über WARP oder über ein VPN ins Internet geht. Am Gerät muss nichts installiert werden.
+
+```
+Gerät ──► Pi ──► VPN-Container (WireGuard) ══Tunnel══► Proton ──► Internet
+```
+
+**WireGuard-Datei bei Proton holen:**
+1. [account.protonvpn.com/downloads](https://account.protonvpn.com/downloads) → Abschnitt **WireGuard-Konfiguration**.
+2. Plattform **Router** (alternativ GNU/Linux) wählen, einen Namen geben (z. B. `cloudy`), einen **Server** wählen
+   (mit dem kostenlosen Tarif nur die Free-Server) und **Erstellen** → Datei herunterladen.
+3. Die Datei mit einem Texteditor öffnen und den **ganzen Inhalt** kopieren.
+
+**Im Dashboard:** Abschnitt „Cloudflare WARP & VPN“ → bei **VPN 1** den Inhalt einfügen → Speichern.
+Nach wenigen Sekunden steht dort **„verbunden“**. Danach beim Gerät „Internet über“ → VPN 1.
+
+**Gut zu wissen:**
+- Proton erlaubt pro Konfiguration nur **ein** Gerät gleichzeitig. Der Pi ist dabei ein Gerät, alle zugeordneten
+  Geräte teilen sich also die Verbindung. Eine zweite Datei (anderer Server) kommt in **VPN 2**.
+- Der kostenlose Tarif ist langsamer als Bezahltarife und hat wenige Länder. Auf dem Pi 3B+ sind etwa
+  **100 Mbit/s** durch WireGuard möglich.
+- **Fällt das VPN aus,** gehen die Geräte automatisch wieder normal ins Internet (über die Fritzbox).
+  Willst du das nicht, damit nichts am VPN vorbei geht: `WARP_KILLSWITCH=1` in `~/cloudy/.env`, dann `cloudy restart`.
+- Befehle in der Datei (`PostUp` …) und `DNS` werden ignoriert. DNS fragt weiterhin der Pi.
+- Die Datei enthält deinen privaten Schlüssel (liegt in `~/cloudy/data/warp/vpn1/`) – nicht weitergeben.
+- Status: `cloudy status`, Logs: `cloudy logs vpn1`.
+
 ## Zurück zur Fritzbox (alles wie vorher)
 
 1. Auf dem Pi: `cloudy dhcp aus` (schaltet auch das Gateway aus)

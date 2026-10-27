@@ -47,12 +47,12 @@ class Settings:
             traffic_poll_seconds=float(os.environ.get("TRAFFIC_POLL_SECONDS", "10")),
             local_name=os.environ.get("LOCAL_NAME", "cloudy.lan").strip().lower().rstrip("."),
             https_port=int(os.environ.get("HTTPS_PORT", "443").strip() or 0),
-            # WARP-Container aus docker-compose.yml: Name=IP im Netz "cloudy-warp".
+            # WARP-/VPN-Container aus docker-compose.yml (warpN = Cloudflare WARP, vpnN = WireGuard): Name=IP im Netz "cloudy-warp".
             warp_slots=[
                 (name.strip(), ip.strip())
                 for name, _, ip in (
                     s.partition("=")
-                    for s in os.environ.get("WARP_SLOTS", "warp1=172.29.86.11,warp2=172.29.86.12").split(",")
+                    for s in os.environ.get("WARP_SLOTS", "warp1=172.29.86.11,warp2=172.29.86.12,vpn1=172.29.86.21,vpn2=172.29.86.22").split(",")
                 )
                 if name.strip() and ip.strip()
             ],

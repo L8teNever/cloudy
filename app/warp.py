@@ -1,4 +1,4 @@
-"""WARP: Verkehr einzelner Geräte durch einen Cloudflare-WARP-Tunnel schicken.
+"""WARP/VPN: Verkehr einzelner Geräte durch einen Cloudflare-WARP- oder WireGuard-Tunnel (z. B. Proton VPN) schicken.
 
 Pro Cloudflare-Account läuft ein eigener Container (warp1, warp2 …, siehe docker-compose.yml) im Docker-Netz
 "cloudy-warp". Das Dashboard legt dessen Token in data/warp/<slot>/token ab, der Container meldet sich damit als
@@ -37,25 +37,62 @@ def slot_dir(s: Settings, slot: str) -> str:
     return os.path.join(s.warp_dir, slot)
 
 
-def save_token(s: Settings, slot: str, token: str) -> None:
+def kind(slot: str) -> str:
+    """"vpn" für WireGuard-Profile (vpn1, vpn2 ...), sonst "warp"."""
+    return "vpn" if slot.startswith("vpn") else "warp"
+
+
+def secret_name(slot: str) -> str:
+    return "wg.conf" if kind(slot) == "vpn" else "token"
+
+
+def _write_secret(s: Settings, slot: str, text: str) -> None:
     os.makedirs(slot_dir(s, slot), exist_ok=True)
-    path = os.path.join(slot_dir(s, slot), "token")
+    path = os.path.join(slot_dir(s, slot), secret_name(slot))
     tmp = path + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
-        f.write(token.strip() + "\n")
+        f.write(text)
     os.replace(tmp, path)
+
+
+def save_token(s: Settings, slot: str, token: str) -> None:
+    _write_secret(s, slot, token.strip() + "\n")
+
+
+def check_wireguard_config(text: str) -> str:
+    """Prüft eine WireGuard-.conf (z. B. von Proton VPN) und gibt sie bereinigt zurück. ValueError bei Fehlern."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if len(text) > 8192 or "\0" in text:
+        raise ValueError("Datei zu groß oder ungültig")
+    sections, keys = set(), set()
+    for line in text.split("\n"):
+        line = line.strip()
+        if line.startswith("["):
+            sections.add(line.lower())
+        elif "=" in line and not line.startswith("#"):
+            keys.add(line.split("=", 1)[0].strip().lower())
+    if "[interface]" not in sections or "[peer]" not in sections:
+        raise ValueError("Das ist keine WireGuard-Konfiguration ([Interface] und [Peer] fehlen)")
+    for needed in ("privatekey", "publickey", "endpoint", "address"):
+        if needed not in keys:
+            raise ValueError(f"In der Konfiguration fehlt {needed}")
+    return text + "\n"
+
+
+def save_vpn_config(s: Settings, slot: str, text: str) -> None:
+    _write_secret(s, slot, check_wireguard_config(text))
 
 
 def remove_token(s: Settings, slot: str) -> None:
     try:
-        os.remove(os.path.join(slot_dir(s, slot), "token"))
+        os.remove(os.path.join(slot_dir(s, slot), secret_name(slot)))
     except FileNotFoundError:
         pass
 
 
 def has_token(s: Settings, slot: str) -> bool:
-    path = os.path.join(slot_dir(s, slot), "token")
+    path = os.path.join(slot_dir(s, slot), secret_name(slot))
     return os.path.exists(path) and os.path.getsize(path) > 0
 
 
@@ -73,9 +110,9 @@ def read_status(s: Settings, slot: str, now: float | None = None) -> SlotStatus:
             text = f.readline().strip()
         age = now - os.path.getmtime(path)
     except FileNotFoundError:
-        return SlotStatus(False, "WARP-Container läuft nicht (cloudy update ausführen)")
+        return SlotStatus(False, "Container läuft nicht (cloudy update ausführen)")
     if age > STATUS_MAX_AGE:
-        return SlotStatus(False, "WARP-Container antwortet nicht")
+        return SlotStatus(False, "Container antwortet nicht")
     if text == "Connected":
         return SlotStatus(True, "verbunden")
     return SlotStatus(False, text or "unbekannt")

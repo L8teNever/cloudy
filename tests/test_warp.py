@@ -9,18 +9,20 @@ MAC = "aa:bb:cc:dd:ee:01"
 
 def test_plan_marks_assigned_devices_and_routes_per_tunnel(monkeypatch):
     s = Settings.from_env()
-    assert s.warp_slots == [("warp1", "172.29.86.11"), ("warp2", "172.29.86.12")]
+    assert s.warp_slots == [("warp1", "172.29.86.11"), ("warp2", "172.29.86.12"),
+                            ("vpn1", "172.29.86.21"), ("vpn2", "172.29.86.22")]
     plan = warp.build_plan(s, {MAC: "warp2", "kaputt": "warp1", "aa:bb:cc:dd:ee:09": "weg"},
                            {"warp1": True, "warp2": False})
     assert plan.mangle_rules == ((
         "-i", "eth0", "-m", "mac", "--mac-source", MAC, "!", "-d", "192.168.178.0/24",
         "-j", "MARK", "--set-mark", "0x102",
     ),)
-    assert plan.routes == (
+    assert plan.routes[:2] == (
         ("default", "via", "172.29.86.11", "table", "201"),
         # Tunnel weg -> über die Fritzbox
         ("default", "via", "192.168.178.1", "dev", "eth0", "table", "202"),
     )
+    assert plan.routes[2] == ("default", "via", "192.168.178.1", "dev", "eth0", "table", "203")
 
     monkeypatch.setenv("WARP_KILLSWITCH", "1")
     plan = warp.build_plan(Settings.from_env(), {}, {"warp1": False})
@@ -78,3 +80,34 @@ def test_dashboard_login_and_assign(client):
 
     client.post("/warp/warp1/logout")
     assert not warp.has_token(s, "warp1")
+
+
+WG_CONF = (
+    "[Interface]\r\nPrivateKey = AAAA\r\nAddress = 10.2.0.2/32\r\nDNS = 10.2.0.1\r\n"
+    "[Peer]\r\nPublicKey = BBBB\r\nAllowedIPs = 0.0.0.0/0\r\nEndpoint = 1.2.3.4:51820\r\n"
+)
+
+
+def test_wireguard_config_check():
+    assert "\r" not in warp.check_wireguard_config(WG_CONF)
+    for bad in ("hallo", WG_CONF.replace("PrivateKey", "Foo"), WG_CONF.replace("[Peer]", ""), "x" * 9000):
+        try:
+            warp.check_wireguard_config(bad)
+        except ValueError:
+            continue
+        raise AssertionError(bad[:20])
+
+
+def test_dashboard_vpn_config(client):
+    s = Settings.from_env()
+    assert warp.kind("vpn1") == "vpn" and warp.kind("warp1") == "warp"
+    r = client.post("/warp/vpn1/login", data={"label": "Proton", "config": WG_CONF}, follow_redirects=False)
+    assert r.status_code == 303
+    path = os.path.join(warp.slot_dir(s, "vpn1"), "wg.conf")
+    assert "PrivateKey = AAAA" in open(path).read()
+    page = client.get("/").text
+    assert "Proton" in page and "WireGuard" in page
+    assert client.post("/warp/vpn1/login", data={"config": "quatsch"}).status_code == 400
+    assert not warp.has_token(s, "warp1")
+    client.post("/warp/vpn1/logout")
+    assert not warp.has_token(s, "vpn1")
