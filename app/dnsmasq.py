@@ -81,6 +81,9 @@ def build_config(s: Settings) -> str:
     if s.local_name:
         # Name des Dashboards im Heimnetz, z. B. http://cloudy.lan
         lines.append(f"address=/{s.local_name}/{s.pi_ip}")
+        short_name = s.local_name.split(".")[0]
+        if short_name and short_name != s.local_name:
+            lines.append(f"address=/{short_name}/{s.pi_ip}")
     if s.gateway_enabled:
         if s.ipv6_enabled:
             # IPv6 über den Pi leiten: AAAA-Adressen erlauben und Pi per Router Advertisement ankündigen

@@ -1,3 +1,4 @@
+import ipaddress
 import os
 import sqlite3
 import time
@@ -22,13 +23,24 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _is_ip(val: str | None) -> bool:
+    if not val:
+        return False
+    try:
+        ipaddress.ip_address(val)
+        return True
+    except ValueError:
+        return False
+
+
 def init() -> None:
     os.makedirs(os.path.dirname(db_path()) or ".", exist_ok=True)
     with closing(_connect()) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(
             """
-            CREATE TABLE IF NOT EXISTS queries (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,
+            CREATE TABLE IF NOT EXISTS queries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts INTEGER NOT NULL,
                 ip TEXT NOT NULL,
                 domain TEXT NOT NULL,
@@ -36,7 +48,8 @@ def init() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_queries_ip ON queries (ip, id);
 
-            CREATE TABLE IF NOT EXISTS domain_stats (\n                ip TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS domain_stats (
+                ip TEXT NOT NULL,
                 domain TEXT NOT NULL,
                 hits INTEGER NOT NULL,
                 first_seen INTEGER NOT NULL,
@@ -44,7 +57,8 @@ def init() -> None:
                 PRIMARY KEY (ip, domain)
             );
 
-            CREATE TABLE IF NOT EXISTS traffic (\n                ip TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS traffic (
+                ip TEXT NOT NULL,
                 target TEXT NOT NULL,
                 bytes_up INTEGER NOT NULL,
                 bytes_down INTEGER NOT NULL,
@@ -54,26 +68,31 @@ def init() -> None:
                 PRIMARY KEY (ip, target)
             );
 
-            CREATE TABLE IF NOT EXISTS devices (\n                ip TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS devices (
+                ip TEXT PRIMARY KEY,
                 mac TEXT,
                 hostname TEXT,
                 updated INTEGER NOT NULL
             );
 
             -- Welches Gerät (MAC) über welchen WARP-Account ins Internet geht.
-            CREATE TABLE IF NOT EXISTS device_warp (\n                mac TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS device_warp (
+                mac TEXT PRIMARY KEY,
                 slot TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS settings (\n                key TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS warp_labels (\n                slot TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS warp_labels (
+                slot TEXT PRIMARY KEY,
                 label TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS whitelist (\n                domain TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS whitelist (
+                domain TEXT PRIMARY KEY,
                 added INTEGER NOT NULL
             );
             """
@@ -245,7 +264,7 @@ def known_ips() -> list[str]:
 
 
 def current_sites() -> dict[str, dict]:
-    """Für jedes Gerät die zuletzt aufgerufene Domain/Seite mit Zeitstempel."""
+    """Für jedes Gerät die zuletzt aufgerufene Domain/Seite mit Zeitstempel und optionaler Ziel-IP."""
     with closing(_connect()) as conn:
         q_rows = conn.execute(
             """
@@ -265,11 +284,38 @@ def current_sites() -> dict[str, dict]:
         ).fetchall()
     result = {}
     for r in q_rows:
-        result[r["ip"]] = {"domain": r["domain"], "ts": r["ts"]}
+        result[r["ip"]] = {"domain": r["domain"], "ip": None, "ts": r["ts"]}
+
     for r in t_rows:
-        ip = r["ip"]
-        if ip not in result or r["last_seen"] > result[ip]["ts"]:
-            result[ip] = {"domain": r["target"], "ts": r["last_seen"]}
+        dev_ip = r["ip"]
+        target = r["target"]
+        ts = r["last_seen"]
+        target_is_ip = _is_ip(target)
+
+        if dev_ip not in result:
+            result[dev_ip] = {
+                "domain": target,
+                "ip": target if target_is_ip else None,
+                "ts": ts,
+            }
+        else:
+            prev = result[dev_ip]
+            if target_is_ip:
+                # Target im Datenverkehr ist eine IP (z. B. 142.250.1.1):
+                # Wir behalten die Domain aus der DNS-Anfrage, merken uns die Ziel-IP
+                result[dev_ip] = {
+                    "domain": prev["domain"],
+                    "ip": target,
+                    "ts": max(prev["ts"], ts),
+                }
+            else:
+                # Target ist bereits ein Domainname
+                if ts >= prev["ts"]:
+                    result[dev_ip] = {
+                        "domain": target,
+                        "ip": None,
+                        "ts": ts,
+                    }
     return result
 
 

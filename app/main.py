@@ -1,18 +1,20 @@
 import os
 import secrets
+import threading
 import time
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 from urllib.parse import quote
 
+import uvicorn
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import blocklist, db, warp
+from . import blocklist, certs, db, warp
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -84,6 +86,21 @@ async def lifespan(app: FastAPI):
         runner = DnsmasqRunner(settings, Collector(domain_map=domain_map))
         runner.start()
     app.state.runner = runner
+
+    # HTTP auf Standard-Port 80 anbieten, damit Mobilgeräte und Browser ohne :8080 verbinden können.
+    http_80_server = None
+    dashboard_port = int(os.environ.get("DASHBOARD_PORT", "8080"))
+    if dashboard_port != 80:
+        try:
+            http_80_config = uvicorn.Config(
+                app, host="0.0.0.0", port=80, lifespan="off", log_level="warning"
+            )
+            http_80_server = uvicorn.Server(http_80_config)
+            threading.Thread(target=http_80_server.run, daemon=True).start()
+            print("cloudy: HTTP auch auf Standard-Port 80 an", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"cloudy: Port 80 nicht gebunden: {exc}", flush=True)
+
     https_server = None
     if settings.https_port:
         try:
@@ -95,6 +112,8 @@ async def lifespan(app: FastAPI):
     yield
     if https_server:
         https_server.should_exit = True
+    if http_80_server:
+        http_80_server.should_exit = True
     if runner:
         runner.stop()
     if traffic_runner:
@@ -140,6 +159,36 @@ async def ca_certificate(request: Request):
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="HTTPS ist nicht eingeschaltet")
     return FileResponse(path, media_type="application/x-x509-ca-cert", filename="cloudy-ca.crt")
+
+
+@app.get("/ca.mobileconfig")
+async def ca_mobileconfig(request: Request):
+    """Apple Configuration Profile für iOS/iPadOS/macOS für 1-Klick-Installation des Zertifikats."""
+    settings = request.app.state.settings
+    path = ca_cert_path(settings)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="HTTPS ist nicht eingeschaltet")
+    content = await run_in_threadpool(certs.make_mobileconfig, settings)
+    return Response(
+        content=content,
+        media_type="application/x-apple-aspen-config",
+        headers={"Content-Disposition": 'attachment; filename="cloudy-ca.mobileconfig"'},
+    )
+
+
+@app.get("/install-ca.bat")
+async def ca_install_bat(request: Request):
+    """Windows-Batch-Skript zur 1-Klick-Installation des CA-Zertifikats."""
+    settings = request.app.state.settings
+    path = ca_cert_path(settings)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="HTTPS ist nicht eingeschaltet")
+    content = await run_in_threadpool(certs.make_windows_bat, settings)
+    return Response(
+        content=content,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="install-cloudy-ca.bat"'},
+    )
 
 
 def warp_profiles(settings: Settings) -> list[dict]:

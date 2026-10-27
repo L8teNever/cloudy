@@ -47,6 +47,17 @@ def test_ca_download_route(client):
     assert r.status_code == 200
     assert b"BEGIN CERTIFICATE" in r.content and b"PRIVATE KEY" not in r.content
 
+    # Apple .mobileconfig
+    r_mc = client.get("/ca.mobileconfig")
+    assert r_mc.status_code == 200
+    assert "com.apple.security.root" in r_mc.text
+    assert "cloudy-ca.mobileconfig" in r_mc.headers.get("content-disposition", "")
+
+    # Windows .bat
+    r_bat = client.get("/install-ca.bat")
+    assert r_bat.status_code == 200
+    assert "certutil -addstore" in r_bat.text
+
 
 def test_real_https_connection_validates_against_ca():
     s = Settings.from_env()

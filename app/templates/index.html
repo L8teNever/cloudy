@@ -56,6 +56,9 @@
       <span id="device-current-site">
         {% if device.current_site and device.current_site.domain %}
           <span class="mono" style="font-weight:600;color:#6b21a8">{{ device.current_site.domain }}</span>
+          {% if device.current_site.ip and device.current_site.ip != device.current_site.domain %}
+            <span class="muted" style="font-size:.85rem">({{ device.current_site.ip }})</span>
+          {% endif %}
           <span class="muted" style="font-size:.85rem">({{ device.current_site.ts | ago }})</span>
         {% else %}
           <span class="muted">Noch keine Aktivität erfasst</span>
@@ -119,6 +122,9 @@
         <a href="/?ip={{ d.ip | urlencode }}" style="text-decoration:none;font-weight:600;color:#1f1b2e">{{ d.hostname or d.ip }}</a>
         <span class="muted">auf</span>
         <span class="mono" style="font-weight:600;color:#6b21a8">{{ d.current_site.domain }}</span>
+        {% if d.current_site.ip and d.current_site.ip != d.current_site.domain %}
+          <span class="muted" style="font-size:.75rem">({{ d.current_site.ip }})</span>
+        {% endif %}
         <span class="muted site-ago" style="font-size:.8rem">({{ d.current_site.ts | ago }})</span>
       </div>
       {% endfor %}
@@ -144,6 +150,9 @@
         <td class="device-site">
           {% if d.current_site and d.current_site.domain %}
             <span class="mono" style="font-weight:600;color:#6b21a8">{{ d.current_site.domain }}</span>
+            {% if d.current_site.ip and d.current_site.ip != d.current_site.domain %}
+              <span class="muted" style="font-size:.75rem">({{ d.current_site.ip }})</span>
+            {% endif %}
             <span class="muted" style="font-size:.8rem">({{ d.current_site.ts | ago }})</span>
           {% else %}
             <span class="muted">–</span>
@@ -271,10 +280,34 @@
     </table>
   {% endif %}
 
-  {% if settings.https_port %}
-  <p class="muted" style="margin-top:2rem">HTTPS ohne Warnung: <a href="/ca.crt">Zertifikat (CA) herunterladen</a>
-    und einmal auf dem Gerät installieren – Anleitung in der README.</p>
-  {% endif %}
+  <div style="background:#fff;border-radius:8px;padding:1rem;margin-top:2rem;border-left:4px solid #9333ea">
+    <h3 style="margin:0 0 .5rem;font-size:1rem;color:#6b21a8">📱 Zugriff vom Handy &amp; Zertifikate für alle Geräte</h3>
+    <p style="margin:.25rem 0 .5rem;font-size:.85rem">
+      <strong>Am Handy öffnen:</strong> Tippe einfach <a href="http://{{ settings.pi_ip }}" style="font-weight:600">http://{{ settings.pi_ip }}</a> 
+      (ohne Port) in Safari oder Chrome ein. Sobald dein Handy den Pi als DNS-Server nutzt oder DHCP aktiv ist, 
+      funktioniert auch <a href="http://{{ settings.local_name or 'cloudy.lan' }}" style="font-weight:600">http://{{ settings.local_name or 'cloudy.lan' }}</a>.
+    </p>
+    {% if settings.https_port %}
+    <p style="margin:.5rem 0 .25rem;font-size:.85rem">
+      <strong>HTTPS-Zertifikat als sicher installieren (ohne Browser-Warnung):</strong>
+    </p>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.4rem">
+      <a href="/ca.mobileconfig" style="display:inline-flex;align-items:center;background:#e9e3f5;color:#1f1b2e;padding:.35rem .75rem;border-radius:6px;text-decoration:none;font-size:.85rem;font-weight:500">
+        🍏 iPhone / iPad (1-Klick Profil)
+      </a>
+      <a href="/install-ca.bat" style="display:inline-flex;align-items:center;background:#e9e3f5;color:#1f1b2e;padding:.35rem .75rem;border-radius:6px;text-decoration:none;font-size:.85rem;font-weight:500">
+        🪟 Windows (1-Klick Installer .bat)
+      </a>
+      <a href="/ca.crt" style="display:inline-flex;align-items:center;background:#e9e3f5;color:#1f1b2e;padding:.35rem .75rem;border-radius:6px;text-decoration:none;font-size:.85rem;font-weight:500">
+        🤖 Android / Linux (.crt)
+      </a>
+    </div>
+    <p class="muted" style="margin:.5rem 0 0;font-size:.8rem">
+      <em>iPhone:</em> Nach Antippen auf <em>„Erlauben“</em> klicken, dann in den iPhone-<em>Einstellungen → Profil geladen → Installieren</em>. Zuletzt unter <em>Einstellungen → Allgemein → Info → Zertifikatsvertrauenseinstellungen</em> den Schalter aktivieren.
+    </p>
+    {% endif %}
+  </div>
+
   <script>
     function escapeHtml(str) {
       if (!str) return '';
@@ -293,6 +326,16 @@
       if (diff < 3600) return `vor ${Math.floor(diff / 60)}m`;
       if (diff < 86400) return `vor ${Math.floor(diff / 3600)}h`;
       return `vor ${Math.floor(diff / 86400)}d`;
+    }
+
+    function renderSite(site) {
+      if (!site || !site.domain) return '<span class="muted">–</span>';
+      let html = `<span class="mono" style="font-weight:600;color:#6b21a8">${escapeHtml(site.domain)}</span>`;
+      if (site.ip && site.ip !== site.domain) {
+        html += ` <span class="muted" style="font-size:.75rem">(${escapeHtml(site.ip)})</span>`;
+      }
+      html += ` <span class="muted" style="font-size:.8rem">(${formatAgo(site.ts)})</span>`;
+      return html;
     }
 
     async function updatePresence(refresh = false) {
@@ -316,12 +359,7 @@
             }
             const siteCell = row.querySelector('.device-site');
             if (siteCell) {
-              if (d.current_site && d.current_site.domain) {
-                const ago = formatAgo(d.current_site.ts);
-                siteCell.innerHTML = `<span class="mono" style="font-weight:600;color:#6b21a8">${escapeHtml(d.current_site.domain)}</span> <span class="muted" style="font-size:.8rem">(${ago})</span>`;
-              } else {
-                siteCell.innerHTML = '<span class="muted">–</span>';
-              }
+              siteCell.innerHTML = renderSite(d.current_site);
             }
           }
         });
@@ -329,15 +367,19 @@
         const liveBar = document.getElementById('live-users-bar');
         if (liveBar) {
           const active = devices.filter(d => d.online && d.current_site && d.current_site.domain);
-          liveBar.innerHTML = active.map(d => `
-            <div class="live-chip">
-              <span class="live-dot">●</span>
-              <a href="/?ip=${encodeURIComponent(d.ip)}" style="text-decoration:none;font-weight:600;color:#1f1b2e">${escapeHtml(d.hostname || d.ip)}</a>
-              <span class="muted">auf</span>
-              <span class="mono" style="font-weight:600;color:#6b21a8">${escapeHtml(d.current_site.domain)}</span>
-              <span class="muted site-ago" style="font-size:.8rem">(${formatAgo(d.current_site.ts)})</span>
-            </div>
-          `).join('');
+          liveBar.innerHTML = active.map(d => {
+            let ipPart = (d.current_site.ip && d.current_site.ip !== d.current_site.domain)
+              ? ` <span class="muted" style="font-size:.75rem">(${escapeHtml(d.current_site.ip)})</span>` : '';
+            return `
+              <div class="live-chip">
+                <span class="live-dot">●</span>
+                <a href="/?ip=${encodeURIComponent(d.ip)}" style="text-decoration:none;font-weight:600;color:#1f1b2e">${escapeHtml(d.hostname || d.ip)}</a>
+                <span class="muted">auf</span>
+                <span class="mono" style="font-weight:600;color:#6b21a8">${escapeHtml(d.current_site.domain)}</span>${ipPart}
+                <span class="muted site-ago" style="font-size:.8rem">(${formatAgo(d.current_site.ts)})</span>
+              </div>
+            `;
+          }).join('');
         }
 
         const currentIp = new URLSearchParams(window.location.search).get('ip');
@@ -352,8 +394,9 @@
           const devSiteEl = document.getElementById('device-current-site');
           if (devSiteEl && currentDev) {
             if (currentDev.current_site && currentDev.current_site.domain) {
-              const ago = formatAgo(currentDev.current_site.ts);
-              devSiteEl.innerHTML = `<span class="mono" style="font-weight:600;color:#6b21a8">${escapeHtml(currentDev.current_site.domain)}</span> <span class="muted" style="font-size:.85rem">(${ago})</span>`;
+              let ipPart = (currentDev.current_site.ip && currentDev.current_site.ip !== currentDev.current_site.domain)
+                ? ` <span class="muted" style="font-size:.85rem">(${escapeHtml(currentDev.current_site.ip)})</span>` : '';
+              devSiteEl.innerHTML = `<span class="mono" style="font-weight:600;color:#6b21a8">${escapeHtml(currentDev.current_site.domain)}</span>${ipPart} <span class="muted" style="font-size:.85rem">(${formatAgo(currentDev.current_site.ts)})</span>`;
             } else {
               devSiteEl.innerHTML = '<span class="muted">Noch keine Aktivität erfasst</span>';
             }

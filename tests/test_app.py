@@ -112,20 +112,20 @@ def test_current_site_display_and_api(client):
     now = int(time.time())
     db.upsert_devices([("192.168.178.55", "aa:bb:cc:dd:ee:55", "laptop-tim")])
     db.add_queries([(now - 10, "192.168.178.55", "spiegel.de", "A")])
-    db.add_traffic([("192.168.178.55", "youtube.com", 500, 1000, 1, now)])
+    db.add_traffic([("192.168.178.55", "142.250.1.1", 500, 1000, 1, now)])
 
-    # Traffic ist neuer als Query -> youtube.com sollte aktuelle Seite sein
+    # Traffic an IP -> Domain aus DNS (spiegel.de) bleibt erhalten, IP wird mitgefuehrt
     devs = client.get("/api/devices").json()
     dev = next(d for d in devs if d["ip"] == "192.168.178.55")
-    assert dev["current_site"] == {"domain": "youtube.com", "ts": now}
+    assert dev["current_site"] == {"domain": "spiegel.de", "ip": "142.250.1.1", "ts": now}
 
     html = client.get("/").text
     assert "Aktuelle Seite" in html
-    assert "youtube.com" in html
+    assert "spiegel.de" in html
 
     detail = client.get("/", params={"ip": "192.168.178.55"}).text
     assert "Aktuelle Seite:" in detail
-    assert "youtube.com" in detail
+    assert "spiegel.de" in detail
 
 
 def test_optional_password(client, monkeypatch):
