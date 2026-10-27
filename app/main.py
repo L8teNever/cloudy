@@ -7,11 +7,12 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
 from . import db
+from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .settings import Settings
 from .traffic import DomainMap, TrafficMeter, TrafficRunner, setup_gateway
@@ -50,7 +51,17 @@ async def lifespan(app: FastAPI):
     if settings.dnsmasq_enabled:
         runner = DnsmasqRunner(settings, Collector(domain_map=domain_map))
         runner.start()
+    https_server = None
+    if settings.https_port:
+        try:
+            certfile, keyfile = ensure_certs(settings)
+            https_server = start_https_server(app, certfile, keyfile, settings.https_port)
+            print(f"cloudy: HTTPS an (Port {settings.https_port})", flush=True)
+        except Exception as exc:  # noqa: BLE001 – ohne HTTPS läuft das Dashboard weiter über HTTP
+            print(f"cloudy: HTTPS nicht verfügbar: {exc}", flush=True)
     yield
+    if https_server:
+        https_server.should_exit = True
     if runner:
         runner.stop()
     if traffic_runner:
@@ -83,6 +94,15 @@ async def healthz():
 @app.get("/favicon.ico")
 async def favicon():
     return Response(status_code=204)
+
+
+@app.get("/ca.crt")
+async def ca_certificate(request: Request):
+    """Öffentliches CA-Zertifikat zum Installieren auf den Geräten (enthält keinen geheimen Schlüssel)."""
+    path = ca_cert_path(request.app.state.settings)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="HTTPS ist nicht eingeschaltet")
+    return FileResponse(path, media_type="application/x-x509-ca-cert", filename="cloudy-ca.crt")
 
 
 @app.get("/", response_class=HTMLResponse, dependencies=[Depends(require_password)])

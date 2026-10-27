@@ -43,6 +43,16 @@ jobs:
           sleep 8
           docker exec cloudy python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/api/recent').read().decode())" | tee /tmp/recent.json
           grep -q '"example.com"' /tmp/recent.json
+          # HTTPS mit dem selbst erzeugten Zertifikat (Name cloudy.lan wird gegen die lokale CA geprüft)
+          docker exec cloudy python -c "
+          import socket, ssl
+          ctx = ssl.create_default_context(cafile='/data/certs/cloudy-ca.crt')
+          s = ctx.wrap_socket(socket.create_connection(('127.0.0.1', 443)), server_hostname='cloudy.lan')
+          s.sendall(b'GET /healthz HTTP/1.1\r\nHost: cloudy.lan\r\nConnection: close\r\n\r\n')
+          data = s.recv(4096)
+          assert b'200 OK' in data, data
+          print('HTTPS ok')
+          "
 
       - name: End-to-End – Gateway leitet weiter und misst den Datenverkehr
         run: |

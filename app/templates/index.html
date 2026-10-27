@@ -99,5 +99,10 @@
       {% endfor %}
     </table>
   {% endif %}
+
+  {% if settings.https_port %}
+  <p class="muted" style="margin-top:2rem">HTTPS ohne Warnung: <a href="/ca.crt">Zertifikat (CA) herunterladen</a>
+    und einmal auf dem Gerät installieren – Anleitung in der README.</p>
+  {% endif %}
 </body>
 </html>

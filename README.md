@@ -134,7 +134,33 @@ danach `docker compose up -d` in `~/cloudy`.
   danach `cloudy restart`.
 - Geräte, die ihren Namen per DHCP melden, sind automatisch als `<name>.lan` erreichbar.
 - Im Browser `http://` davor tippen, sonst sucht Chrome bei einem einzelnen Wort evtl. im Internet.
-- Geht nicht bei Cloudflare WARP oder „Sicherem DNS“ im Browser (die gehen am Pi vorbei).
+- Geht nicht bei „Sicherem DNS“ im Browser (geht am Pi vorbei). Auch mit Cloudflare WARP kann es Probleme geben.
+
+## HTTPS mit eigenem Zertifikat (`https://cloudy.lan`)
+
+Der Pi erzeugt beim Start selbst eine kleine **lokale Zertifizierungsstelle (CA)** und ein Zertifikat für
+`cloudy.lan` und die Pi-IP (gültig ca. 2 Jahre, wird automatisch erneuert). `https://cloudy.lan` läuft auf Port 443,
+`http://cloudy.lan` bleibt zusätzlich bestehen.
+
+Ohne Installation zeigt der Browser „Nicht sicher“. Damit die Warnung verschwindet, die CA **einmal pro Gerät**
+installieren: `http://cloudy.lan/ca.crt` (bzw. `http://192.168.178.3/ca.crt`) herunterladen und dann:
+
+- **Windows:** Doppelklick auf `cloudy-ca.crt` → Zertifikat installieren → Lokaler Computer →
+  „Alle Zertifikate in folgendem Speicher speichern“ → **Vertrauenswürdige Stammzertifizierungsstellen**.
+  Browser neu starten.
+- **iPhone/iPad:** Datei in Safari laden → Einstellungen → „Profil geladen“ → Installieren. Danach
+  Einstellungen → Allgemein → Info → **Zertifikatsvertrauenseinstellungen** → „cloudy lokale CA“ einschalten.
+- **Android:** Einstellungen → Sicherheit → Weitere Einstellungen → Verschlüsselung & Anmeldedaten →
+  Zertifikat installieren → **CA-Zertifikat**.
+- **Mac:** Doppelklick → Schlüsselbund „System“ → Zertifikat öffnen → Vertrauen → „Immer vertrauen“.
+- **Firefox** nutzt einen eigenen Speicher: Einstellungen → Datenschutz & Sicherheit → Zertifikate anzeigen →
+  Zertifizierungsstellen → Importieren.
+
+Der **private Schlüssel** der CA bleibt auf dem Pi (`~/cloudy/data/certs/`, nur für root lesbar). Über `/ca.crt`
+wird nur das öffentliche Zertifikat ausgeliefert. Die CA gilt nur für deine eigenen Geräte, in die du sie
+installierst. Sichere die Dateien nicht öffentlich.
+
+Ausschalten: in `~/cloudy/.env` `HTTPS_PORT=0`, dann `cloudy restart`.
 
 ## Hinweise
 

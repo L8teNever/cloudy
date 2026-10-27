@@ -23,6 +23,7 @@ class Settings:
     gateway_enabled: bool
     traffic_poll_seconds: float
     local_name: str
+    https_port: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -43,6 +44,7 @@ class Settings:
             gateway_enabled=_flag("GATEWAY_ENABLED", "0"),
             traffic_poll_seconds=float(os.environ.get("TRAFFIC_POLL_SECONDS", "10")),
             local_name=os.environ.get("LOCAL_NAME", "cloudy.lan").strip().lower().rstrip("."),
+            https_port=int(os.environ.get("HTTPS_PORT", "443").strip() or 0),
         )
 
     @property
