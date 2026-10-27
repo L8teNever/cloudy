@@ -21,7 +21,7 @@ jobs:
       - name: Tests
         run: |
           pip install -r requirements.txt pytest httpx
-          pytest -q
+          python -m pytest -q
 
       - name: Image bauen
         run: docker build -t cloudy-test .

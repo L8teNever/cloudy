@@ -108,6 +108,6 @@ danach `docker compose up -d` in `~/cloudy`.
 
 ```bash
 pip install -r requirements.txt pytest httpx
-pytest
+python -m pytest
 DNSMASQ_ENABLED=0 DB_PATH=./data/cloudy.db DATA_DIR=./data uvicorn app.main:app --port 8080
 ```
