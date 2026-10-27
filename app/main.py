@@ -52,7 +52,10 @@ async def lifespan(app: FastAPI):
         warp_router = warp.WarpRouter(settings)
         warp_router.start()
     elif settings.dnsmasq_enabled:
-        warp.cleanup()
+        try:
+            warp.cleanup()
+        except OSError:
+            pass
     app.state.settings = settings
     if settings.dnsmasq_enabled:
         runner = DnsmasqRunner(settings, Collector(domain_map=domain_map))

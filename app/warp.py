@@ -176,7 +176,12 @@ class WarpRouter:
         self.apply(build_plan(self.s, db.device_warp(), connected))
 
     def start(self) -> None:
-        if not self.setup():
+        try:
+            ok = self.setup()
+        except Exception as exc:  # noqa: BLE001 – ohne WARP laufen DNS/Gateway trotzdem weiter
+            print(f"cloudy: WARP-Routing nicht verfügbar: {exc}", file=sys.stderr, flush=True)
+            return
+        if not ok:
             print("cloudy: WARP-Routing konnte nicht vollständig eingerichtet werden", file=sys.stderr, flush=True)
         threading.Thread(target=self._loop, daemon=True).start()
 
