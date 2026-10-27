@@ -67,11 +67,47 @@ jobs:
           docker exec cloudy-gw python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/api/devices/172.30.0.10').read().decode())" | tee /tmp/dev.json
           python3 -c "import json; d=json.load(open('/tmp/dev.json')); t=[x for x in d['traffic'] if x['target']=='example.com']; assert t and t[0]['bytes_down'] > 0, d; print('Gemessen:', t)"
 
+      - name: End-to-End – DHCP vergibt nach Update/Neustart dieselben Adressen
+        run: |
+          docker network create --subnet 172.31.0.0/24 --gateway 172.31.0.1 dhcp-net
+          start_server() {
+            docker run -d --name cloudy-dhcp --network dhcp-net --ip 172.31.0.2 --privileged -v dhcp-data:/data \
+              -e LAN_INTERFACE=eth0 -e PI_IP=172.31.0.2 -e ROUTER_IP=172.31.0.1 -e UPSTREAM_DNS=1.1.1.1 \
+              -e DHCP_ENABLED=1 -e DHCP_START=172.31.0.100 -e DHCP_END=172.31.0.150 cloudy-test
+            sleep 8
+          }
+          get_ip() {  # $1 = MAC-Adresse des "Geräts"
+            docker run --rm --network dhcp-net --cap-add NET_ADMIN --mac-address "$1" alpine \
+              sh -c 'udhcpc -i eth0 -n -q -t 5 -T 2 -s /bin/true 2>&1' | grep -oE 'lease of [0-9.]+' | grep -oE '[0-9.]+$'
+          }
+          start_server
+          A1=$(get_ip 02:42:ac:1f:00:a1); B1=$(get_ip 02:42:ac:1f:00:b2); C1=$(get_ip 02:42:ac:1f:00:c3)
+          echo "Vorher:  a=$A1 b=$B1 c=$C1"
+          test -n "$A1" && test -n "$B1" && test -n "$C1"
+          test "$A1" != "$B1" && test "$B1" != "$C1"
+
+          # Update: Container wird ersetzt, die Daten (Volume) bleiben.
+          docker rm -f cloudy-dhcp
+          start_server
+          A2=$(get_ip 02:42:ac:1f:00:a1); B2=$(get_ip 02:42:ac:1f:00:b2); C2=$(get_ip 02:42:ac:1f:00:c3)
+          echo "Nachher: a=$A2 b=$B2 c=$C2"
+          test "$A1" = "$A2" && test "$B1" = "$B2" && test "$C1" = "$C2"
+
+          # Auch wenn die Lease-Datei verloren geht, bekommen bekannte Geräte dieselbe Adresse zurück
+          # (dnsmasq berechnet sie aus der MAC-Adresse).
+          docker rm -f cloudy-dhcp
+          docker volume rm dhcp-data
+          start_server
+          A3=$(get_ip 02:42:ac:1f:00:a1)
+          echo "Ohne Lease-Datei: a=$A3"
+          test "$A1" = "$A3"
+
       - name: Logs bei Fehler
         if: failure()
         run: |
           docker logs cloudy || true
           docker logs cloudy-gw || true
+          docker logs cloudy-dhcp || true
 
   build:
     needs: test
