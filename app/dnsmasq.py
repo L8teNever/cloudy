@@ -25,6 +25,10 @@ HOSTS_HEADER = """\
 # Eine Zeile pro Gerät:  MAC-Adresse,IP-Adresse,Name
 # Beispiel:
 # aa:bb:cc:dd:ee:ff,192.168.178.50,drucker
+#
+# Im Gateway-Modus: "set:direkt" -> Gerät geht NICHT über den Pi, sondern direkt zur Fritzbox
+# (nötig für Geräte mit Portfreigabe, z. B. NAS):
+# aa:bb:cc:dd:ee:01,set:direkt,192.168.178.60,nas
 """
 
 
@@ -53,7 +57,8 @@ def build_config(s: Settings) -> str:
         "domain-needed",
         "bogus-priv",
         "cache-size=10000",
-        "log-queries",
+        # "extra": jede Zeile mit Anfrage-Nummer, damit Antwort-IPs der gefragten Domain zugeordnet werden können.
+        "log-queries=extra",
         "log-async=50",
         "log-facility=-",
         *(f"server={u}" for u in s.upstream_dns),
@@ -62,10 +67,21 @@ def build_config(s: Settings) -> str:
         "domain=lan",
         "local=/lan/",
     ]
+    if s.gateway_enabled:
+        # Nur IPv4-Adressen ausliefern: IPv6 würde direkt über die Fritzbox und am Pi vorbei laufen.
+        lines.append("filter-AAAA")
     if s.dhcp_enabled:
+        if s.gateway_enabled:
+            # Geräte mit "set:direkt" in dhcp-hosts.conf (z. B. mit Portfreigabe) gehen weiter direkt zur Fritzbox.
+            router = [
+                f"dhcp-option=tag:!direkt,option:router,{s.pi_ip}",
+                f"dhcp-option=tag:direkt,option:router,{s.router_ip}",
+            ]
+        else:
+            router = [f"dhcp-option=option:router,{s.router_ip}"]
         lines += [
             f"dhcp-range={s.dhcp_start},{s.dhcp_end},{s.netmask},{s.dhcp_lease}",
-            f"dhcp-option=option:router,{s.router_ip}",
+            *router,
             f"dhcp-option=option:dns-server,{s.pi_ip}",
             "dhcp-authoritative",
             f"dhcp-leasefile={s.leases_path}",
@@ -93,14 +109,17 @@ def read_leases(path: str) -> list[tuple[str, str, str | None]]:
 class Collector:
     """Sammelt Anfragen im Speicher und schreibt sie gebündelt (schont die SD-Karte)."""
 
-    def __init__(self, dedup_seconds: int = 60):
+    def __init__(self, dedup_seconds: int = 60, domain_map=None):
         self.dedup_seconds = dedup_seconds
+        self.domain_map = domain_map
         self._pending: list[tuple[int, str, str, str]] = []
         self._last: dict[tuple[str, str], int] = {}
         self._lock = threading.Lock()
 
     def feed(self, line: str, now: int | None = None) -> bool:
         """Gibt True zurück, wenn die Zeile eine DNS-Anfrage war."""
+        if self.domain_map is not None:
+            self.domain_map.feed(line)
         parsed = parse_query(line)
         if parsed is None:
             return " query[" in line
@@ -142,7 +161,8 @@ class DnsmasqRunner:
         with open(s.conf_path, "w", encoding="utf-8") as f:
             f.write(build_config(s))
         print(
-            f"cloudy: DNS an, DHCP {'an' if s.dhcp_enabled else 'aus'}, Upstream {', '.join(s.upstream_dns)}",
+            f"cloudy: DNS an, DHCP {'an' if s.dhcp_enabled else 'aus'}, "
+            f"Gateway {'an' if s.gateway_enabled else 'aus'}, Upstream {', '.join(s.upstream_dns)}",
             flush=True,
         )
         self.proc = subprocess.Popen(

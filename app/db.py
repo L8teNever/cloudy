@@ -46,6 +46,17 @@ def init() -> None:
                 PRIMARY KEY (ip, domain)
             );
 
+            CREATE TABLE IF NOT EXISTS traffic (
+                ip TEXT NOT NULL,
+                target TEXT NOT NULL,
+                bytes_up INTEGER NOT NULL,
+                bytes_down INTEGER NOT NULL,
+                conns INTEGER NOT NULL,
+                first_seen INTEGER NOT NULL,
+                last_seen INTEGER NOT NULL,
+                PRIMARY KEY (ip, target)
+            );
+
             CREATE TABLE IF NOT EXISTS devices (
                 ip TEXT PRIMARY KEY,
                 mac TEXT,
@@ -81,6 +92,41 @@ def add_queries(rows: list[tuple[int, str, str, str]]) -> None:
         conn.commit()
 
 
+def add_traffic(rows: list[tuple[str, str, int, int, int, int]]) -> None:
+    """rows: (ip, ziel (Domain oder IP), bytes_up, bytes_down, neue Verbindungen, ts)"""
+    if not rows:
+        return
+    with closing(_connect()) as conn:
+        conn.executemany(
+            """
+            INSERT INTO traffic (ip, target, bytes_up, bytes_down, conns, first_seen, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (ip, target) DO UPDATE SET
+                bytes_up = bytes_up + excluded.bytes_up,
+                bytes_down = bytes_down + excluded.bytes_down,
+                conns = conns + excluded.conns,
+                last_seen = excluded.last_seen
+            """,
+            [(ip, target, up, down, conns, ts, ts) for ip, target, up, down, conns, ts in rows],
+        )
+        conn.execute(
+            "DELETE FROM traffic WHERE last_seen < ?", (int(time.time()) - retention_days() * 86400,)
+        )
+        conn.commit()
+
+
+def traffic_for(ip: str, limit: int = 200) -> list[dict]:
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            """
+            SELECT target, bytes_up, bytes_down, conns, first_seen, last_seen FROM traffic
+            WHERE ip = ? ORDER BY bytes_up + bytes_down DESC LIMIT ?
+            """,
+            (ip, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def upsert_devices(devices: list[tuple[str, str, str | None]]) -> None:
     """devices: (ip, mac, hostname) aus der DHCP-Lease-Datei"""
     if not devices:
@@ -104,11 +150,19 @@ def devices() -> list[dict]:
     with closing(_connect()) as conn:
         rows = conn.execute(
             """
-            SELECT s.ip AS ip, d.mac AS mac, d.hostname AS hostname,
-                   SUM(s.hits) AS hits, COUNT(*) AS domains, MAX(s.last_seen) AS last_seen
-            FROM domain_stats s
-            LEFT JOIN devices d ON d.ip = s.ip
-            GROUP BY s.ip
+            WITH ips AS (SELECT ip FROM domain_stats UNION SELECT ip FROM traffic),
+                 dns AS (SELECT ip, SUM(hits) AS hits, COUNT(*) AS domains, MAX(last_seen) AS ls
+                         FROM domain_stats GROUP BY ip),
+                 tr AS (SELECT ip, SUM(bytes_up) AS up, SUM(bytes_down) AS down, MAX(last_seen) AS ls
+                        FROM traffic GROUP BY ip)
+            SELECT ips.ip AS ip, d.mac AS mac, d.hostname AS hostname,
+                   COALESCE(dns.hits, 0) AS hits, COALESCE(dns.domains, 0) AS domains,
+                   COALESCE(tr.up, 0) AS bytes_up, COALESCE(tr.down, 0) AS bytes_down,
+                   MAX(COALESCE(dns.ls, 0), COALESCE(tr.ls, 0)) AS last_seen
+            FROM ips
+            LEFT JOIN dns ON dns.ip = ips.ip
+            LEFT JOIN tr ON tr.ip = ips.ip
+            LEFT JOIN devices d ON d.ip = ips.ip
             ORDER BY last_seen DESC
             """
         ).fetchall()

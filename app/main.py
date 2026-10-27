@@ -2,6 +2,7 @@ import os
 import secrets
 import time
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -13,24 +14,47 @@ from fastapi.templating import Jinja2Templates
 from . import db
 from .dnsmasq import Collector, DnsmasqRunner
 from .settings import Settings
+from .traffic import DomainMap, TrafficMeter, TrafficRunner, setup_gateway
 
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 basic = HTTPBasic(auto_error=False)
 
 
+def fmt_bytes(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}".replace(".", ",")
+        n /= 1024
+    return f"{n:.1f} TB".replace(".", ",")
+
+
+templates.env.filters["bytes"] = fmt_bytes
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = Settings.from_env()
-    app.state.settings = settings
     db.init()
-    runner = None
+    runner = traffic_runner = None
+    domain_map = DomainMap()
+    if settings.dnsmasq_enabled and settings.gateway_enabled:
+        if setup_gateway(settings):
+            traffic_runner = TrafficRunner(TrafficMeter(settings, domain_map), settings.traffic_poll_seconds)
+            traffic_runner.start()
+        else:
+            # Ohne funktionierende Weiterleitung den Pi NICHT als Gateway verteilen, sonst ist das Heimnetz offline.
+            print("cloudy: Gateway konnte nicht eingerichtet werden – Geräte bleiben bei der Fritzbox", flush=True)
+            settings = replace(settings, gateway_enabled=False)
+    app.state.settings = settings
     if settings.dnsmasq_enabled:
-        runner = DnsmasqRunner(settings, Collector())
+        runner = DnsmasqRunner(settings, Collector(domain_map=domain_map))
         runner.start()
     yield
     if runner:
         runner.stop()
+    if traffic_runner:
+        traffic_runner.stop()
 
 
 app = FastAPI(title="cloudy", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -67,6 +91,7 @@ async def dashboard(request: Request, ip: str | None = None):
     if ip:
         context["device"] = await run_in_threadpool(db.device, ip)
         context["domains"] = await run_in_threadpool(db.top_domains, ip)
+        context["traffic"] = await run_in_threadpool(db.traffic_for, ip)
         context["recent"] = await run_in_threadpool(db.recent, 200, ip)
     else:
         context["devices"] = await run_in_threadpool(db.devices)
@@ -84,6 +109,7 @@ async def api_device(ip: str):
     return {
         "device": await run_in_threadpool(db.device, ip),
         "domains": await run_in_threadpool(db.top_domains, ip),
+        "traffic": await run_in_threadpool(db.traffic_for, ip),
     }
 
 

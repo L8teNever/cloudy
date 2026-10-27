@@ -5,10 +5,8 @@ services:
     restart: unless-stopped
     # Host-Netz: DNS (53) und DHCP (67) müssen direkt im Heimnetz erreichbar sein.
     network_mode: host
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-      - NET_BIND_SERVICE
+    # Für den Gateway-Modus: Weiterleitung einschalten (sysctl), NAT-Regeln (iptables), Verkehr messen (conntrack).
+    privileged: true
     env_file:
       - .env
     environment:

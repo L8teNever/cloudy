@@ -26,6 +26,7 @@
   <div class="status">
     <span class="pill on">DNS an</span>
     <span class="pill {{ 'on' if settings.dhcp_enabled else '' }}">IP-Verteilung (DHCP) {{ 'an' if settings.dhcp_enabled else 'aus' }}</span>
+    <span class="pill {{ 'on' if settings.gateway_enabled else '' }}">Gateway (Datenverkehr) {{ 'an' if settings.gateway_enabled else 'aus' }}</span>
     <span class="pill">Pi {{ settings.pi_ip }}</span>
     <span class="pill">Weiter an {{ settings.upstream_dns | join(', ') }}</span>
   </div>
@@ -34,6 +35,16 @@
     <p><a href="/">← alle Geräte</a></p>
     <h2>{{ device.hostname or device.ip }}
       <span class="muted">{{ device.ip }}{% if device.mac %} · {{ device.mac }}{% endif %}</span></h2>
+
+    {% if traffic %}
+    <h2>Datenverkehr</h2>
+    <table>
+      <tr><th>Ziel</th><th>↓ Download</th><th>↑ Upload</th><th>Verbindungen</th><th>Zuletzt</th></tr>
+      {% for t in traffic %}
+      <tr><td class="mono">{{ t.target }}</td><td>{{ t.bytes_down | bytes }}</td><td>{{ t.bytes_up | bytes }}</td><td>{{ t.conns }}</td><td>{{ fmt_time(t.last_seen) }}</td></tr>
+      {% endfor %}
+    </table>
+    {% endif %}
 
     <h2>Aufgerufene Domains</h2>
     <table>
@@ -57,7 +68,7 @@
   {% else %}
     <h2>Geräte</h2>
     <table>
-      <tr><th>Gerät</th><th>IP</th><th>MAC</th><th>Aufrufe</th><th>Domains</th><th>Zuletzt aktiv</th></tr>
+      <tr><th>Gerät</th><th>IP</th><th>MAC</th><th>Aufrufe</th><th>Domains</th><th>↓ Download</th><th>↑ Upload</th><th>Zuletzt aktiv</th></tr>
       {% for d in devices %}
       <tr>
         <td><a href="/?ip={{ d.ip | urlencode }}">{{ d.hostname or 'unbekannt' }}</a></td>
@@ -65,10 +76,12 @@
         <td class="mono">{{ d.mac or '' }}</td>
         <td>{{ d.hits }}</td>
         <td>{{ d.domains }}</td>
+        <td>{{ d.bytes_down | bytes }}</td>
+        <td>{{ d.bytes_up | bytes }}</td>
         <td>{{ fmt_time(d.last_seen) }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="muted">Noch keine Anfragen. Fragt schon ein Gerät den Pi als DNS-Server?</td></tr>
+      <tr><td colspan="8" class="muted">Noch keine Anfragen. Fragt schon ein Gerät den Pi als DNS-Server?</td></tr>
       {% endfor %}
     </table>
 

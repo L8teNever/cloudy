@@ -1,3 +1,4 @@
+import ipaddress
 import os
 from dataclasses import dataclass
 
@@ -19,6 +20,8 @@ class Settings:
     dhcp_start: str
     dhcp_end: str
     dhcp_lease: str
+    gateway_enabled: bool
+    traffic_poll_seconds: float
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -36,7 +39,13 @@ class Settings:
             dhcp_start=os.environ.get("DHCP_START", "192.168.178.20"),
             dhcp_end=os.environ.get("DHCP_END", "192.168.178.200"),
             dhcp_lease=os.environ.get("DHCP_LEASE", "1h"),
+            gateway_enabled=_flag("GATEWAY_ENABLED", "0"),
+            traffic_poll_seconds=float(os.environ.get("TRAFFIC_POLL_SECONDS", "10")),
         )
+
+    @property
+    def lan_network(self) -> ipaddress.IPv4Network:
+        return ipaddress.ip_network(f"{self.pi_ip}/{self.netmask}", strict=False)
 
     @property
     def leases_path(self) -> str:

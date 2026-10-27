@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends dnsmasq-base \
+    && apt-get install -y --no-install-recommends dnsmasq-base iptables conntrack \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1 \
@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
-# Läuft als root, weil dnsmasq Port 53 (DNS) und 67 (DHCP) im Heimnetz braucht.
+# Läuft als root: dnsmasq braucht Port 53 (DNS) und 67 (DHCP), der Gateway-Modus iptables/conntrack.
 VOLUME /data
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s \

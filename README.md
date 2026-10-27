@@ -2,17 +2,24 @@
 
 # cloudy
 
-Der Raspberry Pi wird DNS-Server und (wenn du willst) DHCP-Server fürs Heimnetz und zeigt auf einer Webseite,
-**welches Gerät welche Webseiten/Dienste aufgerufen hat**.
+Der Raspberry Pi wird DNS-Server, DHCP-Server und (wenn du willst) Gateway fürs Heimnetz und zeigt auf einer
+Webseite, **welches Gerät was aufgerufen hat und wie viele Daten dabei geflossen sind**.
+
+Drei Stufen, jede einzeln ein- und ausschaltbar:
+
+| Stufe | Was über den Pi läuft | Was du siehst |
+|---|---|---|
+| 1. DNS | nur die Namensabfragen | welche Domains jedes Gerät aufruft |
+| 2. + DHCP (`cloudy dhcp an`) | + IP-Verteilung | + Gerätenamen und MAC-Adressen |
+| 3. + Gateway (`cloudy gateway an`) | **der gesamte Datenverkehr** (Videos, Downloads …) | + Download/Upload pro Gerät und Domain |
 
 ```
-Gerät ──"wo ist youtube.com?"──► Pi (protokolliert) ──► Cloudflare-DNS 172.64.36.1
-Gerät ──eigentliche Daten──────► Fritzbox ──────────────► Internet   (unverändert schnell)
+Stufe 3:  Gerät ──alles──► Pi (misst) ──► Fritzbox ──► Internet
 ```
 
 - Dashboard: `http://192.168.178.2:8080` – nur im Heimnetz erreichbar (keine Portfreigabe nötig).
-- Pro Gerät: Name, IP, MAC, alle aufgerufenen Domains mit Anzahl und Zeit.
-- Inhalte von HTTPS-Seiten (welches Video, was getippt wurde) sieht man **nicht** – nur die Domain.
+- Pro Gerät: Name, IP, MAC, alle aufgerufenen Domains, Datenmenge pro Domain (z. B. `youtube.com 1,2 GB`).
+- Inhalte von HTTPS-Seiten (welches Video, was getippt wurde) sieht man **nicht** – nur Domain und Datenmenge.
 - Die Daten bleiben auf dem Pi (`~/cloudy/data`), 30 Tage Statistik, max. 50 000 Einzel-Aufrufe.
 
 Gedacht für Raspberry Pi OS Lite (64-bit), Pi 3B+ oder neuer, per LAN-Kabel an der Fritzbox.
@@ -72,13 +79,35 @@ Fritzbox → Heimnetz → Netzwerk → Netzwerkeinstellungen → **IPv6**:
 Die Menünamen können je nach FRITZ!OS-Version leicht abweichen. Kontrolle: Im Dashboard sollten deine
 Geräte auftauchen – nicht die Fritzbox (`192.168.178.1`) als einziges „Gerät“.
 
+## 4. Gesamter Datenverkehr über den Pi (Gateway)
+
+1. Geräte mit **Portfreigabe** in der Fritzbox (NAS, Kamera, Server …) in `~/cloudy/data/dhcp-hosts.conf`
+   mit `set:direkt` eintragen – sie gehen weiter direkt zur Fritzbox, sonst funktioniert die Freigabe nicht:
+   ```
+   aa:bb:cc:dd:ee:01,set:direkt,192.168.178.60,nas
+   ```
+2. Auf dem Pi: `cloudy gateway an`
+3. Geräte kurz WLAN aus/an.
+
+Der Pi leitet dann alles an die Fritzbox weiter (NAT) und misst pro Gerät und Domain, wie viel geladen wurde.
+Damit nichts über IPv6 an ihm vorbeiläuft, liefert er im Gateway-Modus nur IPv4-Adressen aus (`filter-AAAA`).
+
+**Gut zu wissen:**
+- **Tempo:** Ein Pi 3B+ schafft ca. **150 Mbit/s für alle Geräte zusammen**. Ist dein Anschluss schneller,
+  wird das Internet für alle langsamer. Ein Pi 4/5 schafft deutlich mehr.
+- **Fritzbox sieht nur noch den Pi:** Kindersicherung, Online-Zähler und Priorisierung pro Gerät in der
+  Fritzbox wirken dann nur noch auf den Pi als Ganzes.
+- **Ausschalten:** `cloudy gateway aus` – Geräte gehen nach spätestens 1 Stunde wieder direkt zur Fritzbox,
+  bis dahin leitet der Pi weiter (kein Ausfall).
+
 ## Zurück zur Fritzbox (alles wie vorher)
 
-1. Auf dem Pi: `cloudy dhcp aus`
+1. Auf dem Pi: `cloudy dhcp aus` (schaltet auch das Gateway aus)
 2. Fritzbox: Haken bei **„DHCP-Server aktivieren“** wieder setzen, „Lokaler DNS-Server“ auf `172.64.36.1`.
 3. Geräte kurz WLAN aus/an.
 
-Ist der Pi kaputt/aus: Schritt 2 und 3 reichen.
+Ist der Pi kaputt/aus: Schritt 2 und 3 reichen. War das Gateway an, haben die Geräte bis zum WLAN aus/an
+kein Internet – deshalb Schritt 3 nicht vergessen.
 
 ## Befehle auf dem Pi
 
@@ -86,6 +115,7 @@ Ist der Pi kaputt/aus: Schritt 2 und 3 reichen.
 |---|---|
 | `cloudy update` | Neueste Version von GitHub holen und neu starten |
 | `cloudy dhcp an` / `cloudy dhcp aus` | IP-Verteilung durch den Pi ein-/ausschalten |
+| `cloudy gateway an` / `cloudy gateway aus` | Gesamten Datenverkehr über den Pi leiten und messen |
 | `cloudy status` | Läuft alles? |
 | `cloudy logs` | Live-Logs |
 
@@ -101,8 +131,8 @@ danach `docker compose up -d` in `~/cloudy`.
   zurückgeschaltet. Chrome/Edge mit fest eingestelltem „Sicheres DNS“ oder VPN-Apps gehen trotzdem am Pi vorbei.
 - **Mitbewohner/Familie:** Protokollieren, was andere im Netz aufrufen, ist ein Eingriff in deren
   Privatsphäre – sag ihnen Bescheid.
-- **Später VPN für einzelne Geräte:** möglich, da der Pi die IPs verteilt – dann bekommt nur das markierte
-  Gerät den Pi als Gateway. (Noch nicht eingebaut.)
+- **Später VPN für einzelne Geräte:** baut auf dem Gateway-Modus auf – der Pi schickt dann den Verkehr
+  markierter Geräte durch einen VPN-Tunnel statt direkt zur Fritzbox. (Noch nicht eingebaut.)
 
 ## Entwickeln
 

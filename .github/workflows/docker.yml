@@ -42,9 +42,24 @@ jobs:
           docker exec cloudy python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/api/recent').read().decode())" | tee /tmp/recent.json
           grep -q '"example.com"' /tmp/recent.json
 
+      - name: End-to-End – Gateway leitet weiter und misst den Datenverkehr
+        run: |
+          docker network create --subnet 172.30.0.0/24 --gateway 172.30.0.1 gw-net
+          docker run -d --name cloudy-gw --network gw-net --ip 172.30.0.2 --privileged \
+            -e LAN_INTERFACE=eth0 -e PI_IP=172.30.0.2 -e ROUTER_IP=172.30.0.1 -e UPSTREAM_DNS=1.1.1.1 \
+            -e GATEWAY_ENABLED=1 -e TRAFFIC_POLL_SECONDS=2 cloudy-test
+          sleep 8
+          docker run --rm --network gw-net --ip 172.30.0.10 --cap-add NET_ADMIN alpine sh -c \
+            'echo "nameserver 172.30.0.2" > /etc/resolv.conf && ip route replace default via 172.30.0.2 && wget -q -O /dev/null https://example.com && echo "Download über den Gateway ok"'
+          sleep 6
+          docker exec cloudy-gw python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/api/devices/172.30.0.10').read().decode())" | tee /tmp/dev.json
+          python3 -c "import json; d=json.load(open('/tmp/dev.json')); t=[x for x in d['traffic'] if x['target']=='example.com']; assert t and t[0]['bytes_down'] > 0, d; print('Gemessen:', t)"
+
       - name: Logs bei Fehler
         if: failure()
-        run: docker logs cloudy || true
+        run: |
+          docker logs cloudy || true
+          docker logs cloudy-gw || true
 
   build:
     needs: test
