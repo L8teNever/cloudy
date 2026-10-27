@@ -221,6 +221,35 @@ def known_ips() -> list[str]:
     return [r["ip"] for r in rows]
 
 
+def current_sites() -> dict[str, dict]:
+    """Für jedes Gerät die zuletzt aufgerufene Domain/Seite mit Zeitstempel."""
+    with closing(_connect()) as conn:
+        q_rows = conn.execute(
+            """
+            SELECT ip, domain, ts FROM (
+                SELECT ip, domain, ts, ROW_NUMBER() OVER (PARTITION BY ip ORDER BY id DESC) AS rn
+                FROM queries
+            ) WHERE rn = 1
+            """
+        ).fetchall()
+        t_rows = conn.execute(
+            """
+            SELECT ip, target, last_seen FROM (
+                SELECT ip, target, last_seen, ROW_NUMBER() OVER (PARTITION BY ip ORDER BY last_seen DESC) AS rn
+                FROM traffic
+            ) WHERE rn = 1
+            """
+        ).fetchall()
+    result = {}
+    for r in q_rows:
+        result[r["ip"]] = {"domain": r["domain"], "ts": r["ts"]}
+    for r in t_rows:
+        ip = r["ip"]
+        if ip not in result or r["last_seen"] > result[ip]["ts"]:
+            result[ip] = {"domain": r["target"], "ts": r["last_seen"]}
+    return result
+
+
 def devices() -> list[dict]:
     with closing(_connect()) as conn:
         rows = conn.execute(
@@ -241,14 +270,17 @@ def devices() -> list[dict]:
             ORDER BY last_seen DESC
             """
         ).fetchall()
-    return [dict(r) for r in rows]
+    sites = current_sites()
+    return [{**dict(r), "current_site": sites.get(r["ip"])} for r in rows]
 
 
 def device(ip: str) -> dict | None:
     with closing(_connect()) as conn:
         row = conn.execute("SELECT ip, mac, hostname FROM devices WHERE ip = ?", (ip,)).fetchone()
-    return dict(row) if row else {"ip": ip, "mac": None, "hostname": None}
-
+    res = dict(row) if row else {"ip": ip, "mac": None, "hostname": None}
+    sites = current_sites()
+    res["current_site"] = sites.get(ip)
+    return res
 
 def top_domains(ip: str, limit: int = 200) -> list[dict]:
     with closing(_connect()) as conn:

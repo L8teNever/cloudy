@@ -94,6 +94,40 @@ def test_dashboard_shows_devices_and_domains(client):
     assert client.get("/api/recent", params={"ip": "192.168.178.30"}).json()[0]["domain"] == "netflix.com"
 
 
+def test_fmt_ago():
+    from app.main import fmt_ago
+
+    now = 100000
+    assert fmt_ago(now - 2, now=now) == "gerade eben"
+    assert fmt_ago(now - 30, now=now) == "vor 30s"
+    assert fmt_ago(now - 300, now=now) == "vor 5m"
+    assert fmt_ago(now - 7200, now=now) == "vor 2h"
+    assert fmt_ago(now - 172800, now=now) == "vor 2d"
+    assert fmt_ago(None) == ""
+
+
+def test_current_site_display_and_api(client):
+    import time
+
+    now = int(time.time())
+    db.upsert_devices([("192.168.178.55", "aa:bb:cc:dd:ee:55", "laptop-tim")])
+    db.add_queries([(now - 10, "192.168.178.55", "spiegel.de", "A")])
+    db.add_traffic([("192.168.178.55", "youtube.com", 500, 1000, 1, now)])
+
+    # Traffic ist neuer als Query -> youtube.com sollte aktuelle Seite sein
+    devs = client.get("/api/devices").json()
+    dev = next(d for d in devs if d["ip"] == "192.168.178.55")
+    assert dev["current_site"] == {"domain": "youtube.com", "ts": now}
+
+    html = client.get("/").text
+    assert "Aktuelle Seite" in html
+    assert "youtube.com" in html
+
+    detail = client.get("/", params={"ip": "192.168.178.55"}).text
+    assert "Aktuelle Seite:" in detail
+    assert "youtube.com" in detail
+
+
 def test_optional_password(client, monkeypatch):
     monkeypatch.setenv("DASHBOARD_PASSWORD", "geheim")
     assert client.get("/").status_code == 401

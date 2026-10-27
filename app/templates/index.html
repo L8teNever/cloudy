@@ -22,6 +22,9 @@
     input, select, button, textarea { font: inherit; padding: .25rem .45rem; }
     button { background: #9333ea; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
     button.secondary { background: #e9e3f5; color: #1f1b2e; }
+    .live-bar { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0 1rem; }
+    .live-chip { background: #fff; border: 1px solid #e9d5ff; border-radius: 6px; padding: .35rem .65rem; font-size: .85rem; display: inline-flex; align-items: center; gap: .4rem; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .live-dot { color: #16a34a; font-size: .75rem; }
   </style>
 </head>
 <body>
@@ -46,6 +49,18 @@
       <span id="device-presence">{% if device.ip in online %}<span class="pill on">online</span>{% else %}<span class="pill">offline</span>{% endif %}</span>
       <button type="button" class="secondary" onclick="refreshPresenceNow(this)" style="font-size:.8rem;padding:.15rem .5rem;margin-left:.5rem" title="Online-Status jetzt sofort prüfen">Prüfen</button>
     </h2>
+
+    <div id="device-current-site-box" style="margin:.5rem 0 1.25rem;background:#fff;border-radius:8px;padding:.6rem 1rem;border-left:4px solid #9333ea;display:flex;align-items:center;gap:.75rem">
+      <span style="font-size:.9rem;font-weight:600;color:#555">Aktuelle Seite:</span>
+      <span id="device-current-site">
+        {% if device.current_site and device.current_site.domain %}
+          <span class="mono" style="font-weight:600;color:#6b21a8">{{ device.current_site.domain }}</span>
+          <span class="muted" style="font-size:.85rem">({{ device.current_site.ts | ago }})</span>
+        {% else %}
+          <span class="muted">Noch keine Aktivität erfasst</span>
+        {% endif %}
+      </span>
+    </div>
 
     {% if warp and device.mac %}
     <h2>Internet über</h2>
@@ -95,6 +110,19 @@
     <h2>Geräte <span class="muted" id="online-count">({{ online | length }} online)</span>
       <button type="button" class="secondary" onclick="refreshPresenceNow(this)" style="font-size:.8rem;padding:.15rem .5rem;margin-left:.5rem" title="Online-Status jetzt sofort prüfen">Prüfen</button>
     </h2>
+
+    <div id="live-users-bar" class="live-bar">
+      {% for d in devices if d.ip in online and d.current_site and d.current_site.domain %}
+      <div class="live-chip">
+        <span class="live-dot">●</span>
+        <a href="/?ip={{ d.ip | urlencode }}" style="text-decoration:none;font-weight:600;color:#1f1b2e">{{ d.hostname or d.ip }}</a>
+        <span class="muted">auf</span>
+        <span class="mono" style="font-weight:600;color:#6b21a8">{{ d.current_site.domain }}</span>
+        <span class="muted site-ago" style="font-size:.8rem">({{ d.current_site.ts | ago }})</span>
+      </div>
+      {% endfor %}
+    </div>
+
     {% if warp %}
     <form method="post" action="/warp/default" class="inline" style="margin-bottom:.75rem">
       <label>Alle Geräte ohne eigene Einstellung gehen über:
@@ -107,11 +135,19 @@
     </form>
     {% endif %}
     <table>
-      <tr><th>Status</th><th>Gerät</th><th>IP</th><th>MAC</th><th>Aufrufe</th><th>Domains</th><th>↓ Download</th><th>↑ Upload</th>{% if warp %}<th>Internet über</th>{% endif %}<th>Zuletzt aktiv</th></tr>
+      <tr><th>Status</th><th>Gerät</th><th>Aktuelle Seite</th><th>IP</th><th>MAC</th><th>Aufrufe</th><th>Domains</th><th>↓ Download</th><th>↑ Upload</th>{% if warp %}<th>Internet über</th>{% endif %}<th>Zuletzt aktiv</th></tr>
       {% for d in devices %}
       <tr data-ip="{{ d.ip }}">
         <td class="device-status">{% if d.ip in online %}<span class="pill on">● online</span>{% else %}<span class="muted">offline</span>{% endif %}</td>
         <td><a href="/?ip={{ d.ip | urlencode }}">{{ d.hostname or 'unbekannt' }}</a></td>
+        <td class="device-site">
+          {% if d.current_site and d.current_site.domain %}
+            <span class="mono" style="font-weight:600;color:#6b21a8">{{ d.current_site.domain }}</span>
+            <span class="muted" style="font-size:.8rem">({{ d.current_site.ts | ago }})</span>
+          {% else %}
+            <span class="muted">–</span>
+          {% endif %}
+        </td>
         <td class="mono">{{ d.ip }}</td>
         <td class="mono">{{ d.mac or '' }}</td>
         <td>{{ d.hits }}</td>
@@ -126,7 +162,7 @@
         <td>{{ fmt_time(d.last_seen) }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="10" class="muted">Noch keine Anfragen. Fragt schon ein Gerät den Pi als DNS-Server?</td></tr>
+      <tr><td colspan="11" class="muted">Noch keine Anfragen. Fragt schon ein Gerät den Pi als DNS-Server?</td></tr>
       {% endfor %}
     </table>
 
@@ -184,6 +220,25 @@
     und einmal auf dem Gerät installieren – Anleitung in der README.</p>
   {% endif %}
   <script>
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function formatAgo(ts) {
+      if (!ts) return '';
+      const diff = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+      if (diff < 5) return 'gerade eben';
+      if (diff < 60) return `vor ${diff}s`;
+      if (diff < 3600) return `vor ${Math.floor(diff / 60)}m`;
+      if (diff < 86400) return `vor ${Math.floor(diff / 3600)}h`;
+      return `vor ${Math.floor(diff / 86400)}d`;
+    }
+
     async function updatePresence(refresh = false) {
       try {
         const url = refresh ? '/api/devices?refresh=true' : '/api/devices';
@@ -203,8 +258,31 @@
                 ? '<span class="pill on">● online</span>'
                 : '<span class="muted">offline</span>';
             }
+            const siteCell = row.querySelector('.device-site');
+            if (siteCell) {
+              if (d.current_site && d.current_site.domain) {
+                const ago = formatAgo(d.current_site.ts);
+                siteCell.innerHTML = `<span class="mono" style="font-weight:600;color:#6b21a8">${escapeHtml(d.current_site.domain)}</span> <span class="muted" style="font-size:.8rem">(${ago})</span>`;
+              } else {
+                siteCell.innerHTML = '<span class="muted">–</span>';
+              }
+            }
           }
         });
+
+        const liveBar = document.getElementById('live-users-bar');
+        if (liveBar) {
+          const active = devices.filter(d => d.online && d.current_site && d.current_site.domain);
+          liveBar.innerHTML = active.map(d => `
+            <div class="live-chip">
+              <span class="live-dot">●</span>
+              <a href="/?ip=${encodeURIComponent(d.ip)}" style="text-decoration:none;font-weight:600;color:#1f1b2e">${escapeHtml(d.hostname || d.ip)}</a>
+              <span class="muted">auf</span>
+              <span class="mono" style="font-weight:600;color:#6b21a8">${escapeHtml(d.current_site.domain)}</span>
+              <span class="muted site-ago" style="font-size:.8rem">(${formatAgo(d.current_site.ts)})</span>
+            </div>
+          `).join('');
+        }
 
         const currentIp = new URLSearchParams(window.location.search).get('ip');
         if (currentIp) {
@@ -214,6 +292,15 @@
             devPresenceEl.innerHTML = currentDev.online
               ? '<span class="pill on">online</span>'
               : '<span class="pill">offline</span>';
+          }
+          const devSiteEl = document.getElementById('device-current-site');
+          if (devSiteEl && currentDev) {
+            if (currentDev.current_site && currentDev.current_site.domain) {
+              const ago = formatAgo(currentDev.current_site.ts);
+              devSiteEl.innerHTML = `<span class="mono" style="font-weight:600;color:#6b21a8">${escapeHtml(currentDev.current_site.domain)}</span> <span class="muted" style="font-size:.85rem">(${ago})</span>`;
+            } else {
+              devSiteEl.innerHTML = '<span class="muted">Noch keine Aktivität erfasst</span>';
+            }
           }
         }
       } catch (_) {}

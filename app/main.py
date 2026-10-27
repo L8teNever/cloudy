@@ -32,7 +32,25 @@ def fmt_bytes(n: int) -> str:
     return f"{n:.1f} TB".replace(".", ",")
 
 
+def fmt_ago(ts: int | None, now: float | None = None) -> str:
+    if not ts:
+        return ""
+    if now is None:
+        now = time.time()
+    diff = max(0, int(now - ts))
+    if diff < 5:
+        return "gerade eben"
+    if diff < 60:
+        return f"vor {diff}s"
+    if diff < 3600:
+        return f"vor {diff // 60}m"
+    if diff < 86400:
+        return f"vor {diff // 3600}h"
+    return f"vor {diff // 86400}d"
+
+
 templates.env.filters["bytes"] = fmt_bytes
+templates.env.filters["ago"] = fmt_ago
 
 
 @asynccontextmanager
@@ -151,7 +169,7 @@ def online_ips(request: Request) -> frozenset[str]:
 @app.get("/", response_class=HTMLResponse, dependencies=[Depends(require_password)])
 async def dashboard(request: Request, ip: str | None = None):
     settings = request.app.state.settings
-    context = {"settings": settings, "fmt_time": fmt_time, "ip": ip}
+    context = {"settings": settings, "fmt_time": fmt_time, "fmt_ago": fmt_ago, "ip": ip}
     context["warp"] = await run_in_threadpool(warp_profiles, settings)
     context["online"] = online_ips(request)
     context["warp_default"] = await run_in_threadpool(db.get_setting, warp.DEFAULT_KEY)
