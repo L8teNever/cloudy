@@ -1,5 +1,6 @@
 import os
 import secrets
+import socket
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -90,13 +91,23 @@ async def lifespan(app: FastAPI):
     # HTTP auf Standard-Port 80 anbieten, damit Mobilgeräte und Browser ohne :8080 verbinden können.
     http_80_server = None
     dashboard_port = int(os.environ.get("DASHBOARD_PORT", "8080"))
-    if dashboard_port != 80:
+    if dashboard_port != 80 and "PYTEST_CURRENT_TEST" not in os.environ:
         try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
+                _s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                _s.bind(("0.0.0.0", 80))
             http_80_config = uvicorn.Config(
                 app, host="0.0.0.0", port=80, lifespan="off", log_level="warning"
             )
             http_80_server = uvicorn.Server(http_80_config)
-            threading.Thread(target=http_80_server.run, daemon=True).start()
+
+            def _run_80():
+                try:
+                    http_80_server.run()
+                except BaseException as exc:  # noqa: BLE001
+                    print(f"cloudy: Port 80 Server beendet: {exc}", flush=True)
+
+            threading.Thread(target=_run_80, daemon=True).start()
             print("cloudy: HTTP auch auf Standard-Port 80 an", flush=True)
         except Exception as exc:  # noqa: BLE001
             print(f"cloudy: Port 80 nicht gebunden: {exc}", flush=True)
