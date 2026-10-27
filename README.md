@@ -19,8 +19,8 @@ Stufe 3:  Gerät ──alles──► Pi (misst) ──► Fritzbox ──► In
 
 - Dashboard: **`http://cloudy.lan`** (oder `http://<pi-ip>`) – nur im Heimnetz erreichbar (keine Portfreigabe nötig).
   Der Name `cloudy.lan` funktioniert auf allen Geräten, die den Pi als DNS-Server nutzen.
-- Die Geräteliste zeigt, **welches Gerät gerade online ist** (der Pi fragt alle bekannten Geräte alle 30 Sekunden ab;
-  nach dem Ausschalten dauert es also bis zu etwa einer Minute, bis „offline“ dasteht).
+- Die Geräteliste zeigt, **welches Gerät gerade online ist** (der Pi fragt alle bekannten Geräte alle 8 Sekunden aktiv per ARP ab;
+  schaltet man am Handy das WLAN aus, steht innerhalb weniger Sekunden „offline“ da; über den Button „Prüfen“ im Dashboard auch sofort).
 - Pro Gerät: Name, IP, MAC, alle aufgerufenen Domains, Datenmenge pro Domain (z. B. `youtube.com 1,2 GB`).
 - Inhalte von HTTPS-Seiten (welches Video, was getippt wurde) sieht man **nicht** – nur Domain und Datenmenge.
 - Die Daten bleiben auf dem Pi (`~/cloudy/data`), 30 Tage Statistik, max. 50 000 Einzel-Aufrufe.

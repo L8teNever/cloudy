@@ -169,10 +169,22 @@ async def dashboard(request: Request, ip: str | None = None):
 
 
 @app.get("/api/devices", dependencies=[Depends(require_password)])
-async def api_devices(request: Request):
+async def api_devices(request: Request, refresh: bool = False):
+    presence = getattr(request.app.state, "presence", None)
+    if refresh and presence and hasattr(presence, "tick"):
+        await run_in_threadpool(presence.tick)
     online = online_ips(request)
     devices = await run_in_threadpool(db.devices)
     return [{**d, "online": d["ip"] in online} for d in devices]
+
+
+@app.post("/api/presence/refresh", dependencies=[Depends(require_password)])
+async def api_presence_refresh(request: Request):
+    presence = getattr(request.app.state, "presence", None)
+    if presence and hasattr(presence, "tick"):
+        await run_in_threadpool(presence.tick)
+        return {"online": sorted(presence.online)}
+    return {"online": []}
 
 
 @app.get("/api/devices/{ip}", dependencies=[Depends(require_password)])

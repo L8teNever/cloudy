@@ -43,7 +43,9 @@
     <p><a href="/">← alle Geräte</a></p>
     <h2>{{ device.hostname or device.ip }}
       <span class="muted">{{ device.ip }}{% if device.mac %} · {{ device.mac }}{% endif %}</span>
-      {% if device.ip in online %}<span class="pill on">online</span>{% else %}<span class="pill">offline</span>{% endif %}</h2>
+      <span id="device-presence">{% if device.ip in online %}<span class="pill on">online</span>{% else %}<span class="pill">offline</span>{% endif %}</span>
+      <button type="button" class="secondary" onclick="refreshPresenceNow(this)" style="font-size:.8rem;padding:.15rem .5rem;margin-left:.5rem" title="Online-Status jetzt sofort prüfen">Prüfen</button>
+    </h2>
 
     {% if warp and device.mac %}
     <h2>Internet über</h2>
@@ -90,7 +92,9 @@
       {% endfor %}
     </table>
   {% else %}
-    <h2>Geräte <span class="muted">({{ online | length }} online)</span></h2>
+    <h2>Geräte <span class="muted" id="online-count">({{ online | length }} online)</span>
+      <button type="button" class="secondary" onclick="refreshPresenceNow(this)" style="font-size:.8rem;padding:.15rem .5rem;margin-left:.5rem" title="Online-Status jetzt sofort prüfen">Prüfen</button>
+    </h2>
     {% if warp %}
     <form method="post" action="/warp/default" class="inline" style="margin-bottom:.75rem">
       <label>Alle Geräte ohne eigene Einstellung gehen über:
@@ -105,8 +109,8 @@
     <table>
       <tr><th>Status</th><th>Gerät</th><th>IP</th><th>MAC</th><th>Aufrufe</th><th>Domains</th><th>↓ Download</th><th>↑ Upload</th>{% if warp %}<th>Internet über</th>{% endif %}<th>Zuletzt aktiv</th></tr>
       {% for d in devices %}
-      <tr>
-        <td>{% if d.ip in online %}<span class="pill on">● online</span>{% else %}<span class="muted">offline</span>{% endif %}</td>
+      <tr data-ip="{{ d.ip }}">
+        <td class="device-status">{% if d.ip in online %}<span class="pill on">● online</span>{% else %}<span class="muted">offline</span>{% endif %}</td>
         <td><a href="/?ip={{ d.ip | urlencode }}">{{ d.hostname or 'unbekannt' }}</a></td>
         <td class="mono">{{ d.ip }}</td>
         <td class="mono">{{ d.mac or '' }}</td>
@@ -180,12 +184,65 @@
     und einmal auf dem Gerät installieren – Anleitung in der README.</p>
   {% endif %}
   <script>
-    // Alle 15 s neu laden – aber nicht, während du gerade etwas eintippst.
+    async function updatePresence(refresh = false) {
+      try {
+        const url = refresh ? '/api/devices?refresh=true' : '/api/devices';
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const devices = await res.json();
+        const onlineCount = devices.filter(d => d.online).length;
+        const countEl = document.getElementById('online-count');
+        if (countEl) countEl.textContent = `(${onlineCount} online)`;
+
+        devices.forEach(d => {
+          const row = document.querySelector(`tr[data-ip="${d.ip}"]`);
+          if (row) {
+            const cell = row.querySelector('.device-status');
+            if (cell) {
+              cell.innerHTML = d.online
+                ? '<span class="pill on">● online</span>'
+                : '<span class="muted">offline</span>';
+            }
+          }
+        });
+
+        const currentIp = new URLSearchParams(window.location.search).get('ip');
+        if (currentIp) {
+          const currentDev = devices.find(d => d.ip === currentIp);
+          const devPresenceEl = document.getElementById('device-presence');
+          if (devPresenceEl && currentDev) {
+            devPresenceEl.innerHTML = currentDev.online
+              ? '<span class="pill on">online</span>'
+              : '<span class="pill">offline</span>';
+          }
+        }
+      } catch (_) {}
+    }
+
+    async function refreshPresenceNow(btn) {
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Prüfe…';
+      }
+      try {
+        await updatePresence(true);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Prüfen';
+        }
+      }
+    }
+
+    // Live-Aktualisierung alle 4 s
+    setInterval(() => updatePresence(false), 4000);
+
+    // Alle 20 s neu laden – aber nicht, während du gerade etwas eintippst.
     setInterval(() => {
       const typing = document.activeElement?.closest("form") ||
         [...document.querySelectorAll("input[name=token], textarea[name=config]")].some((i) => i.value);
       if (!typing) location.reload();
-    }, 15000);
+    }, 20000);
   </script>
 </body>
 </html>

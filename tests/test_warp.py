@@ -123,10 +123,12 @@ def test_presence_parse_and_dashboard(client):
         "192.168.178.26 lladdr aa:bb:cc:dd:ee:02 STALE\n"
         "192.168.178.27  FAILED\n"
         "192.168.178.28  INCOMPLETE\n"
+        "192.168.178.29 lladdr aa:bb:cc:dd:ee:03 router REACHABLE\n"
     )
     assert parse_neigh(out) == {
         "192.168.178.25": "REACHABLE", "192.168.178.26": "STALE",
         "192.168.178.27": "FAILED", "192.168.178.28": "FAILED",
+        "192.168.178.29": "REACHABLE",
     }
     now = int(time.time())
     db.add_traffic([("192.168.178.25", "a.de", 1, 1, 1, now), ("192.168.178.26", "b.de", 1, 1, 1, now)])
@@ -136,6 +138,35 @@ def test_presence_parse_and_dashboard(client):
     assert "(1 online)" in page and "● online" in page
     api = {d["ip"]: d["online"] for d in client.get("/api/devices").json()}
     assert api == {"192.168.178.25": True, "192.168.178.26": False}
+
+
+def test_presence_monitor_tick_and_refresh(client, monkeypatch):
+    from app.presence import PresenceMonitor
+
+    s = Settings.from_env()
+    mon = PresenceMonitor(s, interval=8.0, settle_seconds=0.0)
+    now = int(time.time())
+    db.upsert_devices([("192.168.178.50", "00:11:22:33:44:55", "handy")])
+    db.add_traffic([("192.168.178.50", "online.de", 1, 1, 1, now)])
+
+    # 1. Handy ist online (antwortet auf ARP)
+    monkeypatch.setattr(mon, "_neigh", lambda: {"192.168.178.50": "REACHABLE"})
+    mon.tick()
+    assert "192.168.178.50" in mon.online
+
+    # 2. WLAN am Handy ausgemacht -> antwortet nicht mehr (FAILED / INCOMPLETE)
+    monkeypatch.setattr(mon, "_neigh", lambda: {"192.168.178.50": "FAILED"})
+    mon.tick()
+    assert "192.168.178.50" not in mon.online
+
+    # 3. Test der API-Aktualisierung
+    client.app.state.presence = mon
+    res = client.post("/api/presence/refresh")
+    assert res.status_code == 200
+    assert res.json() == {"online": []}
+
+    devs = client.get("/api/devices?refresh=true").json()
+    assert any(d["ip"] == "192.168.178.50" and d["online"] is False for d in devs)
 
 
 def test_plan_default_and_direct():
