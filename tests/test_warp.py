@@ -136,3 +136,35 @@ def test_presence_parse_and_dashboard(client):
     assert "(1 online)" in page and "● online" in page
     api = {d["ip"]: d["online"] for d in client.get("/api/devices").json()}
     assert api == {"192.168.178.25": True, "192.168.178.26": False}
+
+
+def test_plan_default_and_direct():
+    s = Settings.from_env()
+    plan = warp.build_plan(s, {MAC: "direct", "aa:bb:cc:dd:ee:02": "warp1"}, {"warp1": True, "vpn1": True}, "vpn1")
+    assert plan.mangle_rules == (
+        ("-i", "eth0", "-m", "mac", "--mac-source", MAC, "-j", "RETURN"),
+        ("-i", "eth0", "-m", "mac", "--mac-source", "aa:bb:cc:dd:ee:02", "!", "-d", "192.168.178.0/24",
+         "-j", "MARK", "--set-mark", "0x101"),
+        ("-i", "eth0", "-m", "mark", "--mark", "0x0", "!", "-d", "192.168.178.0/24",
+         "-j", "MARK", "--set-mark", "0x103"),
+    )
+    assert warp.build_plan(s, {}, {}, "gibtsnicht").mangle_rules == ()
+
+
+def test_dashboard_default_and_direct(client):
+    db.upsert_devices([("192.168.178.25", MAC, "handy")])
+    db.add_traffic([("192.168.178.25", "example.com", 1, 1, 1, int(time.time()))])
+    assert client.post("/warp/default", data={"slot": "vpn1"}, follow_redirects=False).status_code == 303
+    assert db.get_setting(warp.DEFAULT_KEY) == "vpn1"
+    page = client.get("/").text
+    assert '<option value="vpn1" selected>' in page and "Standard (VPN 1)" in page
+    assert client.post("/warp/default", data={"slot": "quatsch"}).status_code == 404
+
+    client.post("/devices/warp", data={"mac": MAC, "slot": "direct"})
+    assert db.device_warp() == {MAC: "direct"}
+    assert '<option value="direct" selected>' in client.get("/").text
+    client.post("/devices/warp", data={"mac": MAC, "slot": ""})
+    assert db.device_warp() == {}
+
+    client.post("/warp/default", data={"slot": ""})
+    assert db.get_setting(warp.DEFAULT_KEY) == ""

@@ -70,6 +70,11 @@ def init() -> None:
                 slot TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS warp_labels (
                 slot TEXT PRIMARY KEY,
                 label TEXT NOT NULL
@@ -172,6 +177,24 @@ def set_device_warp(mac: str, slot: str | None) -> None:
             )
         else:
             conn.execute("DELETE FROM device_warp WHERE mac = ?", (mac,))
+        conn.commit()
+
+
+def get_setting(key: str, default: str = "") -> str:
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key: str, value: str) -> None:
+    with closing(_connect()) as conn:
+        if value:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+        else:
+            conn.execute("DELETE FROM settings WHERE key = ?", (key,))
         conn.commit()
 
 

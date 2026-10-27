@@ -154,6 +154,7 @@ async def dashboard(request: Request, ip: str | None = None):
     context = {"settings": settings, "fmt_time": fmt_time, "ip": ip}
     context["warp"] = await run_in_threadpool(warp_profiles, settings)
     context["online"] = online_ips(request)
+    context["warp_default"] = await run_in_threadpool(db.get_setting, warp.DEFAULT_KEY)
     context["warp_names"] = {w["slot"]: w["label"] for w in context["warp"]}
     context["warp_by_mac"] = await run_in_threadpool(db.device_warp)
     if ip:
@@ -229,7 +230,16 @@ async def device_set_warp(request: Request, mac: str = Form(...), slot: str = Fo
     mac = mac.strip().lower()
     if not warp.MAC_RE.match(mac):
         raise HTTPException(status_code=400, detail="Ungültige MAC-Adresse")
-    if slot:
+    if slot and slot != warp.DIRECT:
         _check_slot(request, slot)
     await run_in_threadpool(db.set_device_warp, mac, slot or None)
     return RedirectResponse(f"/?ip={quote(ip)}" if ip else "/", status_code=303)
+
+
+@app.post("/warp/default", dependencies=[Depends(require_password)])
+async def warp_set_default(request: Request, slot: str = Form("")):
+    """Wohin alle Geräte gehen, die keine eigene Einstellung haben ("" = normal über die Fritzbox)."""
+    if slot:
+        _check_slot(request, slot)
+    await run_in_threadpool(db.set_setting, warp.DEFAULT_KEY, slot)
+    return RedirectResponse("/", status_code=303)

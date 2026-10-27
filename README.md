@@ -168,6 +168,15 @@ Nach wenigen Sekunden steht dort **„verbunden“**. Danach beim Gerät „Inte
 - Die Datei enthält deinen privaten Schlüssel (liegt in `~/cloudy/data/warp/vpn1/`) – nicht weitergeben.
 - Status: `cloudy status`, Logs: `cloudy logs vpn1`.
 
+## Alles auf einmal umschalten (ohne am PC etwas zu ändern)
+
+Alles läuft auf dem Pi, an den Geräten wird nichts eingestellt. In der Geräteliste steht oben
+**„Alle Geräte ohne eigene Einstellung gehen über: …“**. Wähl dort z. B. **VPN 1** – dann läuft der gesamte
+Internetverkehr aller Geräte durch Proton, auch von neuen Geräten. Bei einzelnen Geräten kannst du in der Spalte
+„Internet über“ etwas anderes wählen, z. B. **normal (Fritzbox)** für den Fernseher oder das NAS.
+Zurück auf normal: oben **„normal (Fritzbox)“** wählen. Es wirkt innerhalb weniger Sekunden, die Geräte brauchen
+kein WLAN aus/an. Voraussetzung ist der Gateway-Modus (Schritt 4).
+
 ## Zurück zur Fritzbox (alles wie vorher)
 
 1. Auf dem Pi: `cloudy dhcp aus` (schaltet auch das Gateway aus)

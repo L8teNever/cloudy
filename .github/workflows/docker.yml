@@ -140,6 +140,22 @@ jobs:
           docker exec fake-warp iptables -Z FORWARD
           docker exec geraet wget -q -O /dev/null https://example.com
           test "$(zaehler)" -eq 0
+          # Standard für alle Geräte: ohne eigene Zuordnung läuft das Gerät durch WARP ...
+          api /warp/default "slot=warp1"
+          sleep 7
+          docker exec fake-warp iptables -Z FORWARD
+          docker exec geraet wget -q -O /dev/null https://example.com
+          echo "Pakete durch WARP (Standard): $(zaehler)"
+          test "$(zaehler)" -gt 0
+          # ... außer es ist ausdrücklich auf "normal" gestellt.
+          api /devices/warp "mac=02:42:ac:1e:00:11&slot=direct"
+          sleep 7
+          docker exec fake-warp iptables -Z FORWARD
+          docker exec geraet wget -q -O /dev/null https://example.com
+          test "$(zaehler)" -eq 0
+          api /devices/warp "mac=02:42:ac:1e:00:11&slot="
+          api /warp/default "slot="
+          sleep 7
           echo "WARP-Routing ok"
 
           # Online-Anzeige: das laufende "Gerät" erscheint als online, nach dem Stoppen als offline.

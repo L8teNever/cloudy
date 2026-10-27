@@ -25,6 +25,11 @@
   </style>
 </head>
 <body>
+  {% macro slot_options(current) %}
+    <option value="">Standard ({{ warp_names.get(warp_default, 'normal (Fritzbox)') if warp_default else 'normal (Fritzbox)' }})</option>
+    <option value="direct" {{ 'selected' if current == 'direct' }}>normal (Fritzbox)</option>
+    {% for w in warp %}<option value="{{ w.slot }}" {{ 'selected' if current == w.slot }}>{{ w.label }}</option>{% endfor %}
+  {% endmacro %}
   <h1><a href="/">cloudy</a></h1>
   <div class="status">
     <span class="pill on">DNS an</span>
@@ -46,10 +51,7 @@
       <input type="hidden" name="mac" value="{{ device.mac }}">
       <input type="hidden" name="ip" value="{{ device.ip }}">
       <select name="slot">
-        <option value="">normal (Fritzbox)</option>
-        {% for w in warp %}
-        <option value="{{ w.slot }}" {% if warp_by_mac.get(device.mac) == w.slot %}selected{% endif %}>{{ w.label }}</option>
-        {% endfor %}
+        {{ slot_options(warp_by_mac.get(device.mac, '')) }}
       </select>
       <button>Übernehmen</button>
     </form>
@@ -89,6 +91,17 @@
     </table>
   {% else %}
     <h2>Geräte <span class="muted">({{ online | length }} online)</span></h2>
+    {% if warp %}
+    <form method="post" action="/warp/default" class="inline" style="margin-bottom:.75rem">
+      <label>Alle Geräte ohne eigene Einstellung gehen über:
+        <select name="slot" onchange="this.form.submit()">
+          <option value="">normal (Fritzbox)</option>
+          {% for w in warp %}<option value="{{ w.slot }}" {{ 'selected' if warp_default == w.slot }}>{{ w.label }}{% if not w.has_token %} (nicht eingerichtet){% endif %}</option>{% endfor %}
+        </select>
+      </label>
+      {% if not settings.gateway_enabled %}<span class="muted">Wirkt erst mit Gateway-Modus.</span>{% endif %}
+    </form>
+    {% endif %}
     <table>
       <tr><th>Status</th><th>Gerät</th><th>IP</th><th>MAC</th><th>Aufrufe</th><th>Domains</th><th>↓ Download</th><th>↑ Upload</th>{% if warp %}<th>Internet über</th>{% endif %}<th>Zuletzt aktiv</th></tr>
       {% for d in devices %}
@@ -101,7 +114,11 @@
         <td>{{ d.domains }}</td>
         <td>{{ d.bytes_down | bytes }}</td>
         <td>{{ d.bytes_up | bytes }}</td>
-        {% if warp %}<td>{{ warp_names.get(warp_by_mac.get(d.mac), '') if d.mac else '' }}</td>{% endif %}
+        {% if warp %}<td>{% if d.mac %}
+          <form method="post" action="/devices/warp" class="inline">
+            <input type="hidden" name="mac" value="{{ d.mac }}">
+            <select name="slot" onchange="this.form.submit()" aria-label="Internet über">{{ slot_options(warp_by_mac.get(d.mac, '')) }}</select>
+          </form>{% endif %}</td>{% endif %}
         <td>{{ fmt_time(d.last_seen) }}</td>
       </tr>
       {% else %}
@@ -140,7 +157,7 @@
       </tr>
       {% endfor %}
     </table>
-    <p class="muted">Geräte zuordnen: Gerät anklicken → „Internet über“. Anleitung (Token bzw. WireGuard-Datei) in der README.</p>
+    <p class="muted">Geräte zuordnen: in der Geräteliste bei „Internet über“ auswählen, oder oben für alle Geräte auf einmal. Anleitung (Token bzw. WireGuard-Datei) in der README.</p>
     {% endif %}
 
     <h2>Letzte Aufrufe</h2>

@@ -22,6 +22,8 @@ from .settings import Settings
 from .traffic import FWD_CHAIN, _run, _write_sysctl
 
 MANGLE_CHAIN = "CLOUDY-WARP"
+DIRECT = "direct"  # Gerät ausdrücklich ohne Tunnel (auch wenn ein Standard eingestellt ist)
+DEFAULT_KEY = "warp_default"
 TABLE_BASE = 200
 MARK_BASE = 0x100
 RULE_PRIORITY_BASE = 1000
@@ -124,16 +126,29 @@ class Plan:
     routes: tuple[tuple[str, ...], ...]  # pro Slot: Argumente für "ip route replace ... table N"
 
 
-def build_plan(s: Settings, assignments: dict[str, str], connected: dict[str, bool]) -> Plan:
-    """assignments: MAC -> Slot. connected: Slot -> Tunnel verbunden?"""
+def build_plan(
+    s: Settings, assignments: dict[str, str], connected: dict[str, bool], default_slot: str = ""
+) -> Plan:
+    """assignments: MAC -> Slot (oder "direct"). connected: Slot -> Tunnel verbunden? default_slot: für alle anderen."""
     lan = str(s.lan_network)
+    index_of = {slot: i for i, (slot, _) in enumerate(s.warp_slots, start=1)}
     rules = []
-    for index, (slot, _) in enumerate(s.warp_slots, start=1):
-        for mac in sorted(m for m, sl in assignments.items() if sl == slot and MAC_RE.match(m)):
+    for mac in sorted(m for m in assignments if MAC_RE.match(m)):
+        slot = assignments[mac]
+        if slot == DIRECT:
+            # Nicht markieren und die Standard-Regel unten überspringen.
+            rules.append(("-i", s.lan_interface, "-m", "mac", "--mac-source", mac, "-j", "RETURN"))
+        elif slot in index_of:
             rules.append((
                 "-i", s.lan_interface, "-m", "mac", "--mac-source", mac,
-                "!", "-d", lan, "-j", "MARK", "--set-mark", mark(index),
+                "!", "-d", lan, "-j", "MARK", "--set-mark", mark(index_of[slot]),
             ))
+    if default_slot in index_of:
+        # Alle Geräte, die noch keine Markierung haben.
+        rules.append((
+            "-i", s.lan_interface, "-m", "mark", "--mark", "0x0",
+            "!", "-d", lan, "-j", "MARK", "--set-mark", mark(index_of[default_slot]),
+        ))
     routes = []
     for index, (slot, ip) in enumerate(s.warp_slots, start=1):
         table = str(TABLE_BASE + index)
@@ -210,7 +225,7 @@ class WarpRouter:
 
     def tick(self) -> None:
         connected = {slot: read_status(self.s, slot).connected for slot, _ in self.s.warp_slots}
-        self.apply(build_plan(self.s, db.device_warp(), connected))
+        self.apply(build_plan(self.s, db.device_warp(), connected, db.get_setting(DEFAULT_KEY)))
 
     def start(self) -> None:
         try:
