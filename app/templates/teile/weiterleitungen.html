@@ -1,0 +1,43 @@
+<div class="card">
+  <h2>Domain- &amp; URL-Weiterleitungen</h2>
+  <p class="muted small">
+    Ruft ein Gerät im Heimnetz eine eingetragene Domain auf (inkl. aller Subdomains), wird es automatisch auf das Ziel umgeleitet.
+    Bei <b>https://</b> klappt dies ohne Sicherheitswarnung, wenn das cloudy-Stammzertifikat auf dem Gerät installiert ist.
+  </p>
+
+  <form method="post" action="/redirects/add" class="inline" style="margin-bottom:1rem;gap:.5rem">
+    <input name="source" placeholder="Von (z. B. tiktok.com oder fritzbox)" size="26" required>
+    <input name="target" placeholder="Nach (z. B. wikipedia.org oder http://192.168.178.1)" size="36" required>
+    <button>Weiterleitung speichern</button>
+  </form>
+
+  {% if redirects %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Ursprungs-Domain (inkl. Subdomains)</th>
+          <th>Ziel-Adresse</th>
+          <th>Aktion</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in redirects %}
+        <tr>
+          <td class="mono" style="font-weight:600;color:var(--brand)">{{ r.source }}</td>
+          <td><a href="{{ r.target }}" target="_blank" rel="noopener">{{ r.target }}</a></td>
+          <td>
+            <form method="post" action="/redirects/remove" class="inline">
+              <input type="hidden" name="source" value="{{ r.source }}">
+              <button class="secondary" style="padding:.2rem .45rem;font-size:.78rem">Löschen</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted small">Noch keine Weiterleitungen eingerichtet.</p>
+  {% endif %}
+</div>

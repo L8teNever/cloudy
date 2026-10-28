@@ -96,6 +96,32 @@ def init() -> None:
                 added INTEGER NOT NULL
             );
 
+            -- Statistik: pro Stunde und Gerät bzw. pro Tag, Gerät und Ziel (für Diagramme).
+            CREATE TABLE IF NOT EXISTS traffic_hourly (
+                hour INTEGER NOT NULL, ip TEXT NOT NULL,
+                bytes_up INTEGER NOT NULL, bytes_down INTEGER NOT NULL,
+                PRIMARY KEY (hour, ip)
+            );
+            CREATE TABLE IF NOT EXISTS traffic_daily (
+                day TEXT NOT NULL, ip TEXT NOT NULL, target TEXT NOT NULL,
+                bytes_up INTEGER NOT NULL, bytes_down INTEGER NOT NULL, conns INTEGER NOT NULL,
+                PRIMARY KEY (day, ip, target)
+            );
+            CREATE TABLE IF NOT EXISTS dns_hourly (
+                hour INTEGER NOT NULL, ip TEXT NOT NULL, hits INTEGER NOT NULL,
+                PRIMARY KEY (hour, ip)
+            );
+            CREATE TABLE IF NOT EXISTS dns_daily (
+                day TEXT NOT NULL, ip TEXT NOT NULL, domain TEXT NOT NULL, hits INTEGER NOT NULL,
+                PRIMARY KEY (day, ip, domain)
+            );
+
+            -- Geräte (MAC), die nur ins Internet dürfen und sonst niemanden im Heimnetz sehen.
+            CREATE TABLE IF NOT EXISTS device_isolated (
+                mac TEXT PRIMARY KEY,
+                added INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS redirects (
                 source TEXT PRIMARY KEY,
                 target TEXT NOT NULL,
@@ -104,6 +130,23 @@ def init() -> None:
             """
         )
         conn.commit()
+
+
+def hour_of(ts: int) -> int:
+    return int(ts) - int(ts) % 3600
+
+
+def day_of(ts: int) -> str:
+    """Kalendertag in Ortszeit (TZ aus dem Container, z. B. Europe/Berlin)."""
+    return time.strftime("%Y-%m-%d", time.localtime(ts))
+
+
+def _prune_rollups(conn: sqlite3.Connection) -> None:
+    cutoff = int(time.time()) - retention_days() * 86400
+    conn.execute("DELETE FROM traffic_hourly WHERE hour < ?", (cutoff,))
+    conn.execute("DELETE FROM dns_hourly WHERE hour < ?", (cutoff,))
+    conn.execute("DELETE FROM traffic_daily WHERE day < ?", (day_of(cutoff),))
+    conn.execute("DELETE FROM dns_daily WHERE day < ?", (day_of(cutoff),))
 
 
 def add_queries(rows: list[tuple[int, str, str, str]]) -> None:
@@ -119,6 +162,21 @@ def add_queries(rows: list[tuple[int, str, str, str]]) -> None:
             """,
             [(ip, domain, ts, ts) for ts, ip, domain, _ in rows],
         )
+        conn.executemany(
+            """
+            INSERT INTO dns_hourly (hour, ip, hits) VALUES (?, ?, 1)
+            ON CONFLICT (hour, ip) DO UPDATE SET hits = hits + 1
+            """,
+            [(hour_of(ts), ip) for ts, ip, _, _ in rows],
+        )
+        conn.executemany(
+            """
+            INSERT INTO dns_daily (day, ip, domain, hits) VALUES (?, ?, ?, 1)
+            ON CONFLICT (day, ip, domain) DO UPDATE SET hits = hits + 1
+            """,
+            [(day_of(ts), ip, domain) for ts, ip, domain, _ in rows],
+        )
+        _prune_rollups(conn)
         # Nur die letzten MAX_ROWS Einzel-Aufrufe und Statistiken der letzten RETENTION_DAYS Tage behalten.
         conn.execute(
             "DELETE FROM queries WHERE id <= (SELECT MAX(id) FROM queries) - ?", (max_rows(),)
@@ -147,6 +205,24 @@ def add_traffic(rows: list[tuple[str, str, int, int, int, int]]) -> None:
             """,
             [(ip, target, up, down, conns, ts, ts) for ip, target, up, down, conns, ts in rows],
         )
+        conn.executemany(
+            """
+            INSERT INTO traffic_hourly (hour, ip, bytes_up, bytes_down) VALUES (?, ?, ?, ?)
+            ON CONFLICT (hour, ip) DO UPDATE SET
+                bytes_up = bytes_up + excluded.bytes_up, bytes_down = bytes_down + excluded.bytes_down
+            """,
+            [(hour_of(ts), ip, up, down) for ip, _, up, down, _, ts in rows],
+        )
+        conn.executemany(
+            """
+            INSERT INTO traffic_daily (day, ip, target, bytes_up, bytes_down, conns) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (day, ip, target) DO UPDATE SET
+                bytes_up = bytes_up + excluded.bytes_up, bytes_down = bytes_down + excluded.bytes_down,
+                conns = conns + excluded.conns
+            """,
+            [(day_of(ts), ip, target, up, down, conns) for ip, target, up, down, conns, ts in rows],
+        )
+        _prune_rollups(conn)
         conn.execute(
             "DELETE FROM traffic WHERE last_seen < ?", (int(time.time()) - retention_days() * 86400,)
         )
@@ -414,3 +490,24 @@ def redirect_map() -> dict[str, str]:
         rows = conn.execute("SELECT source, target FROM redirects").fetchall()
         return {r["source"].lower(): r["target"] for r in rows}
 
+
+def isolated_macs() -> set[str]:
+    with closing(_connect()) as conn:
+        return {r["mac"] for r in conn.execute("SELECT mac FROM device_isolated")}
+
+
+def set_isolated(mac: str, isolated: bool) -> None:
+    with closing(_connect()) as conn:
+        if isolated:
+            conn.execute(
+                "INSERT INTO device_isolated (mac, added) VALUES (?, ?) ON CONFLICT (mac) DO NOTHING",
+                (mac, int(time.time())),
+            )
+        else:
+            conn.execute("DELETE FROM device_isolated WHERE mac = ?", (mac,))
+        conn.commit()
+
+
+def connect() -> sqlite3.Connection:
+    """Für Lese-Abfragen anderer Module (z. B. Statistik)."""
+    return _connect()

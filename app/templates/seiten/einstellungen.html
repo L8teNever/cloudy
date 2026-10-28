@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h2>📱 Zugriff vom Handy &amp; Zertifikate für alle Geräte</h2>
+  <p class="small">
+    <strong>Am Handy öffnen:</strong> Tippe einfach <a href="http://{{ settings.pi_ip }}" style="font-weight:600">http://{{ settings.pi_ip }}</a> 
+    (ohne Portangabe) in Safari oder Chrome ein. Sobald dein Handy den Pi als DNS-Server nutzt oder DHCP aktiv ist, 
+    funktioniert auch <a href="http://{{ settings.local_name or 'cloudy.lan' }}" style="font-weight:600">http://{{ settings.local_name or 'cloudy.lan' }}</a>.
+  </p>
+
+  {% if settings.https_port %}
+  <div style="margin-top:1.25rem">
+    <h3>HTTPS-Stammzertifikat (1-Klick Installation für Geräte)</h3>
+    <p class="muted small">
+      Ermöglicht das Aufrufen von <code>https://cloudy.lan</code> sowie sichere Domain-Weiterleitungen ohne Browser-Sicherheitswarnungen.
+    </p>
+    <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin:1rem 0">
+      <a href="/ca.mobileconfig" class="chip" style="font-weight:600;text-decoration:none">
+        🍏 iPhone / iPad (1-Klick Konfigurationsprofil)
+      </a>
+      <a href="/install-ca.bat" class="chip" style="font-weight:600;text-decoration:none">
+        🪟 Windows (1-Klick Installer .bat)
+      </a>
+      <a href="/ca.crt" class="chip" style="font-weight:600;text-decoration:none">
+        🤖 Android / Linux (.crt Zertifikat)
+      </a>
+    </div>
+
+    <div class="info small" style="margin-top:.75rem">
+      <b>Anleitung iPhone / iPad:</b><br>
+      1. Auf <i>iPhone / iPad</i> tippen und Profil laden erlauben.<br>
+      2. In die iOS <i>Einstellungen → Profil geladen → Installieren</i> wählen.<br>
+      3. Unter <i>Einstellungen → Allgemein → Info → Zertifikatsvertrauenseinstellungen</i> den Schalter für „cloudy Local Root CA“ aktivieren.
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>⚙️ System &amp; Netzwerk-Konfiguration</h2>
+  <div class="table-wrap">
+    <table>
+      <tbody>
+        <tr><td><strong>Pi IP-Adresse</strong></td><td class="mono">{{ settings.pi_ip }}</td></tr>
+        <tr><td><strong>Lokaler Name</strong></td><td class="mono">{{ settings.local_name or 'cloudy.lan' }}</td></tr>
+        <tr><td><strong>Fritzbox / Router IP</strong></td><td class="mono">{{ settings.router_ip }}</td></tr>
+        <tr><td><strong>LAN-Schnittstelle</strong></td><td class="mono">{{ settings.lan_interface }}</td></tr>
+        <tr><td><strong>Subnetz</strong></td><td class="mono">{{ settings.lan_network }}</td></tr>
+        <tr><td><strong>Upstream-DNS</strong></td><td class="mono">{{ settings.upstream_dns | join(', ') }}</td></tr>
+        <tr><td><strong>DHCP-Server</strong></td><td>{{ 'Aktiv (' ~ settings.dhcp_start ~ ' - ' ~ settings.dhcp_end ~ ')' if settings.dhcp_enabled else 'Deaktiviert (Fritzbox verteilt IPs)' }}</td></tr>
+        <tr><td><strong>Gateway-Modus</strong></td><td>{{ 'Aktiv (Verkehr & NAT läuft über Pi)' if settings.gateway_enabled else 'Deaktiviert (Nur DNS)' }}</td></tr>
+        <tr><td><strong>Webserver-Port</strong></td><td class="mono">{{ settings.dashboard_port }} (Standard-Port 80 ebenfalls aktiv)</td></tr>
+        <tr><td><strong>HTTPS-Port</strong></td><td class="mono">{{ settings.https_port if settings.https_port else 'Aus' }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

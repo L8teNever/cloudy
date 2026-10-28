@@ -1,0 +1,21 @@
+<div class="card">
+  <h2>Live: Aktive Geräte &amp; Webseiten</h2>
+  {% if active_devices %}
+  <div class="chips">
+    {% for d in active_devices %}
+    <div class="chip">
+      <span class="dot on"></span>
+      <a href="/geraete/{{ d.ip | urlencode }}" data-nav style="font-weight:600;text-decoration:none">{{ d.hostname or d.ip }}</a>
+      <span class="muted">auf</span>
+      <span class="mono" style="font-weight:600;color:var(--brand)">{{ d.current_site.domain }}</span>
+      {% if d.current_site.ip and d.current_site.ip != d.current_site.domain %}
+        <span class="muted small">({{ d.current_site.ip }})</span>
+      {% endif %}
+      <span class="muted small">({{ d.current_site.ts | ago }})</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">Gerade keine aktuellen Webseiten-Aufrufe erfasst.</p>
+  {% endif %}
+</div>

@@ -1,5 +1,6 @@
 import os
 import time
+from contextlib import closing
 
 from . import db
 from .settings import Settings
@@ -112,3 +113,26 @@ def generate_blocklist(settings: Settings) -> int:
             f.write(f"0.0.0.0 {d}\n:: {d}\n")
 
     return len(domains)
+
+
+def list_info() -> dict:
+    return {
+        "count": len(COOKIE_CONSENT_DOMAINS),
+        "source": "Kuratierte Cookie-Consent & CMP Domainliste (kein Werbeblocker)",
+    }
+
+
+def recent_blocked(limit: int = 20) -> list[dict]:
+    """Findet die letzten Anfragen, die von der Blockliste gefiltert wurden."""
+    blocked_domains = [d.lower() for d in COOKIE_CONSENT_DOMAINS]
+    whitelist = set(db.whitelist())
+    active_blocked = [d for d in blocked_domains if d not in whitelist]
+    if not active_blocked:
+        return []
+    placeholders = ",".join("?" for _ in active_blocked)
+    with closing(db.connect()) as conn:
+        rows = conn.execute(
+            f"SELECT ts, ip, domain, qtype FROM queries WHERE LOWER(domain) IN ({placeholders}) ORDER BY id DESC LIMIT ?",
+            (*active_blocked, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]

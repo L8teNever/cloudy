@@ -1,0 +1,57 @@
+<div class="tabs">
+  {% for k, lbl in [('heute', 'Heute'), ('7t', '7 Tage'), ('30t', '30 Tage')] %}
+  <a href="/statistik?zeitraum={{ k }}" data-nav class="{{ 'active' if range.key == k }}">{{ lbl }}</a>
+  {% endfor %}
+</div>
+
+<div class="kpis">
+  <div class="kpi">
+    <div class="l">Download gesamt</div>
+    <div class="v" style="color:var(--s1)">{{ totals.bytes_down | bytes }}</div>
+  </div>
+  <div class="kpi">
+    <div class="l">Upload gesamt</div>
+    <div class="v" style="color:var(--s2)">{{ totals.bytes_up | bytes }}</div>
+  </div>
+  <div class="kpi">
+    <div class="l">Aufrufe gesamt</div>
+    <div class="v">{{ totals.hits | count }}</div>
+  </div>
+  <div class="kpi">
+    <div class="l">Aktive Geräte</div>
+    <div class="v">{{ totals.devices | count }}</div>
+  </div>
+  <div class="kpi">
+    <div class="l">Aufgerufene Domains</div>
+    <div class="v">{{ totals.domains | count }}</div>
+  </div>
+</div>
+
+{% if series %}
+<div class="card">
+  <h2>Verlauf Datenverkehr ({{ range.label }})</h2>
+  {{ charts.columns(series, charts.TRAFFIC, fmt_bytes) }}
+</div>
+{% endif %}
+
+<div class="grid">
+  <div class="card">
+    <h2>Top Geräte nach Datenmenge</h2>
+    {{ charts.hbars(usage, charts.TRAFFIC, fmt_bytes, 'device') }}
+  </div>
+  <div class="card">
+    <h2>Top Geräte nach Aufrufen</h2>
+    {{ charts.hbars(device_hits, charts.HITS, fmt_count, 'device') }}
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>Top Ziele (Datenverkehr)</h2>
+    {{ charts.hbars(targets, charts.TRAFFIC, fmt_bytes, 'target') }}
+  </div>
+  <div class="card">
+    <h2>Meistbesuchte Domains</h2>
+    {{ charts.hbars(domains, charts.HITS, fmt_count, 'domain') }}
+  </div>
+</div>

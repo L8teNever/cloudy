@@ -1,0 +1,98 @@
+<div class="card">
+  <h2>Cookie- &amp; Tracking-Schutz <span class="muted small">(Anti-Adblock-sicher)</span></h2>
+  
+  <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.75rem;flex-wrap:wrap">
+    <strong>Status:</strong>
+    {% if blocklist_paused_until %}
+      <span class="pill warn">⏸ Pausiert (bis {{ fmt_time(blocklist_paused_until) }})</span>
+    {% elif blocklist_enabled %}
+      <span class="pill on"><span class="dot on"></span> Aktiv</span>
+    {% else %}
+      <span class="pill">Ausgeschaltet</span>
+    {% endif %}
+
+    {% if not blocklist_enabled %}
+      <form method="post" action="/blocklist/toggle" class="inline">
+        <button>Einschalten</button>
+      </form>
+    {% else %}
+      <form method="post" action="/blocklist/toggle" class="inline">
+        <button class="secondary">Ausschalten</button>
+      </form>
+      {% if blocklist_paused_until %}
+        <form method="post" action="/blocklist/resume" class="inline">
+          <button>Fortsetzen</button>
+        </form>
+      {% else %}
+        <form method="post" action="/blocklist/pause" class="inline">
+          <input type="hidden" name="minutes" value="15">
+          <button class="secondary">15 Min pausieren</button>
+        </form>
+        <form method="post" action="/blocklist/pause" class="inline">
+          <input type="hidden" name="minutes" value="60">
+          <button class="secondary">1 Std pausieren</button>
+        </form>
+      {% endif %}
+    {% endif %}
+  </div>
+
+  <div class="info" style="margin-bottom:1rem">
+    <b>🛡️ Kein klassischer Werbeblocker – keine Sperren:</b><br>
+    Cloudy blockiert am Gateway gezielt die Domains von Consent-Management-Plattformen (wie Cookiebot, OneTrust, Usercentrics, Didomi, Quantcast, TrustArc, Axeptio). 
+    Weil normale Bild- und Textwerbung nicht gesperrt wird, schlagen Webseiten <b>keinen Alarm („Bitte Werbeblocker ausschalten“)</b>.<br><br>
+    <b>💡 Tipp für vollständige Unterdrückung von Cookie-Bannern:</b><br>
+    Einige Webseiten bauen Banner direkt in ihr eigenes HTML ein. Wenn du auch diese Popups automatisch ablehnen lassen möchtest, aktiviere im Browser:
+    <ul style="margin:.3rem 0 0 1.2rem;padding:0">
+      <li><b>Brave:</b> <i>Einstellungen → Shields → Cookie-Einwilligungsmeldungen blockieren</i></li>
+      <li><b>Firefox:</b> <i>Einstellungen → Datenschutz &amp; Sicherheit → Cookie-Banner-Schutz</i></li>
+      <li><b>Chrome / Safari / Edge:</b> Die Erweiterung <i>Consent-O-Matic</i> (beantwortet Banner automatisch mit „Alles Ablehnen“).</li>
+    </ul>
+  </div>
+
+  <div style="border-top:1px solid var(--line);padding-top:.75rem;margin-top:.75rem">
+    <h3>Ausnahmen (Whitelist)</h3>
+    <p class="muted small">Domains, für die der Schutz deaktiviert sein soll:</p>
+    <form method="post" action="/blocklist/whitelist/add" class="inline" style="margin-bottom:.75rem">
+      <input name="domain" placeholder="Domain (z. B. spiegel.de)" size="28" required>
+      <button>Freigeben</button>
+    </form>
+
+    {% if whitelist %}
+    <div style="display:flex;flex-wrap:wrap;gap:.35rem">
+      {% for w in whitelist %}
+      <span class="pill">
+        {{ w }}
+        <form method="post" action="/blocklist/whitelist/remove" class="inline" style="margin:0">
+          <input type="hidden" name="domain" value="{{ w }}">
+          <button style="background:none;border:none;color:var(--bad);cursor:pointer;padding:0;font-weight:bold" title="Ausnahme löschen">×</button>
+        </form>
+      </span>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted small">Keine Ausnahmen eingetragen.</p>
+    {% endif %}
+  </div>
+
+  {% if blocked %}
+  <div style="border-top:1px solid var(--line);padding-top:.75rem;margin-top:.75rem">
+    <h3>Kürzlich blockierte Tracking- &amp; Consent-Aufrufe</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Zeit</th><th>Gerät</th><th>Blockierte Domain</th></tr>
+        </thead>
+        <tbody>
+          {% for b in blocked %}
+          <tr>
+            <td class="muted small">{{ fmt_time(b.ts) }}</td>
+            <td class="mono small">{{ b.ip }}</td>
+            <td class="mono" style="color:var(--bad);font-weight:600">{{ b.domain }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<div data-live="/teil/schutz" data-every="10">
+  {% include "teile/schutz.html" %}
+</div>
+<div data-live="/teil/weiterleitungen" data-every="15">
+  {% include "teile/weiterleitungen.html" %}
+</div>
+{% endblock %}

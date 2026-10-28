@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<div data-live="{{ live('geraet_kopf', ip=params.ip) }}" data-every="5">
+  {% include "teile/geraet_kopf.html" %}
+</div>
+<div data-live="{{ live('geraet_statistik', ip=params.ip, zeitraum=params.zeitraum) }}" data-every="15">
+  {% include "teile/geraet_statistik.html" %}
+</div>
+<div data-live="{{ live('aufrufe', ip=params.ip) }}" data-every="5">
+  {% include "teile/aufrufe.html" %}
+</div>
+{% endblock %}

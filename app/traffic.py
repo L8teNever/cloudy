@@ -14,6 +14,7 @@ from .settings import Settings
 
 NAT_CHAIN = "CLOUDY-NAT"
 FWD_CHAIN = "CLOUDY-FWD"
+ISOLATE_CHAIN = "CLOUDY-ISOLATE"
 
 # Mit log-queries=extra: "<serial> <client>/<port> query[A] name from client"
 QUERY_SERIAL_RE = re.compile(r" (?P<serial>\d+) (?P<client>[0-9A-Fa-f:.]+)/\d+ query\[\w+\] (?P<domain>\S+) from ")
@@ -172,6 +173,25 @@ def gateway_rules(s: Settings) -> list[list[str]]:
     ]
 
 
+def apply_isolation(s: Settings) -> bool:
+    """Isoliert Geräte: Sie dürfen nur ins Internet und zum Pi-DNS, aber nichts im lokalen Heimnetz erreichen."""
+    _run(["iptables", "-N", ISOLATE_CHAIN])
+    _run(["iptables", "-F", ISOLATE_CHAIN])
+    if not _run(["iptables", "-C", FWD_CHAIN, "-j", ISOLATE_CHAIN]):
+        _run(["iptables", "-I", FWD_CHAIN, "1", "-j", ISOLATE_CHAIN])
+
+    macs = db.isolated_macs()
+    for mac in macs:
+        # DNS zum Pi erlauben
+        _run(["iptables", "-A", ISOLATE_CHAIN, "-m", "mac", "--mac-source", mac, "-d", s.pi_ip, "-p", "udp", "--dport", "53", "-j", "ACCEPT"])
+        _run(["iptables", "-A", ISOLATE_CHAIN, "-m", "mac", "--mac-source", mac, "-d", s.pi_ip, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"])
+        # Zugriff auf lokale private Netzwerke verbieten
+        _run(["iptables", "-A", ISOLATE_CHAIN, "-m", "mac", "--mac-source", mac, "-d", "10.0.0.0/8", "-j", "DROP"])
+        _run(["iptables", "-A", ISOLATE_CHAIN, "-m", "mac", "--mac-source", mac, "-d", "172.16.0.0/12", "-j", "DROP"])
+        _run(["iptables", "-A", ISOLATE_CHAIN, "-m", "mac", "--mac-source", mac, "-d", "192.168.0.0/16", "-j", "DROP"])
+    return True
+
+
 def setup_gateway(s: Settings) -> bool:
     """Weiterleitung + NAT einschalten. Gibt False zurück, wenn es nicht geklappt hat."""
     ok = _write_sysctl("/proc/sys/net/ipv4/ip_forward", "1")
@@ -203,9 +223,13 @@ def setup_gateway(s: Settings) -> bool:
     if not _run(["ip6tables", "-t", "filter", "-C", fwd_v6, "-j", FWD_CHAIN]):
         _run(["ip6tables", "-t", "filter", "-I", fwd_v6, "1", "-j", FWD_CHAIN])
 
+    # Isolationsregeln anwenden
+    apply_isolation(s)
+
     # Byte-Zähler pro Verbindung (das Modul ist erst nach der NAT-Regel geladen).
     _write_sysctl("/proc/sys/net/netfilter/nf_conntrack_acct", "1")
     return ok
+
 
 class TrafficRunner:
     def __init__(self, meter: TrafficMeter, poll_seconds: float):

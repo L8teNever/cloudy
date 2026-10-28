@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block content %}
+<div data-live="{{ live('statistik', zeitraum=params.zeitraum) }}" data-every="15">
+  {% include "teile/statistik.html" %}
+</div>
+{% endblock %}

@@ -1,0 +1,28 @@
+<div class="kpis">
+  <div class="kpi">
+    <div class="l">Geräte online</div>
+    <div class="v"><span class="dot on" style="margin-right:.3rem"></span>{{ online | length }}</div>
+  </div>
+  <div class="kpi">
+    <div class="l">Aufrufe heute</div>
+    <div class="v">{{ totals.hits | count }}</div>
+  </div>
+  <div class="kpi">
+    <div class="l">Download heute</div>
+    <div class="v" style="color:var(--s1)">{{ totals.bytes_down | bytes }}</div>
+  </div>
+  <div class="kpi">
+    <div class="l">Upload heute</div>
+    <div class="v" style="color:var(--s2)">{{ totals.bytes_up | bytes }}</div>
+  </div>
+  <div class="kpi">
+    <div class="l">Aktive Domains</div>
+    <div class="v">{{ totals.domains | count }}</div>
+  </div>
+</div>
+{% if series %}
+<div class="card">
+  <h2>Verlauf heute (Stunden)</h2>
+  {{ charts.columns(series, charts.TRAFFIC, fmt_bytes) }}
+</div>
+{% endif %}

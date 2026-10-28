@@ -1,0 +1,29 @@
+<div class="card">
+  <h2>Letzte Aufrufe {% if ip %}<span class="muted small">({{ ip }})</span>{% endif %}</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Zeit</th>
+          {% if not ip %}<th>Gerät</th>{% endif %}
+          <th>Domain</th>
+          <th>Typ</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in recent %}
+        <tr>
+          <td class="muted small">{{ fmt_time(r.ts) }}</td>
+          {% if not ip %}
+          <td><a href="/geraete/{{ r.ip | urlencode }}" data-nav>{{ r.hostname or r.ip }}</a></td>
+          {% endif %}
+          <td class="mono" style="font-weight:600;color:var(--brand)">{{ r.domain }}</td>
+          <td class="muted small">{{ r.qtype or 'A' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="{{ 3 if ip else 4 }}" class="muted">Noch keine Anfragen protokolliert.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

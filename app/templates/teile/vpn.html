@@ -1,0 +1,74 @@
+<div class="card">
+  <h2>Cloudflare WARP &amp; WireGuard VPN</h2>
+  {% if not settings.gateway_enabled %}
+  <p class="muted small">
+    Hinweis: Geräte werden erst über das VPN geleitet, wenn der Gateway-Modus aktiv ist (<code>cloudy gateway an</code>).
+  </p>
+  {% endif %}
+
+  <div style="margin-bottom:1rem">
+    <form method="post" action="/warp/default" class="inline">
+      <label class="small"><b>Standard-Verbindung für alle nicht zugewiesenen Geräte:</b>
+        <select name="slot" data-autosubmit style="margin-left:.5rem">
+          <option value="">Fritzbox direkt (kein VPN)</option>
+          {% for w in warp %}
+          <option value="{{ w.slot }}" {{ 'selected' if warp_default == w.slot }}>
+            {{ w.label }}{% if not w.has_token %} (nicht eingerichtet){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Profil</th>
+          <th>Status</th>
+          <th>Geräte</th>
+          <th>Konfiguration / Anmelden</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for w in warp %}
+        <tr>
+          <td>
+            <strong>{{ w.label }}</strong><br>
+            <span class="muted small">{{ 'WireGuard' if w.kind == 'vpn' else 'Cloudflare Zero Trust' }}</span>
+          </td>
+          <td>
+            {% if w.has_token %}
+            <span class="pill {{ 'on' if w.status.connected else '' }}">{{ w.status.text }}</span>
+            {% else %}
+            <span class="muted small">nicht eingerichtet</span>
+            {% endif %}
+          </td>
+          <td class="num">
+            {{ warp_by_mac.values() | select('equalto', w.slot) | list | length }}
+          </td>
+          <td>
+            <form method="post" action="/warp/{{ w.slot }}/login" class="inline" style="gap:.35rem">
+              <input name="label" value="{{ w.label }}" size="12" placeholder="Bezeichnung" aria-label="Name">
+              {% if w.kind == 'vpn' %}
+              <textarea name="config" rows="2" cols="26" autocomplete="off" spellcheck="false"
+                        placeholder="{{ 'Neue .conf (leer = behalten)' if w.has_token else 'WireGuard .conf einfügen' }}"></textarea>
+              {% else %}
+              <input name="token" type="password" autocomplete="off" size="20"
+                     placeholder="{{ 'Neuer Token (leer = behalten)' if w.has_token else 'Zero Trust Token' }}">
+              {% endif %}
+              <button>Speichern</button>
+            </form>
+            {% if w.has_token %}
+            <form method="post" action="/warp/{{ w.slot }}/logout" class="inline" style="margin-left:.35rem">
+              <button class="secondary" style="padding:.25rem .5rem;font-size:.82rem">Abmelden</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

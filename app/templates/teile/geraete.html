@@ -1,0 +1,104 @@
+{% macro slot_options(current) %}
+  <option value="">Standard ({{ warp_names.get(warp_default, 'normal (Fritzbox)') if warp_default else 'normal (Fritzbox)' }})</option>
+  <option value="direct" {{ 'selected' if current == 'direct' }}>normal (Fritzbox)</option>
+  {% for w in warp %}<option value="{{ w.slot }}" {{ 'selected' if current == w.slot }}>{{ w.label }}</option>{% endfor %}
+{% endmacro %}
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem">
+    <h2>Geräte im Heimnetz <span class="muted small" id="online-count">({{ online | length }} online)</span></h2>
+    {% if warp %}
+    <form method="post" action="/warp/default" class="inline">
+      <label class="small muted">Standard-Route für alle Geräte:
+        <select name="slot" data-autosubmit>
+          <option value="">normal (Fritzbox)</option>
+          {% for w in warp %}<option value="{{ w.slot }}" {{ 'selected' if warp_default == w.slot }}>{{ w.label }}{% if not w.has_token %} (nicht eingerichtet){% endif %}</option>{% endfor %}
+        </select>
+      </label>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Gerät</th>
+          <th>Aktuelle Seite</th>
+          <th>IP</th>
+          <th>MAC</th>
+          <th class="num">Download</th>
+          <th class="num">Upload</th>
+          <th class="num">Aufrufe</th>
+          {% if warp %}<th>Internet über</th>{% endif %}
+          <th>Isolierung</th>
+          <th>Zuletzt</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in devices %}
+        <tr>
+          <td>
+            {% if d.ip in online %}
+            <span class="pill on">● online</span>
+            {% else %}
+            <span class="muted small">offline</span>
+            {% endif %}
+          </td>
+          <td>
+            <a href="/geraete/{{ d.ip | urlencode }}" data-nav style="font-weight:600">{{ d.hostname or d.ip }}</a>
+          </td>
+          <td>
+            {% if d.current_site and d.current_site.domain %}
+              <span class="mono" style="font-weight:600;color:var(--brand)">{{ d.current_site.domain }}</span>
+              <span class="muted small">({{ d.current_site.ts | ago }})</span>
+            {% else %}
+              <span class="muted">–</span>
+            {% endif %}
+          </td>
+          <td class="mono small">{{ d.ip }}</td>
+          <td class="mono small">{{ d.mac or '–' }}</td>
+          <td class="num">{{ d.bytes_down | bytes }}</td>
+          <td class="num">{{ d.bytes_up | bytes }}</td>
+          <td class="num">{{ d.hits | count }}</td>
+          {% if warp %}
+          <td>
+            {% if d.mac %}
+            <form method="post" action="/devices/warp" class="inline">
+              <input type="hidden" name="mac" value="{{ d.mac }}">
+              <input type="hidden" name="ip" value="{{ d.ip }}">
+              <select name="slot" data-autosubmit aria-label="Internet über">
+                {{ slot_options(warp_by_mac.get(d.mac, '')) }}
+              </select>
+            </form>
+            {% else %}
+            <span class="muted small">–</span>
+            {% endif %}
+          </td>
+          {% endif %}
+          <td>
+            {% if d.mac %}
+            {% set is_iso = d.mac in isolated %}
+            <form method="post" action="/devices/isolate" class="inline">
+              <input type="hidden" name="mac" value="{{ d.mac }}">
+              <input type="hidden" name="ip" value="{{ d.ip }}">
+              <input type="hidden" name="isolated" value="{{ 0 if is_iso else 1 }}">
+              <button class="{{ 'danger' if is_iso else 'secondary' }}" style="padding:.2rem .45rem;font-size:.78rem"
+                      title="{{ 'Gerät ist isoliert (nur Internet, kein Heimnetz-Zugriff)' if is_iso else 'Gerät isolieren (darf nur ins Internet, kein Heimnetz)' }}">
+                {{ '🔒 Isoliert' if is_iso else '🔓 Normal' }}
+              </button>
+            </form>
+            {% else %}
+            <span class="muted small">–</span>
+            {% endif %}
+          </td>
+          <td class="muted small">{{ fmt_time(d.last_seen) }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="{{ 11 if warp else 10 }}" class="muted">Noch keine Geräte erfasst.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

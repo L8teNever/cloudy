@@ -1,0 +1,53 @@
+{% macro slot_options(current) %}
+  <option value="">Standard ({{ warp_names.get(warp_default, 'normal (Fritzbox)') if warp_default else 'normal (Fritzbox)' }})</option>
+  <option value="direct" {{ 'selected' if current == 'direct' }}>normal (Fritzbox)</option>
+  {% for w in warp %}<option value="{{ w.slot }}" {{ 'selected' if current == w.slot }}>{{ w.label }}</option>{% endfor %}
+{% endmacro %}
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:1rem">
+    <div>
+      <p style="margin:0 0 .5rem"><a href="/geraete" data-nav>← Zurück zur Geräteübersicht</a></p>
+      <h1 style="margin:0 0 .25rem">
+        {{ device.hostname or device.ip }}
+        {% if device.ip in online %}
+        <span class="pill on">● online</span>
+        {% else %}
+        <span class="pill">offline</span>
+        {% endif %}
+      </h1>
+      <div class="muted small mono">
+        IP: {{ device.ip }}{% if device.mac %} · MAC: {{ device.mac }}{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div id="device-current-site-box" style="margin-top:1rem;padding:.75rem 1rem;background:var(--brand-soft);border-radius:10px;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+    <strong class="small" style="color:var(--brand-ink)">Aktuelle Seite:</strong>
+    <span id="device-current-site">
+      {% if current and current.domain %}
+        <span class="mono" style="font-weight:600;color:var(--brand)">{{ current.domain }}</span>
+        {% if current.ip and current.ip != current.domain %}
+          <span class="muted small">({{ current.ip }})</span>
+        {% endif %}
+        <span class="muted small">({{ current.ts | ago }})</span>
+      {% else %}
+        <span class="muted small">Momentan keine Aktivität</span>
+      {% endif %}
+    </span>
+  </div>
+
+  {% if warp and device.mac %}
+  <div style="margin-top:1rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+    <strong>Internet über:</strong>
+    <form method="post" action="/devices/warp" class="inline">
+      <input type="hidden" name="mac" value="{{ device.mac }}">
+      <input type="hidden" name="ip" value="{{ device.ip }}">
+      <select name="slot" data-autosubmit aria-label="Internet über">
+        {{ slot_options(warp_by_mac.get(device.mac, '')) }}
+      </select>
+      <button>Übernehmen</button>
+    </form>
+  </div>
+  {% endif %}
+</div>

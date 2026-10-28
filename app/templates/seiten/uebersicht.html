@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<div data-live="/teil/kpis" data-every="10">
+  {% include "teile/kpis.html" %}
+</div>
+<div data-live="/teil/jetzt" data-every="5">
+  {% include "teile/jetzt.html" %}
+</div>
+<div data-live="/teil/geraete" data-every="10">
+  {% include "teile/geraete.html" %}
+</div>
+{% if warp %}
+<div data-live="/teil/vpn" data-every="10">
+  {% include "teile/vpn.html" %}
+</div>
+{% endif %}
+{% if redirects %}
+<div data-live="/teil/weiterleitungen" data-every="15">
+  {% include "teile/weiterleitungen.html" %}
+</div>
+{% endif %}
+<div data-live="/teil/aufrufe" data-every="5">
+  {% include "teile/aufrufe.html" %}
+</div>
+{% endblock %}

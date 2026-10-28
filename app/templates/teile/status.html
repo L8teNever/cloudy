@@ -1,0 +1,16 @@
+<div class="status-row">
+  <span class="pill on">DNS an</span>
+  <span class="pill {{ 'on' if blocklist_enabled and not blocklist_paused_until else ('warn' if blocklist_paused_until else '') }}">
+    Cookie-Schutz {{ 'pausiert' if blocklist_paused_until else ('an' if blocklist_enabled else 'aus') }}
+  </span>
+  <span class="pill {{ 'on' if settings.dhcp_enabled else '' }}">DHCP {{ 'an' if settings.dhcp_enabled else 'aus' }}</span>
+  <span class="pill {{ 'on' if settings.gateway_enabled else '' }}">Gateway {{ 'an' if settings.gateway_enabled else 'aus' }}</span>
+  <span class="pill">Pi: {{ settings.pi_ip }}{% if settings.local_name %} · {{ settings.local_name }}{% endif %}</span>
+  <span class="pill">Upstream: {{ settings.upstream_dns | join(', ') }}</span>
+</div>
+{% if ipv6_bypass %}
+<div class="alert" style="margin-top:.75rem">
+  <b>⚠️ IPv6 läuft am VPN vorbei:</b> Die Fritzbox verteilt im Heimnetz IPv6. Die Geräte schicken IPv6 direkt an die Fritzbox – der Pi sieht diesen Verkehr nicht und kann ihn nicht ins VPN leiten.<br>
+  <b>So beheben:</b> In der Fritzbox unter <i>Heimnetz → Netzwerk → Netzwerkeinstellungen → IPv6</i> den Haken bei <b>„Router Advertisement im LAN aktiv“ entfernen</b> und übernehmen. Danach an den Geräten WLAN kurz aus- und wieder anschalten. Das Internet läuft dann vollständig und sicher über IPv4 durch den Pi/VPN.
+</div>
+{% endif %}

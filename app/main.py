@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import blocklist, certs, db, warp
+from . import blocklist, certs, db, views, warp
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -253,32 +253,7 @@ def online_ips(request: Request) -> frozenset[str]:
     return presence.online if presence else frozenset()
 
 
-@app.get("/", response_class=HTMLResponse, dependencies=[Depends(require_password)])
-async def dashboard(request: Request, ip: str | None = None, fehler: str | None = None):
-    settings = request.app.state.settings
-    context = {"settings": settings, "fmt_time": fmt_time, "fmt_ago": fmt_ago, "ip": ip, "fehler": fehler}
-    context["warp"] = await run_in_threadpool(warp_profiles, settings)
-    context["online"] = online_ips(request)
-    context["warp_default"] = await run_in_threadpool(db.get_setting, warp.DEFAULT_KEY)
-    context["ipv6_bypass"] = settings.gateway_enabled and await run_in_threadpool(warp.ipv6_bypass, settings.lan_interface)
-    context["vpn_in_use"] = bool(context["warp_default"]) or any(
-        slot != warp.DIRECT for slot in (await run_in_threadpool(db.device_warp)).values()
-    )
-    context["warp_names"] = {w["slot"]: w["label"] for w in context["warp"]}
-    context["warp_by_mac"] = await run_in_threadpool(db.device_warp)
-    context["blocklist_enabled"] = await run_in_threadpool(blocklist.is_enabled)
-    context["blocklist_paused_until"] = await run_in_threadpool(blocklist.paused_until)
-    context["whitelist"] = await run_in_threadpool(db.whitelist)
-    context["redirects"] = await run_in_threadpool(db.redirects)
-    if ip:
-        context["device"] = await run_in_threadpool(db.device, ip)
-        context["domains"] = await run_in_threadpool(db.top_domains, ip)
-        context["traffic"] = await run_in_threadpool(db.traffic_for, ip)
-        context["recent"] = await run_in_threadpool(db.recent, 200, ip)
-    else:
-        context["devices"] = await run_in_threadpool(db.devices)
-        context["recent"] = await run_in_threadpool(db.recent, 100)
-    return templates.TemplateResponse(request, "index.html", context)
+app.include_router(views.router)
 
 
 @app.get("/api/devices", dependencies=[Depends(require_password)])
@@ -361,6 +336,19 @@ async def device_set_warp(request: Request, mac: str = Form(...), slot: str = Fo
     return RedirectResponse(f"/?ip={quote(ip)}" if ip else "/", status_code=303)
 
 
+@app.post("/devices/isolate", dependencies=[Depends(require_password)])
+async def device_set_isolate(request: Request, mac: str = Form(...), isolated: int = Form(0), ip: str = Form("")):
+    mac = mac.strip().lower()
+    if not warp.MAC_RE.match(mac):
+        raise HTTPException(status_code=400, detail="Ungültige MAC-Adresse")
+    await run_in_threadpool(db.set_isolated, mac, bool(isolated))
+    settings = request.app.state.settings
+    if settings.gateway_enabled:
+        from . import traffic
+        await run_in_threadpool(traffic.apply_isolation, settings)
+    return RedirectResponse(f"/geraete/{quote(ip)}" if ip else "/geraete", status_code=303)
+
+
 @app.post("/warp/default", dependencies=[Depends(require_password)])
 async def warp_set_default(request: Request, slot: str = Form("")):
     """Wohin alle Geräte gehen, die keine eigene Einstellung haben ("" = normal über die Fritzbox)."""
@@ -417,6 +405,7 @@ async def blocklist_whitelist_remove(request: Request, domain: str = Form(...)):
     await run_in_threadpool(blocklist.generate_blocklist, request.app.state.settings)
     _reload_dnsmasq(request)
     return RedirectResponse("/#blocklist", status_code=303)
+
 
 def _apply_redirects(request: Request) -> None:
     from .dnsmasq import sync_redirects_hosts
