@@ -54,6 +54,39 @@ jobs:
           print('HTTPS ok')
           "
 
+      - name: End-to-End – Domain-Weiterleitung (DNS inkl. Subdomains, kein IPv6, HTTP + HTTPS)
+        run: |
+          IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' cloudy)
+          # Regel über das Dashboard anlegen (wie im Browser), danach startet dnsmasq neu.
+          docker exec cloudy python -c "
+          import urllib.request, urllib.parse
+          data = urllib.parse.urlencode({'source': 'https://www.TikTok.com/foo', 'target': 'wikipedia.org'}).encode()
+          urllib.request.urlopen('http://127.0.0.1:8080/redirects/add', data)
+          "
+          sleep 2
+          for name in tiktok.com www.tiktok.com m.tiktok.com; do
+            docker run --rm --network cloudy-net busybox nslookup "$name" "$IP" | tee /tmp/r.txt
+            grep -q "192.168.178.2" /tmp/r.txt
+          done
+          # Keine echte IPv6-Adresse der Seite (sonst ginge der Browser per IPv6 direkt hin)
+          docker run --rm --network cloudy-net busybox nslookup -type=AAAA tiktok.com "$IP" | tee /tmp/r6.txt || true
+          if grep -E "^Address: .*:" /tmp/r6.txt; then echo "FEHLER: AAAA-Antwort für Weiterleitung"; exit 1; fi
+          # dnsmasq lief beim Neustart weiter, der Container wurde nicht neu gestartet
+          test "$(docker inspect -f '{{.RestartCount}}' cloudy)" = "0"
+          test "$(docker inspect -f '{{.State.Running}}' cloudy)" = "true"
+          # HTTP und HTTPS (mit Zertifikat für *.tiktok.com, geprüft gegen die cloudy-CA) leiten weiter
+          docker exec cloudy python -c "
+          import socket, ssl, http.client
+          c = http.client.HTTPConnection('127.0.0.1', 8080); c.request('GET', '/', headers={'Host': 'm.tiktok.com'})
+          r = c.getresponse(); assert r.status == 302 and r.getheader('location') == 'https://wikipedia.org', r.status
+          ctx = ssl.create_default_context(cafile='/data/certs/cloudy-ca.crt')
+          s = ctx.wrap_socket(socket.create_connection(('127.0.0.1', 443)), server_hostname='www.tiktok.com')
+          s.sendall(b'GET / HTTP/1.1\r\nHost: www.tiktok.com\r\nConnection: close\r\n\r\n')
+          data = s.recv(4096)
+          assert b'302' in data and b'https://wikipedia.org' in data, data
+          print('Weiterleitung HTTP + HTTPS ok')
+          "
+
       - name: End-to-End – Gateway leitet weiter und misst den Datenverkehr
         run: |
           docker network create --subnet 172.30.0.0/24 --gateway 172.30.0.1 gw-net

@@ -4,6 +4,7 @@ import base64
 import datetime
 import ipaddress
 import os
+import ssl
 import sys
 import threading
 import uuid
@@ -121,13 +122,17 @@ def _make_ca() -> tuple[ec.EllipticCurvePrivateKey, x509.Certificate]:
 
 
 def _make_server_cert(s: Settings, ca_key, ca_cert: x509.Certificate) -> tuple[ec.EllipticCurvePrivateKey, x509.Certificate]:
-    key = ec.generate_private_key(ec.SECP256R1())
     dns, ips = wanted_names(s)
+    return _issue_cert(ca_key, ca_cert, s.local_name or s.pi_ip, dns, ips)
+
+
+def _issue_cert(ca_key, ca_cert: x509.Certificate, common_name: str, dns: set[str], ips: set[str]):
+    key = ec.generate_private_key(ec.SECP256R1())
     sans = [x509.DNSName(n) for n in sorted(dns)] + [x509.IPAddress(ipaddress.ip_address(i)) for i in sorted(ips)]
     now = _now()
     cert = (
         x509.CertificateBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, s.local_name or s.pi_ip)]))
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)]))
         .issuer_name(ca_cert.subject)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
@@ -170,6 +175,34 @@ def ensure_certs(s: Settings) -> tuple[str, str]:
         _write_key(p["key"], key)
         _write_cert(p["crt"], cert)
     return p["crt"], p["key"]
+
+
+def ensure_domain_cert(s: Settings, domain: str) -> tuple[str, str]:
+    """Zertifikat für eine Weiterleitungs-Domain (domain + *.domain), signiert von der lokalen CA."""
+    ensure_certs(s)
+    p = _paths(s)
+    ca_cert, ca_key = _load_cert(p["ca_crt"]), _load_key(p["ca_key"])
+    d = os.path.join(certs_dir(s), "weiterleitungen")
+    os.makedirs(d, exist_ok=True)
+    crt_path, key_path = os.path.join(d, f"{domain}.crt"), os.path.join(d, f"{domain}.key")
+    names = {domain, f"*.{domain}"}
+    cert, key = _load_cert(crt_path), _load_key(key_path)
+    if (
+        cert is None or key is None or _expiring(cert) or cert_names(cert)[0] != names
+        or cert.issuer != ca_cert.subject or not _signed_by(cert, ca_cert)
+    ):
+        key, cert = _issue_cert(ca_key, ca_cert, domain, names, set())
+        _write_key(key_path, key)
+        _write_cert(crt_path, cert)
+    return crt_path, key_path
+
+
+def _signed_by(cert: x509.Certificate, ca_cert: x509.Certificate) -> bool:
+    try:
+        cert.verify_directly_issued_by(ca_cert)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def make_mobileconfig(s: Settings) -> bytes:
@@ -255,12 +288,36 @@ pause
 """
 
 
-def start_https_server(app, certfile: str, keyfile: str, port: int) -> uvicorn.Server:
-    """Zweiter Webserver (HTTPS) neben dem normalen. Gleiche App, aber ohne eigenen Start/Stop (lifespan aus)."""
+def start_https_server(app, certfile: str, keyfile: str, port: int, sni_cert=None) -> uvicorn.Server:
+    """Zweiter Webserver (HTTPS) neben dem normalen. Gleiche App, aber ohne eigenen Start/Stop (lifespan aus).
+
+    sni_cert(name) -> (Zertifikat, Schlüssel) oder None: liefert für Weiterleitungs-Domains ein eigenes Zertifikat,
+    passend zu dem Namen, den der Browser beim Verbindungsaufbau nennt (SNI).
+    """
     config = uvicorn.Config(
         app, host="0.0.0.0", port=port, ssl_certfile=certfile, ssl_keyfile=keyfile,
         lifespan="off", log_level="warning",
     )
+    config.load()
+    if sni_cert is not None:
+        contexts: dict[tuple[str, str], ssl.SSLContext] = {}
+
+        def choose(sslobj, server_name, _ctx) -> None:
+            if not server_name:
+                return
+            try:
+                pair = sni_cert(server_name)
+                if pair is None:
+                    return
+                if pair not in contexts:
+                    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                    ctx.load_cert_chain(*pair)
+                    contexts[pair] = ctx
+                sslobj.context = contexts[pair]
+            except Exception as exc:  # noqa: BLE001 – dann eben das normale Zertifikat
+                print(f"cloudy: Zertifikat für {server_name} fehlgeschlagen: {exc}", file=sys.stderr, flush=True)
+
+        config.ssl.sni_callback = choose
     server = uvicorn.Server(config)
 
     def run() -> None:

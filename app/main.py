@@ -19,6 +19,7 @@ from . import blocklist, certs, db, warp
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
+from .redirects import find_rule
 from .settings import Settings
 from .traffic import DomainMap, TrafficMeter, TrafficRunner, setup_gateway
 
@@ -116,7 +117,11 @@ async def lifespan(app: FastAPI):
     if settings.https_port:
         try:
             certfile, keyfile = ensure_certs(settings)
-            https_server = start_https_server(app, certfile, keyfile, settings.https_port)
+            def redirect_cert(name: str, _s=settings):
+                rule = find_rule(name, db.redirect_map())
+                return certs.ensure_domain_cert(_s, rule[0]) if rule else None
+
+            https_server = start_https_server(app, certfile, keyfile, settings.https_port, sni_cert=redirect_cert)
             print(f"cloudy: HTTPS an (Port {settings.https_port})", flush=True)
         except Exception as exc:  # noqa: BLE001 – ohne HTTPS läuft das Dashboard weiter über HTTP
             print(f"cloudy: HTTPS nicht verfügbar: {exc}", flush=True)
@@ -152,16 +157,9 @@ async def redirect_middleware(request: Request, call_next):
                 own_hosts.add(short)
 
     if raw_host and raw_host not in own_hosts:
-        targets = await run_in_threadpool(db.redirect_map)
-        dest = targets.get(raw_host)
-        if not dest and raw_host.startswith("www."):
-            dest = targets.get(raw_host[4:])
-        elif not dest:
-            dest = targets.get(f"www.{raw_host}")
-        if dest:
-            if not dest.startswith(("http://", "https://")):
-                dest = f"https://{dest}"
-            return RedirectResponse(dest, status_code=302)
+        rule = find_rule(raw_host, await run_in_threadpool(db.redirect_map))
+        if rule:
+            return RedirectResponse(rule[1], status_code=302)
 
     return await call_next(request)
 
@@ -256,12 +254,16 @@ def online_ips(request: Request) -> frozenset[str]:
 
 
 @app.get("/", response_class=HTMLResponse, dependencies=[Depends(require_password)])
-async def dashboard(request: Request, ip: str | None = None):
+async def dashboard(request: Request, ip: str | None = None, fehler: str | None = None):
     settings = request.app.state.settings
-    context = {"settings": settings, "fmt_time": fmt_time, "fmt_ago": fmt_ago, "ip": ip}
+    context = {"settings": settings, "fmt_time": fmt_time, "fmt_ago": fmt_ago, "ip": ip, "fehler": fehler}
     context["warp"] = await run_in_threadpool(warp_profiles, settings)
     context["online"] = online_ips(request)
     context["warp_default"] = await run_in_threadpool(db.get_setting, warp.DEFAULT_KEY)
+    context["ipv6_bypass"] = settings.gateway_enabled and await run_in_threadpool(warp.ipv6_bypass, settings.lan_interface)
+    context["vpn_in_use"] = bool(context["warp_default"]) or any(
+        slot != warp.DIRECT for slot in (await run_in_threadpool(db.device_warp)).values()
+    )
     context["warp_names"] = {w["slot"]: w["label"] for w in context["warp"]}
     context["warp_by_mac"] = await run_in_threadpool(db.device_warp)
     context["blocklist_enabled"] = await run_in_threadpool(blocklist.is_enabled)
@@ -416,20 +418,27 @@ async def blocklist_whitelist_remove(request: Request, domain: str = Form(...)):
     _reload_dnsmasq(request)
     return RedirectResponse("/#blocklist", status_code=303)
 
+def _apply_redirects(request: Request) -> None:
+    from .dnsmasq import sync_redirects_hosts
+
+    sync_redirects_hosts(request.app.state.settings)
+    runner = getattr(request.app.state, "runner", None)
+    if runner and hasattr(runner, "restart"):
+        runner.restart()
+
+
 @app.post("/redirects/add", dependencies=[Depends(require_password)])
 async def redirects_add(request: Request, source: str = Form(...), target: str = Form(...)):
-    await run_in_threadpool(db.add_redirect, source, target)
-    from .dnsmasq import sync_redirects_hosts
-    await run_in_threadpool(sync_redirects_hosts, request.app.state.settings)
-    _reload_dnsmasq(request)
+    try:
+        await run_in_threadpool(db.add_redirect, source, target)
+    except ValueError as exc:
+        return RedirectResponse(f"/?fehler={quote(str(exc))}#redirects", status_code=303)
+    await run_in_threadpool(_apply_redirects, request)
     return RedirectResponse("/#redirects", status_code=303)
 
 
 @app.post("/redirects/remove", dependencies=[Depends(require_password)])
 async def redirects_remove(request: Request, source: str = Form(...)):
     await run_in_threadpool(db.remove_redirect, source)
-    from .dnsmasq import sync_redirects_hosts
-    await run_in_threadpool(sync_redirects_hosts, request.app.state.settings)
-    _reload_dnsmasq(request)
+    await run_in_threadpool(_apply_redirects, request)
     return RedirectResponse("/#redirects", status_code=303)
-

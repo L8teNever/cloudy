@@ -26,7 +26,6 @@ class Settings:
     https_port: int
     warp_slots: list[tuple[str, str]]
     warp_killswitch: bool
-    ipv6_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -58,7 +57,6 @@ class Settings:
                 if name.strip() and ip.strip()
             ],
             warp_killswitch=_flag("WARP_KILLSWITCH", "0"),
-            ipv6_enabled=_flag("IPV6_ENABLED", "0"),
         )
 
     @property
@@ -83,7 +81,7 @@ class Settings:
 
     @property
     def redirects_path(self) -> str:
-        return os.path.join(self.data_dir, "redirects.hosts")
+        return os.path.join(self.data_dir, "redirects.conf")
 
     @property
     def dashboard_url(self) -> str:

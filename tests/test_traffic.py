@@ -104,11 +104,12 @@ def test_fmt_bytes():
     assert fmt_bytes(3 * 1024**3) == "3,0 GB"
 
 
-def test_ipv6_gateway_config(monkeypatch):
+def test_ipv6_is_always_filtered_in_gateway_mode(monkeypatch):
+    # Der alte Schalter IPV6_ENABLED wird ignoriert: IPv6 ginge immer an Pi und VPN vorbei.
     monkeypatch.setenv("DHCP_ENABLED", "1")
     monkeypatch.setenv("GATEWAY_ENABLED", "1")
     monkeypatch.setenv("IPV6_ENABLED", "1")
     conf = build_config(Settings.from_env())
-    assert "filter-AAAA" not in conf
-    assert "enable-ra" in conf
-    assert "ra-param=eth0,high,60" in conf
+    assert "filter-AAAA" in conf
+    assert "enable-ra" not in conf
+

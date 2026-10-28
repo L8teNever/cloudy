@@ -85,7 +85,7 @@ def build_config(s: Settings) -> str:
         "local=/lan/",
         f"addn-hosts={s.local_names_path}",
         f"addn-hosts={s.blocklist_path}",
-        f"addn-hosts={s.redirects_path}",
+        f"conf-file={s.redirects_path}",
     ]
     if s.local_name:
         # Name des Dashboards im Heimnetz, z. B. http://cloudy.lan
@@ -93,17 +93,9 @@ def build_config(s: Settings) -> str:
         short_name = s.local_name.split(".")[0]
         if short_name and short_name != s.local_name:
             lines.append(f"address=/{short_name}/{s.pi_ip}")
-    if s.ipv6_enabled:
-        if s.gateway_enabled:
-            # IPv6 über den Pi leiten: AAAA-Adressen erlauben und Pi per Router Advertisement ankündigen
-            lines += [
-                "enable-ra",
-                f"ra-param={s.lan_interface},high,60",
-                f"dhcp-range=::,constructor:{s.lan_interface},ra-stateless,64,12h",
-                "dhcp-option=option6:dns-server,[::]",
-            ]
-    else:
-        # Nur IPv4-Adressen ausliefern: Verhindert zuverlässig IPv6-Leaks an der Fritzbox vorbei
+    if s.gateway_enabled:
+        # Nur IPv4-Adressen ausliefern: Verbindungen laufen dann über IPv4 durch den Pi (und ggf. das VPN).
+        # IPv6 ginge direkt zur Fritzbox und am Pi vorbei.
         lines.append("filter-AAAA")
     if s.dhcp_enabled:
         if s.gateway_enabled:
@@ -185,6 +177,7 @@ class DnsmasqRunner:
         self.flush_interval = flush_interval
         self.proc: subprocess.Popen | None = None
         self._stopping = threading.Event()
+        self._restart_lock = threading.Lock()
 
     def start(self) -> None:
         s = self.settings
@@ -198,8 +191,8 @@ class DnsmasqRunner:
         if not os.path.exists(s.blocklist_path):
             from . import blocklist
             blocklist.generate_blocklist(s)
-        if not os.path.exists(s.redirects_path):
-            sync_redirects_hosts(s)
+        # Die Datenbank ist maßgeblich: Weiterleitungen bei jedem Start neu schreiben.
+        sync_redirects_hosts(s)
         with open(s.conf_path, "w", encoding="utf-8") as f:
             f.write(build_config(s))
         print(
@@ -207,15 +200,34 @@ class DnsmasqRunner:
             f"Gateway {'an' if s.gateway_enabled else 'aus'}, Upstream {', '.join(s.upstream_dns)}",
             flush=True,
         )
-        self.proc = subprocess.Popen(
-            ["dnsmasq", "--keep-in-foreground", f"--conf-file={s.conf_path}"],
+        self._spawn()
+        threading.Thread(target=self._flush_loop, daemon=True).start()
+
+    def _spawn(self) -> None:
+        proc = subprocess.Popen(
+            ["dnsmasq", "--keep-in-foreground", f"--conf-file={self.settings.conf_path}"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
         )
-        threading.Thread(target=self._read_log, daemon=True).start()
-        threading.Thread(target=self._flush_loop, daemon=True).start()
+        self.proc = proc
+        threading.Thread(target=self._read_log, args=(proc,), daemon=True).start()
+
+    def restart(self) -> None:
+        """dnsmasq neu starten, damit geänderte conf-file-Dateien (z. B. Weiterleitungen) gelten. Dauert < 1 s."""
+        with self._restart_lock:
+            # Zuerst abhängen, damit der Log-Leser des alten Prozesses das Ende nicht als Absturz wertet.
+            old, self.proc = self.proc, None
+            if old and old.poll() is None:
+                old.terminate()
+                try:
+                    old.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    old.kill()
+                    old.wait()
+            if not self._stopping.is_set():
+                self._spawn()
 
     def reload_hosts(self) -> None:
         if self.proc and self.proc.poll() is None:
@@ -226,13 +238,14 @@ class DnsmasqRunner:
                 except OSError:
                     pass
 
-    def _read_log(self) -> None:
-        assert self.proc and self.proc.stderr
-        for line in self.proc.stderr:
+    def _read_log(self, proc: subprocess.Popen) -> None:
+        assert proc.stderr
+        for line in proc.stderr:
             if not self.collector.feed(line) and not any(n in line for n in NOISY):
                 print(line, end="", flush=True)
-        code = self.proc.wait()
-        if not self._stopping.is_set():
+        code = proc.wait()
+        # Bei einem gewollten Neustart (restart) ist proc nicht mehr der aktuelle Prozess.
+        if not self._stopping.is_set() and proc is self.proc:
             # Ohne dnsmasq hat das Heimnetz kein DNS/DHCP -> Container beenden, Docker startet ihn neu.
             print(f"cloudy: dnsmasq beendet (Code {code}), Container wird neu gestartet", file=sys.stderr, flush=True)
             os._exit(1)
@@ -265,14 +278,13 @@ if __name__ == "__main__":
     print(build_config(Settings.from_env()), end="")
 
 def sync_redirects_hosts(s: Settings) -> None:
-    rules = db.redirects()
-    lines = ["# Cloudy automatische URL- & Domain-Weiterleitungen"]
-    for r in rules:
-        src = r["source"].lower()
-        lines.append(f"{s.pi_ip} {src}")
-        if "." in src and not src.startswith("www."):
-            lines.append(f"{s.pi_ip} www.{src}")
-    os.makedirs(s.data_dir, exist_ok=True)
-    with open(s.redirects_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+    """Schreibt die Weiterleitungen als dnsmasq-Konfiguration (wird mit conf-file= eingebunden)."""
+    from .redirects import dnsmasq_lines
 
+    lines = ["# cloudy: Domain-Weiterleitungen (automatisch erzeugt, nicht von Hand ändern)"]
+    lines += dnsmasq_lines([r["source"] for r in db.redirects()], s.pi_ip)
+    os.makedirs(s.data_dir, exist_ok=True)
+    tmp = s.redirects_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    os.replace(tmp, s.redirects_path)

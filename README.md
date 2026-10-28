@@ -73,21 +73,18 @@ Die MAC-Adressen stehen in der Fritzbox unter Heimnetz → Netzwerk → Gerät b
 Der Pi gibt allen Geräten weiterhin die **Fritzbox als Gateway** (Internet bleibt gleich schnell)
 und **sich selbst als DNS-Server**.
 
-### IPv6 & VPN-Tunnel (IPv4 und IPv6 schützen)
+### IPv6 (wichtig für VPN/WARP – sonst läuft IPv6 am VPN vorbei)
 
-Damit IPv4 und IPv6 durch den VPN-Tunnel (z. B. Proton VPN oder WARP) laufen und **keine echte IPv6 leakt**:
+Im Heimnetz ist die **Fritzbox der IPv6-Router**. Solange sie IPv6 verteilt, schicken die Geräte IPv6 direkt an
+sie – der Pi sieht diesen Verkehr nie und kann ihn auch nicht ins VPN leiten. Deshalb:
 
-1. **Echtes Dual-Stack (IPv4 & IPv6 durch den VPN-Tunnel):**
-   - Auf dem Pi: `cloudy ipv6 an`
-   - In der Fritzbox: Heimnetz → Netzwerk → Netzwerkeinstellungen → **IPv6-Einstellungen**:
-     - Bei **DNSv6-Server im Heimnetz** die IPv6-Adresse des Pi eintragen
-   - Der Pi kündigt sich als IPv6-Router an (`enable-ra`) und leitet IPv4 sowie IPv6 der Geräte über den VPN-Container ins Internet (NAT/Masquerade in `wg0`).
+1. Fritzbox → Heimnetz → Netzwerk → Netzwerkeinstellungen → Reiter **IPv6** →
+   Haken bei **„Router Advertisement im LAN aktiv“ entfernen** → Übernehmen.
+2. An den Geräten einmal WLAN aus/an.
 
-2. **Standard-Modus (100% Leak-Schutz über IPv4-Tunnel):**
-   - In der Fritzbox unter **IPv6**:
-     - „DNSv6-Server auch über Router Advertisement bekanntgeben (RFC 5006)“ **ausschalten**
-     - DHCPv6-Server im Heimnetz **ausschalten**
-   - cloudy filtert im Gateway-Modus AAAA-Antworten (`filter-AAAA`), sodass alle Verbindungen sicher über IPv4 durch den VPN-Tunnel laufen.
+Danach läuft alles über IPv4 durch den Pi (und bei zugeordneten Geräten durchs VPN). Im Gateway-Modus liefert
+der Pi außerdem nur IPv4-Adressen aus (`filter-AAAA`). Das Dashboard zeigt eine rote Warnung, solange die Fritzbox
+noch IPv6 verteilt und ein VPN benutzt wird.
 
 ## 4. Gesamter Datenverkehr über den Pi (Gateway)
 
@@ -208,6 +205,17 @@ jedem Push automatisch (`ghcr.io/l8tenever/cloudy`, für Pi und PC).
 
 Einstellungen (Upstream-DNS, DHCP-Bereich, Dashboard-Passwort …) stehen in `~/cloudy/.env`,
 danach `docker compose up -d` in `~/cloudy`.
+
+## Domain-Weiterleitungen
+
+Im Dashboard unter **„Domain-Weiterleitungen“**: z. B. `tiktok.com` → `wikipedia.org`. Gilt für die Domain und alle
+Subdomains (`www.`, `m.` …) auf allen Geräten, die den Pi als DNS benutzen. Wirkt sofort.
+
+- **https://-Seiten** (fast alle): Der Pi erzeugt automatisch ein passendes Zertifikat. Ohne Fehlermeldung klappt das
+  nur auf Geräten, auf denen das **cloudy-Zertifikat** installiert ist (siehe „HTTPS mit eigenem Zertifikat“).
+  Ohne Zertifikat zeigt der Browser eine Warnung statt weiterzuleiten.
+- Geht nicht bei „Sicherem DNS“ im Browser und nicht bei Apps, die eigene DNS-Server benutzen.
+- Bereits geöffnete Seiten merkt sich der Browser kurz – ggf. Browser neu starten.
 
 ## Eigene Namen im Heimnetz
 

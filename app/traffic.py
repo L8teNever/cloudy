@@ -175,8 +175,9 @@ def gateway_rules(s: Settings) -> list[list[str]]:
 def setup_gateway(s: Settings) -> bool:
     """Weiterleitung + NAT einschalten. Gibt False zurück, wenn es nicht geklappt hat."""
     ok = _write_sysctl("/proc/sys/net/ipv4/ip_forward", "1")
-    _write_sysctl("/proc/sys/net/ipv6/conf/all/forwarding", "1")
-    _write_sysctl("/proc/sys/net/ipv6/conf/default/forwarding", "1")
+    # Der Pi soll die IPv6-Ankündigungen der Fritzbox weiter sehen (auch wenn Docker IPv6-Forwarding anschaltet),
+    # damit das Dashboard warnen kann, wenn IPv6 am Pi/VPN vorbeiläuft.
+    _write_sysctl(f"/proc/sys/net/ipv6/conf/{s.lan_interface}/accept_ra", "2")
     # Sonst sagt der Pi den Geräten "geh direkt zur Fritzbox" (ICMP-Redirect) und der Verkehr läuft vorbei.
     for name in ("all", "default", s.lan_interface):
         _write_sysctl(f"/proc/sys/net/ipv4/conf/{name}/send_redirects", "0")

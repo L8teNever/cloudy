@@ -137,23 +137,31 @@ def test_optional_password(client, monkeypatch):
     assert client.get("/healthz").status_code == 200
 
 def test_url_redirects(client):
-    # 1. Weiterleitung hinzufügen
-    r = client.post("/redirects/add", data={"source": "fritzbox", "target": "http://192.168.178.1"}, follow_redirects=False)
+    # tiktok.com wurde früher durch lstrip("http://") zu "iktok.com" verstümmelt.
+    r = client.post("/redirects/add", data={"source": "https://www.TikTok.com/foo", "target": "wikipedia.org"},
+                    follow_redirects=False)
     assert r.status_code == 303
+    assert db.redirect_map() == {"tiktok.com": "https://wikipedia.org"}
 
-    # 2. Aufruf mit Host: fritzbox -> 302 Weiterleitung
-    redir = client.get("/", headers={"host": "fritzbox"}, follow_redirects=False)
-    assert redir.status_code == 302
-    assert redir.headers["location"] == "http://192.168.178.1"
+    for host in ("tiktok.com", "www.tiktok.com", "m.tiktok.com", "TikTok.com:443"):
+        redir = client.get("/", headers={"host": host}, follow_redirects=False)
+        assert redir.status_code == 302, host
+        assert redir.headers["location"] == "https://wikipedia.org"
 
-    # 3. Aufruf des Dashboards selbst -> normales Dashboard (200)
+    # Ähnlich heißende Domains und das Dashboard selbst bleiben unberührt.
+    assert client.get("/", headers={"host": "nottiktok.com"}, follow_redirects=False).status_code == 200
     dash = client.get("/", headers={"host": "cloudy.lan"})
-    assert dash.status_code == 200
-    assert "fritzbox" in dash.text
-    assert "http://192.168.178.1" in dash.text
+    assert dash.status_code == 200 and "tiktok.com" in dash.text
 
-    # 4. Weiterleitung löschen
-    r_del = client.post("/redirects/remove", data={"source": "fritzbox"}, follow_redirects=False)
+    r_del = client.post("/redirects/remove", data={"source": "tiktok.com"}, follow_redirects=False)
     assert r_del.status_code == 303
     assert db.redirect_map() == {}
 
+
+def test_redirect_single_label_and_invalid(client):
+    client.post("/redirects/add", data={"source": "fritzbox", "target": "http://192.168.178.1"})
+    r = client.get("/", headers={"host": "fritzbox"}, follow_redirects=False)
+    assert r.headers["location"] == "http://192.168.178.1"
+    r = client.post("/redirects/add", data={"source": "kein gültiger name!", "target": "x.de"}, follow_redirects=False)
+    assert r.status_code == 303 and "fehler=" in r.headers["location"]
+    assert list(db.redirect_map()) == ["fritzbox"]

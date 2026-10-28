@@ -42,6 +42,15 @@
     <span class="pill">Pi {{ settings.pi_ip }}{% if settings.local_name %} · {{ settings.local_name }}{% endif %}</span>
     <span class="pill">Weiter an {{ settings.upstream_dns | join(', ') }}</span>
   </div>
+  {% if ipv6_bypass and vpn_in_use %}
+  <div style="background:#fde2e2;color:#7f1d1d;border-radius:8px;padding:.75rem 1rem;margin:0 0 1.25rem">
+    <b>⚠ IPv6 läuft am VPN vorbei.</b> Die Fritzbox verteilt im Heimnetz IPv6. Die Geräte schicken IPv6 dann
+    direkt an die Fritzbox – der Pi sieht diesen Verkehr nicht und kann ihn nicht ins VPN leiten.<br>
+    <b>So beheben:</b> Fritzbox → Heimnetz → Netzwerk → Netzwerkeinstellungen → Reiter <b>IPv6</b> →
+    Haken bei <b>„Router Advertisement im LAN aktiv“ entfernen</b> → Übernehmen. Danach an den Geräten einmal
+    WLAN aus/an. Das Internet geht dann komplett über IPv4 – und damit über den Pi und das VPN.
+  </div>
+  {% endif %}
 
   {% if ip %}
     <p><a href="/">← alle Geräte</a></p>
@@ -100,33 +109,6 @@
       <tr><td colspan="4" class="muted">Noch nichts aufgerufen.</td></tr>
       {% endfor %}
     </table>
-
-    <h2 id="redirects">URL- &amp; Domain-Weiterleitungen</h2>
-    <p class="muted">Wenn ein Gerät im Heimnetz die Quell-Adresse aufruft, wird es automatisch auf die Ziel-Webseite oder IP weitergeleitet (z. B. Kurz-URLs oder Umleitungen).</p>
-    <form method="post" action="/redirects/add" class="inline" style="margin-bottom:1rem;gap:.5rem;flex-wrap:wrap">
-      <input name="source" placeholder="Von (z. B. fritzbox, router, tiktok.com)" size="30" required>
-      <input name="target" placeholder="Nach (z. B. http://192.168.178.1, https://wikipedia.org)" size="40" required>
-      <button>Weiterleitung hinzufügen</button>
-    </form>
-    {% if redirects %}
-    <table style="margin-bottom:1.5rem">
-      <tr><th>Von (Aufgerufene URL / Domain)</th><th>Weiterleiten nach</th><th>Aktion</th></tr>
-      {% for r in redirects %}
-      <tr>
-        <td class="mono" style="font-weight:600;color:#6b21a8">{{ r.source }}</td>
-        <td><a href="{{ r.target if r.target.startswith('http') else 'https://' + r.target }}" target="_blank" rel="noopener">{{ r.target }}</a></td>
-        <td>
-          <form method="post" action="/redirects/remove" class="inline">
-            <input type="hidden" name="source" value="{{ r.source }}">
-            <button class="secondary" style="padding:.2rem .5rem;font-size:.8rem">Löschen</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% else %}
-    <p class="muted" style="margin-bottom:1.5rem">Noch keine Weiterleitungen eingerichtet.</p>
-    {% endif %}
 
     <h2>Letzte Aufrufe</h2>
     <table>
@@ -292,20 +274,23 @@
     <p class="muted">Geräte zuordnen: in der Geräteliste bei „Internet über“ auswählen, oder oben für alle Geräte auf einmal. Anleitung (Token bzw. WireGuard-Datei) in der README.</p>
     {% endif %}
 
-    <h2 id="redirects">URL- &amp; Domain-Weiterleitungen</h2>
-    <p class="muted">Wenn ein Gerät im Heimnetz die Quell-Adresse aufruft, wird es automatisch auf die Ziel-Webseite oder IP weitergeleitet (z. B. Kurz-URLs oder Umleitungen).</p>
+    <h2 id="redirects">Domain-Weiterleitungen</h2>
+    <p class="muted">Ruft ein Gerät im Heimnetz die Domain auf (inkl. aller Subdomains wie www. oder m.), landet es auf der Ziel-Seite.
+      Bei <b>https://</b>-Seiten klappt das ohne Fehlermeldung nur auf Geräten mit installiertem cloudy-Zertifikat
+      (<a href="/ca.crt">CA herunterladen</a>). Geräte mit „Sicherem DNS“ im Browser gehen am Pi vorbei.</p>
+    {% if fehler %}<p class="pill" style="background:#fde2e2;color:#991b1b;display:inline-block">{{ fehler }}</p>{% endif %}
     <form method="post" action="/redirects/add" class="inline" style="margin-bottom:1rem;gap:.5rem;flex-wrap:wrap">
-      <input name="source" placeholder="Von (z. B. fritzbox, router, tiktok.com)" size="30" required>
-      <input name="target" placeholder="Nach (z. B. http://192.168.178.1, https://wikipedia.org)" size="40" required>
+      <input name="source" placeholder="Von (z. B. tiktok.com oder fritzbox)" size="30" required>
+      <input name="target" placeholder="Nach (z. B. wikipedia.org oder http://192.168.178.1)" size="40" required>
       <button>Weiterleitung hinzufügen</button>
     </form>
     {% if redirects %}
     <table style="margin-bottom:1.5rem">
-      <tr><th>Von (Aufgerufene URL / Domain)</th><th>Weiterleiten nach</th><th>Aktion</th></tr>
+      <tr><th>Von (inkl. Subdomains)</th><th>Weiterleiten nach</th><th>Aktion</th></tr>
       {% for r in redirects %}
       <tr>
         <td class="mono" style="font-weight:600;color:#6b21a8">{{ r.source }}</td>
-        <td><a href="{{ r.target if r.target.startswith('http') else 'https://' + r.target }}" target="_blank" rel="noopener">{{ r.target }}</a></td>
+        <td><a href="{{ r.target }}" target="_blank" rel="noopener">{{ r.target }}</a></td>
         <td>
           <form method="post" action="/redirects/remove" class="inline">
             <input type="hidden" name="source" value="{{ r.source }}">

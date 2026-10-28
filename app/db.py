@@ -391,10 +391,10 @@ def redirects() -> list[dict]:
 
 
 def add_redirect(source: str, target: str) -> None:
-    source = source.strip().lower().lstrip("http://").lstrip("https://").rstrip("/")
-    target = target.strip()
-    if not source or not target:
-        return
+    """ValueError, wenn Quelle oder Ziel ungültig sind."""
+    from .redirects import normalize_source, normalize_target
+
+    source, target = normalize_source(source), normalize_target(target)
     with closing(_connect()) as conn:
         conn.execute(
             "INSERT OR REPLACE INTO redirects (source, target, created_at) VALUES (?, ?, ?)",
@@ -404,9 +404,8 @@ def add_redirect(source: str, target: str) -> None:
 
 
 def remove_redirect(source: str) -> None:
-    source = source.strip().lower().lstrip("http://").lstrip("https://").rstrip("/")
     with closing(_connect()) as conn:
-        conn.execute("DELETE FROM redirects WHERE source = ?", (source,))
+        conn.execute("DELETE FROM redirects WHERE source = ?", (source.strip().lower(),))
         conn.commit()
 
 
