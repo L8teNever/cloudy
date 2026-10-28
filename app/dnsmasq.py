@@ -273,10 +273,6 @@ class DnsmasqRunner:
         self._flush_once()
 
 
-if __name__ == "__main__":
-    # Gibt die erzeugte dnsmasq-Konfiguration aus (für Tests: dnsmasq --test).
-    print(build_config(Settings.from_env()), end="")
-
 def sync_redirects_hosts(s: Settings) -> None:
     """Schreibt die Weiterleitungen als dnsmasq-Konfiguration (wird mit conf-file= eingebunden)."""
     from .redirects import dnsmasq_lines
@@ -288,3 +284,12 @@ def sync_redirects_hosts(s: Settings) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     os.replace(tmp, s.redirects_path)
+
+
+if __name__ == "__main__":
+    # Gibt die erzeugte dnsmasq-Konfiguration aus (für Tests: dnsmasq --test).
+    settings = Settings.from_env()
+    if not os.path.exists(settings.redirects_path):
+        os.makedirs(settings.data_dir, exist_ok=True)
+        open(settings.redirects_path, "a", encoding="utf-8").close()
+    print(build_config(settings), end="")
