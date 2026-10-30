@@ -45,7 +45,7 @@ jobs:
           docker run --rm cloudy-test sh -c 'python -m app.dnsmasq > /tmp/d.conf && dnsmasq --test --conf-file=/tmp/d.conf'
           docker run --rm -e DHCP_ENABLED=1 cloudy-test sh -c 'python -m app.dnsmasq > /tmp/d.conf && dnsmasq --test --conf-file=/tmp/d.conf'
           # Seiten-Regeln brauchen ipset in dnsmasq und das ipset-Werkzeug im Image
-          docker run --rm cloudy-test sh -c 'dnsmasq --version | head -n1 | grep -q " ipset" && ipset --version'
+          docker run --rm cloudy-test sh -c 'dnsmasq --version | grep -q " ipset" && ipset --version'
           # IPv6 über den Pi: Router Advertisement mit eigenem ULA-Netz muss von dnsmasq akzeptiert werden
           docker run --rm -e DHCP_ENABLED=1 -e GATEWAY_ENABLED=1 -e IPV6_ENABLED=1 -e IPV6_PREFIX=fd12:3456:789a:1::/64 cloudy-test sh -c 'python -m app.dnsmasq > /tmp/d.conf && grep -q enable-ra /tmp/d.conf && ! grep -q filter-AAAA /tmp/d.conf && dnsmasq --test --conf-file=/tmp/d.conf'
 
