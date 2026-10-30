@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import blocklist, certs, db, fritz, localdomain, views, warp
+from . import blocklist, certs, db, fritz, localdomain, policy, views, warp
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -299,7 +299,9 @@ async def mein_geraet(request: Request, ok: int | None = None, fehler: str | Non
     warp_by_mac = await run_in_threadpool(db.device_warp)
     warp_default = await run_in_threadpool(db.get_setting, warp.DEFAULT_KEY)
     allowed = await run_in_threadpool(warp.mein_allowed)
-    current = warp_by_mac.get((device or {}).get("mac") or "", "")
+    mac = ((device or {}).get("mac") or "").strip().lower()
+    current = warp_by_mac.get(mac, "")
+    eff = await run_in_threadpool(policy.resolve, mac) if mac else policy.Effective("", "default")
     if allowed is not None:
         profiles = [w for w in profiles if w["slot"] in allowed or w["slot"] == current]
     labels = {w["slot"]: w["label"] for w in profiles}
@@ -321,6 +323,8 @@ async def mein_geraet(request: Request, ok: int | None = None, fehler: str | Non
             "settings": settings,
             "ok": bool(ok),
             "fehler": fehler,
+            "effective": eff,
+            "effective_label": policy.label_for(eff, labels, warp_default),
         },
     )
 
@@ -335,6 +339,12 @@ async def mein_set_warp(request: Request, slot: str = Form("")):
     if not warp.MAC_RE.match(mac):
         return RedirectResponse(
             f"/mein?fehler={quote('Gerät noch nicht erkannt – bitte kurz warten oder WLAN neu verbinden.')}",
+            status_code=303,
+        )
+    locked = await run_in_threadpool(policy.locked_for, mac)
+    if locked:
+        return RedirectResponse(
+            f"/mein?fehler={quote(f'Festgelegt durch Gruppe „{locked.group_name}“.')}",
             status_code=303,
         )
     if slot and slot != warp.DIRECT:
@@ -467,6 +477,68 @@ async def device_set_warp(request: Request, mac: str = Form(...), slot: str = Fo
         _check_slot(request, slot)
     await run_in_threadpool(db.set_device_warp, mac, slot or None)
     return RedirectResponse(f"/?ip={quote(ip)}" if ip else "/", status_code=303)
+
+
+def _group_slot_ok(request: Request, slot: str) -> str:
+    slot = (slot or "").strip().lower()
+    if not slot:
+        return ""
+    if slot == warp.DIRECT:
+        return slot
+    _check_slot(request, slot)
+    return slot
+
+
+@app.post("/gruppen", dependencies=[Depends(require_password)])
+async def gruppen_anlegen(
+    request: Request, name: str = Form(...), color: str = Form(""), slot: str = Form(""), locked: int = Form(0)
+):
+    try:
+        slot = _group_slot_ok(request, slot)
+        gid = await run_in_threadpool(db.create_group, name, color, slot, bool(locked))
+    except ValueError as exc:
+        return RedirectResponse(f"/gruppen?fehler={quote(str(exc))}", status_code=303)
+    return RedirectResponse(f"/gruppen/{gid}", status_code=303)
+
+
+@app.post("/gruppen/{group_id}", dependencies=[Depends(require_password)])
+async def gruppen_speichern(
+    request: Request,
+    group_id: int,
+    name: str = Form(...),
+    color: str = Form(""),
+    slot: str = Form(""),
+    locked: int = Form(0),
+):
+    if not await run_in_threadpool(db.group, group_id):
+        raise HTTPException(status_code=404, detail="Gruppe nicht gefunden")
+    try:
+        slot = _group_slot_ok(request, slot)
+        await run_in_threadpool(db.update_group, group_id, name, color, slot, bool(locked))
+    except ValueError as exc:
+        return RedirectResponse(f"/gruppen/{group_id}?fehler={quote(str(exc))}", status_code=303)
+    return RedirectResponse(f"/gruppen/{group_id}", status_code=303)
+
+
+@app.post("/gruppen/{group_id}/loeschen", dependencies=[Depends(require_password)])
+async def gruppen_loeschen(group_id: int):
+    await run_in_threadpool(db.delete_group, group_id)
+    return RedirectResponse("/gruppen?erfolg=" + quote("Gruppe gelöscht."), status_code=303)
+
+
+@app.post("/gruppen/{group_id}/mitglieder", dependencies=[Depends(require_password)])
+async def gruppen_mitglieder(group_id: int, mac: list[str] = Form(default=[])):
+    if not await run_in_threadpool(db.group, group_id):
+        raise HTTPException(status_code=404, detail="Gruppe nicht gefunden")
+    clean = [m for m in mac if warp.MAC_RE.match(m.strip().lower())]
+    await run_in_threadpool(db.set_group_members, group_id, clean)
+    return RedirectResponse(f"/gruppen/{group_id}", status_code=303)
+
+
+@app.post("/gruppen/{group_id}/rang", dependencies=[Depends(require_password)])
+async def gruppen_rang(group_id: int, richtung: int = Form(0)):
+    await run_in_threadpool(db.move_group, group_id, richtung)
+    return RedirectResponse("/gruppen", status_code=303)
 
 
 @app.post("/devices/isolate", dependencies=[Depends(require_password)])

@@ -22,7 +22,7 @@ import threading
 import time
 from dataclasses import dataclass
 
-from . import db, ipv6
+from . import db, ipv6, policy
 from .settings import Settings
 from .traffic import FWD_CHAIN, _run, _write_sysctl
 
@@ -383,7 +383,7 @@ class WarpRouter:
             self._ticks += 1
             if self._ticks % 12 == 1:
                 ipv6.ensure_lan(self.s)
-        self.apply(build_plan(self.s, db.device_warp(), connected, db.get_setting(DEFAULT_KEY), ipv6_ok, db.site_routes()))
+        self.apply(build_plan(self.s, policy.assignments(), connected, db.get_setting(DEFAULT_KEY), ipv6_ok, db.site_routes()))
 
     def start(self) -> None:
         try:

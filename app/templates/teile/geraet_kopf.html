@@ -26,6 +26,13 @@
         </span>
       </div>
       {% endif %}
+      {% if device.mac and groups_by_mac.get(device.mac) %}
+      <div style="margin-top:.4rem;display:flex;flex-wrap:wrap;gap:.3rem">
+        {% for g in groups_by_mac[device.mac] %}
+        <a href="/gruppen/{{ g.id }}" data-nav class="pill" style="font-size:.78rem;padding:.1rem .5rem;text-decoration:none;background:{{ g.color }};color:#fff">{{ g.name }}{% if g.locked %} · fest{% endif %}</a>
+        {% endfor %}
+      </div>
+      {% endif %}
     </div>
   </div>
 
@@ -45,8 +52,15 @@
   </div>
 
   {% if warp and device.mac %}
+  {% set eff = effective_by_mac.get(device.mac) %}
   <div style="margin-top:1rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
     <strong>Internet über:</strong>
+    {% if eff and eff.locked %}
+    <span>
+      {% if eff.slot == 'direct' or not eff.slot %}normal (Fritzbox){% else %}{{ warp_names.get(eff.slot, eff.slot) }}{% endif %}
+      <span class="muted small">(Gruppe {{ eff.group_name }}, festgelegt)</span>
+    </span>
+    {% else %}
     <form method="post" action="/devices/warp" class="inline">
       <input type="hidden" name="mac" value="{{ device.mac }}">
       <input type="hidden" name="ip" value="{{ device.ip }}">
@@ -55,6 +69,12 @@
       </select>
       <button>Übernehmen</button>
     </form>
+    {% if eff and eff.source == 'group' %}
+    <span class="muted small">wirksam durch Gruppe {{ eff.group_name }}:
+      {% if eff.slot == 'direct' %}normal (Fritzbox){% else %}{{ warp_names.get(eff.slot, eff.slot) }}{% endif %}
+    </span>
+    {% endif %}
+    {% endif %}
   </div>
   {% endif %}
 </div>

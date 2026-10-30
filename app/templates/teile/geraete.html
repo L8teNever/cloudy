@@ -60,6 +60,13 @@
             {% if d.fritz_only %}
             <div class="muted small">nur in der FRITZ!Box bekannt</div>
             {% endif %}
+            {% if d.mac and groups_by_mac.get(d.mac) %}
+            <div style="margin-top:.25rem;display:flex;flex-wrap:wrap;gap:.25rem">
+              {% for g in groups_by_mac[d.mac] %}
+              <a href="/gruppen/{{ g.id }}" data-nav class="pill" style="font-size:.72rem;padding:.05rem .45rem;text-decoration:none;background:{{ g.color }};color:#fff" title="Gruppe">{{ g.name }}{% if g.locked %} · fest{% endif %}</a>
+              {% endfor %}
+            </div>
+            {% endif %}
             {% if d.connection %}
             <div style="margin-top:.2rem">
               <span class="pill {{ 'on' if d.connection.type == 'WLAN' else '' }}" style="font-size:.74rem;padding:.05rem .45rem" title="{{ d.connection.full_details }}">
@@ -84,6 +91,13 @@
           {% if warp %}
           <td>
             {% if d.mac %}
+            {% set eff = effective_by_mac.get(d.mac) %}
+            {% if eff and eff.locked %}
+            <span class="small" title="Durch Gruppe festgelegt">
+              {% if eff.slot == 'direct' or not eff.slot %}normal (Fritzbox){% else %}{{ warp_names.get(eff.slot, eff.slot) }}{% endif %}
+              <span class="muted">({{ eff.group_name }}, fest)</span>
+            </span>
+            {% else %}
             <form method="post" action="/devices/warp" class="inline">
               <input type="hidden" name="mac" value="{{ d.mac }}">
               <input type="hidden" name="ip" value="{{ d.ip }}">
@@ -91,6 +105,10 @@
                 {{ slot_options(warp_by_mac.get(d.mac, '')) }}
               </select>
             </form>
+            {% if eff and eff.source == 'group' %}
+            <div class="muted small">wirksam: {% if eff.slot == 'direct' %}normal{% else %}{{ warp_names.get(eff.slot, eff.slot) }}{% endif %} ({{ eff.group_name }})</div>
+            {% endif %}
+            {% endif %}
             {% else %}
             <span class="muted small">–</span>
             {% endif %}

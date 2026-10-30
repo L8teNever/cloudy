@@ -1,0 +1,60 @@
+<div class="card">
+  <p style="margin:0 0 .5rem"><a href="/gruppen" data-nav>← Alle Gruppen</a></p>
+  <h2 style="margin:0 0 .75rem">
+    <span style="display:inline-block;width:.85rem;height:.85rem;border-radius:50%;background:{{ group.color }};vertical-align:middle;margin-right:.35rem"></span>
+    {{ group.name }}
+  </h2>
+  {% if params.fehler %}<div class="info small">{{ params.fehler }}</div>{% endif %}
+
+  <form method="post" action="/gruppen/{{ group.id }}" style="display:grid;gap:.6rem;max-width:28rem;margin-bottom:1.25rem">
+    <label class="small">Name
+      <input name="name" required value="{{ group.name }}" style="width:100%">
+    </label>
+    <label class="small">Farbe
+      <select name="color" style="width:100%">
+        {% for c in group_colors %}
+        <option value="{{ c }}" {{ 'selected' if group.color == c }} style="background:{{ c }}">{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="small">Internet über
+      <select name="slot" style="width:100%">
+        <option value="" {{ 'selected' if not group.slot }}>keine Vorgabe (nur Ordnung)</option>
+        <option value="direct" {{ 'selected' if group.slot == 'direct' }}>normal (Fritzbox)</option>
+        {% for w in warp %}<option value="{{ w.slot }}" {{ 'selected' if group.slot == w.slot }}>{{ w.label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="small" style="display:flex;align-items:center;gap:.4rem">
+      <input type="checkbox" name="locked" value="1" {{ 'checked' if group.locked }}>
+      festgelegt – Mitglieder können auf „Mein Gerät“ nichts umstellen
+    </label>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+      <button type="submit">Speichern</button>
+    </div>
+  </form>
+
+  <form method="post" action="/gruppen/{{ group.id }}/loeschen" onsubmit="return confirm('Gruppe „{{ group.name }}“ wirklich löschen?');" style="margin-bottom:1.5rem">
+    <button type="submit" class="danger">Gruppe löschen</button>
+  </form>
+
+  <h3 style="margin:0 0 .5rem;font-size:1rem">Mitglieder</h3>
+  <p class="muted small">Nur Geräte mit bekannter MAC-Adresse. Rang der Gruppe entscheidet bei Mehrfach-Mitgliedschaft.</p>
+  <form method="post" action="/gruppen/{{ group.id }}/mitglieder">
+    <div style="display:grid;gap:.35rem;max-width:32rem;margin:.75rem 0 1rem">
+      {% for d in devices %}
+      {% if d.mac %}
+      <label class="small" style="display:flex;align-items:center;gap:.5rem">
+        <input type="checkbox" name="mac" value="{{ d.mac }}" {{ 'checked' if d.mac in members }}>
+        <span>
+          <strong>{{ d.hostname or d.ip or d.mac }}</strong>
+          <span class="muted mono"> · {{ d.mac }}{% if d.ip %} · {{ d.ip }}{% endif %}</span>
+        </span>
+      </label>
+      {% endif %}
+      {% else %}
+      <p class="muted small">Noch keine Geräte mit MAC.</p>
+      {% endfor %}
+    </div>
+    <button type="submit">Mitglieder speichern</button>
+  </form>
+</div>

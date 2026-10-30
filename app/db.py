@@ -144,6 +144,21 @@ def init() -> None:
                 target TEXT NOT NULL,
                 created_at INTEGER NOT NULL
             );
+
+            -- Gerätegruppen: Ordnung + gemeinsames „Internet über“ (z. B. TVs ohne VPN).
+            CREATE TABLE IF NOT EXISTS groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                color TEXT NOT NULL DEFAULT '',
+                rank INTEGER NOT NULL DEFAULT 0,
+                slot TEXT NOT NULL DEFAULT '',
+                locked INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS group_members (
+                group_id INTEGER NOT NULL,
+                mac TEXT NOT NULL,
+                PRIMARY KEY (group_id, mac)
+            );
             """
         )
         # Alte DB: gleiches Gerät unter mehreren IPs (MAC doppelt) → zusammenführen.
@@ -778,6 +793,128 @@ def set_isolated(mac: str, isolated: bool) -> None:
             )
         else:
             conn.execute("DELETE FROM device_isolated WHERE mac = ?", (mac,))
+        conn.commit()
+
+
+# --------------------------------------------------------------------------- Gerätegruppen
+
+GROUP_COLORS = ("#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#64748b")
+
+
+def _group_row(r) -> dict:
+    return {
+        "id": r["id"],
+        "name": r["name"],
+        "color": r["color"] or GROUP_COLORS[0],
+        "rank": r["rank"],
+        "slot": r["slot"] or "",
+        "locked": bool(r["locked"]),
+    }
+
+
+def groups() -> list[dict]:
+    """Alle Gruppen, oben = kleineres rank."""
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT id, name, color, rank, slot, locked FROM groups ORDER BY rank ASC, id ASC"
+        ).fetchall()
+        return [_group_row(r) for r in rows]
+
+
+def group(group_id: int) -> dict | None:
+    with closing(_connect()) as conn:
+        r = conn.execute(
+            "SELECT id, name, color, rank, slot, locked FROM groups WHERE id = ?", (group_id,)
+        ).fetchone()
+        return _group_row(r) if r else None
+
+
+def group_members(group_id: int) -> set[str]:
+    with closing(_connect()) as conn:
+        return {
+            r["mac"]
+            for r in conn.execute("SELECT mac FROM group_members WHERE group_id = ?", (group_id,))
+        }
+
+
+def groups_by_mac() -> dict[str, list[dict]]:
+    """MAC -> Gruppen dieses Geräts, sortiert nach Rang (oben zuerst)."""
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            """SELECT g.id, g.name, g.color, g.rank, g.slot, g.locked, m.mac
+               FROM group_members m JOIN groups g ON g.id = m.group_id
+               ORDER BY g.rank ASC, g.id ASC"""
+        ).fetchall()
+    out: dict[str, list[dict]] = {}
+    for r in rows:
+        out.setdefault(r["mac"], []).append(_group_row(r))
+    return out
+
+
+def create_group(name: str, color: str = "", slot: str = "", locked: bool = False) -> int:
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Name fehlt")
+    color = color if color in GROUP_COLORS else GROUP_COLORS[0]
+    slot = (slot or "").strip().lower()
+    locked = bool(locked and slot)
+    with closing(_connect()) as conn:
+        rank = conn.execute("SELECT COALESCE(MAX(rank), -1) + 1 FROM groups").fetchone()[0]
+        cur = conn.execute(
+            "INSERT INTO groups (name, color, rank, slot, locked) VALUES (?, ?, ?, ?, ?)",
+            (name, color, rank, slot, int(locked)),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+
+def update_group(group_id: int, name: str, color: str = "", slot: str = "", locked: bool = False) -> None:
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Name fehlt")
+    color = color if color in GROUP_COLORS else GROUP_COLORS[0]
+    slot = (slot or "").strip().lower()
+    locked = bool(locked and slot)
+    with closing(_connect()) as conn:
+        conn.execute(
+            "UPDATE groups SET name = ?, color = ?, slot = ?, locked = ? WHERE id = ?",
+            (name, color, slot, int(locked), group_id),
+        )
+        conn.commit()
+
+
+def delete_group(group_id: int) -> None:
+    with closing(_connect()) as conn:
+        conn.execute("DELETE FROM group_members WHERE group_id = ?", (group_id,))
+        conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
+        conn.commit()
+
+
+def set_group_members(group_id: int, macs: list[str]) -> None:
+    clean = sorted({m.strip().lower() for m in macs if m and m.strip()})
+    with closing(_connect()) as conn:
+        conn.execute("DELETE FROM group_members WHERE group_id = ?", (group_id,))
+        conn.executemany(
+            "INSERT INTO group_members (group_id, mac) VALUES (?, ?)",
+            [(group_id, m) for m in clean],
+        )
+        conn.commit()
+
+
+def move_group(group_id: int, direction: int) -> None:
+    """direction -1 = höher (kleineres rank), +1 = tiefer."""
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT id, rank FROM groups ORDER BY rank ASC, id ASC").fetchall()
+        ids = [r["id"] for r in rows]
+        if group_id not in ids:
+            return
+        i = ids.index(group_id)
+        j = i + (1 if direction > 0 else -1)
+        if j < 0 or j >= len(ids):
+            return
+        ids[i], ids[j] = ids[j], ids[i]
+        for rank, gid in enumerate(ids):
+            conn.execute("UPDATE groups SET rank = ? WHERE id = ?", (rank, gid))
         conn.commit()
 
 

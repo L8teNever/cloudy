@@ -1,0 +1,84 @@
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem">
+    <h2 style="margin:0">Gerätegruppen</h2>
+  </div>
+  <p class="muted small" style="margin-top:0">
+    Geräte bündeln (z.&nbsp;B. TV, Handys, Smart Home) und pro Gruppe festlegen, worüber das Internet läuft.
+    Oben in der Liste gewinnt, wenn ein Gerät in mehreren Gruppen steckt.
+    Mit <b>festgelegt</b> kann niemand das auf „Mein Gerät“ umstellen.
+  </p>
+  {% if params.fehler %}<div class="info small">{{ params.fehler }}</div>{% endif %}
+  {% if params.erfolg %}<div class="ok small">{{ params.erfolg }}</div>{% endif %}
+
+  <form method="post" action="/gruppen" style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:end;margin:1rem 0">
+    <label class="small">Name
+      <input name="name" required placeholder="z. B. TV" style="display:block;min-width:10rem">
+    </label>
+    <label class="small">Farbe
+      <select name="color" style="display:block">
+        {% for c in group_colors %}
+        <option value="{{ c }}" style="background:{{ c }}">{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="small">Internet über
+      <select name="slot" style="display:block">
+        <option value="">keine Vorgabe (nur Ordnung)</option>
+        <option value="direct">normal (Fritzbox)</option>
+        {% for w in warp %}<option value="{{ w.slot }}">{{ w.label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="small" style="display:flex;align-items:center;gap:.35rem;padding-bottom:.35rem">
+      <input type="checkbox" name="locked" value="1"> festgelegt
+    </label>
+    <button type="submit">Gruppe anlegen</button>
+  </form>
+
+  {% if groups %}
+  <div class="table-wrap"><table>
+    <thead>
+      <tr>
+        <th>Rang</th>
+        <th>Gruppe</th>
+        <th>Internet über</th>
+        <th>Mitglieder</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for g in groups %}
+      <tr>
+        <td>
+          <form method="post" action="/gruppen/{{ g.id }}/rang" class="inline" style="gap:.25rem">
+            <input type="hidden" name="richtung" value="-1">
+            <button class="secondary" style="padding:.15rem .4rem;font-size:.75rem" title="Höher" {{ 'disabled' if loop.first }}>↑</button>
+          </form>
+          <form method="post" action="/gruppen/{{ g.id }}/rang" class="inline" style="gap:.25rem">
+            <input type="hidden" name="richtung" value="1">
+            <button class="secondary" style="padding:.15rem .4rem;font-size:.75rem" title="Tiefer" {{ 'disabled' if loop.last }}>↓</button>
+          </form>
+        </td>
+        <td>
+          <a href="/gruppen/{{ g.id }}" data-nav style="font-weight:600">
+            <span style="display:inline-block;width:.7rem;height:.7rem;border-radius:50%;background:{{ g.color }};vertical-align:middle;margin-right:.35rem"></span>
+            {{ g.name }}
+          </a>
+          {% if g.locked %}<span class="pill warn" style="margin-left:.35rem;font-size:.72rem">fest</span>{% endif %}
+        </td>
+        <td>
+          {% if not g.slot %}<span class="muted">—</span>
+          {% elif g.slot == 'direct' %}normal (Fritzbox)
+          {% else %}{{ warp_names.get(g.slot, g.slot) }}{% endif %}
+        </td>
+        <td>{{ group_member_counts.get(g.id, 0) }}</td>
+        <td>
+          <a href="/gruppen/{{ g.id }}" data-nav class="secondary" style="padding:.2rem .45rem;font-size:.78rem;text-decoration:none;display:inline-block">Bearbeiten</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="muted small">Noch keine Gruppen. Lege z.&nbsp;B. „TV“ an und stelle „normal (Fritzbox)“ ein.</p>
+  {% endif %}
+</div>

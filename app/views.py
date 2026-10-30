@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import blocklist, charts, db, fritz, localdomain, stats, system_info, warp
+from . import blocklist, charts, db, fritz, localdomain, policy, stats, system_info, warp
 from .settings import Settings
 
 BASE_DIR = Path(__file__).parent
@@ -161,6 +161,13 @@ def _warp_ctx(request: Request) -> dict:
     }
 
 
+def _policy_ctx() -> dict:
+    by_mac = db.groups_by_mac()
+    device_map = db.device_warp()
+    effective = {mac: policy.resolve(mac, device_map, by_mac) for mac in set(device_map) | set(by_mac)}
+    return {"groups_by_mac": by_mac, "effective_by_mac": effective}
+
+
 def ctx_geraete(request: Request) -> dict:
     s: Settings = request.app.state.settings
     devices = db.devices()
@@ -179,6 +186,7 @@ def ctx_geraete(request: Request) -> dict:
         "online": online_ips(request),
         "isolated": db.isolated_macs(),
         **_warp_ctx(request),
+        **_policy_ctx(),
     }
 
 
@@ -196,6 +204,30 @@ def ctx_geraet_kopf(request: Request, ip: str) -> dict:
         "device": device,
         "current": current,
         "online": online_ips(request),
+        **_warp_ctx(request),
+        **_policy_ctx(),
+    }
+
+
+def ctx_gruppen(request: Request) -> dict:
+    counts = {g["id"]: len(db.group_members(g["id"])) for g in db.groups()}
+    return {
+        "groups": db.groups(),
+        "group_colors": db.GROUP_COLORS,
+        "group_member_counts": counts,
+        **_warp_ctx(request),
+    }
+
+
+def ctx_gruppe(request: Request, group_id: int) -> dict:
+    g = db.group(group_id)
+    if not g:
+        raise HTTPException(status_code=404, detail="Gruppe nicht gefunden")
+    return {
+        "group": g,
+        "members": db.group_members(group_id),
+        "devices": db.devices(),
+        "group_colors": db.GROUP_COLORS,
         **_warp_ctx(request),
     }
 
@@ -287,8 +319,10 @@ PARTS = {
     "seitenrouten": ctx_seitenrouten,
     "fritzbox": ctx_fritzbox,
     "leistung": ctx_leistung,
+    "gruppen": ctx_gruppen,
+    "gruppe": ctx_gruppe,
 }
-PARAMS = {"ip", "zeitraum", "fehler", "erfolg"}
+PARAMS = {"ip", "zeitraum", "fehler", "erfolg", "group_id"}
 
 
 async def _build(request: Request, names: list[str], **params) -> dict:
@@ -326,6 +360,20 @@ async def geraet(request: Request, ip: str, zeitraum: str | None = None):
     ctx_parts = ["geraet_kopf", "geraet_statistik", "aufrufe"]
     resp = await page(request, "seiten/geraet.html", "Gerät", "/geraete", ctx_parts, ip=ip, zeitraum=zeitraum)
     return resp
+
+
+@router.get("/gruppen", response_class=HTMLResponse, dependencies=[Depends(require_password)])
+async def gruppen(request: Request, fehler: str | None = None, erfolg: str | None = None):
+    return await page(request, "seiten/gruppen.html", "Gruppen", "/gruppen", ["gruppen"], fehler=fehler, erfolg=erfolg)
+
+
+@router.get("/gruppen/{group_id}", response_class=HTMLResponse, dependencies=[Depends(require_password)])
+async def gruppe_detail(request: Request, group_id: int, fehler: str | None = None):
+    if not await run_in_threadpool(db.group, group_id):
+        raise HTTPException(status_code=404, detail="Gruppe nicht gefunden")
+    return await page(
+        request, "seiten/gruppe.html", "Gruppe", "/gruppen", ["gruppe"], group_id=group_id, fehler=fehler
+    )
 
 
 @router.get("/statistik", response_class=HTMLResponse, dependencies=[Depends(require_password)])

@@ -51,7 +51,14 @@
     </div>
     {% endif %}
 
-    {% if warp or show_direct or show_standard %}
+    {% if effective and effective.locked %}
+    <div class="card">
+      <p style="margin:0 0 .35rem"><strong>Festgelegt durch Gruppe „{{ effective.group_name }}“</strong></p>
+      <p class="muted small" style="margin:0">
+        Internet läuft über <strong>{{ effective_label }}</strong>. Das kann nur der Admin unter Gruppen ändern.
+      </p>
+    </div>
+    {% elif warp or show_direct or show_standard %}
     {% set current = warp_by_mac.get(device.mac, '') %}
     <div class="card">
       <form method="post" action="/mein/warp">
@@ -87,6 +94,12 @@
         </div>
         <button type="submit">Übernehmen</button>
       </form>
+      {% if effective and effective.source == 'group' %}
+      <p class="muted small" style="margin:.75rem 0 0">
+        Aktuell wirksam durch Gruppe „{{ effective.group_name }}“: {{ effective_label }}
+        (eigene Auswahl oben überschreibt das).
+      </p>
+      {% endif %}
     </div>
     {% else %}
     <div class="info">Es sind keine WARP-/VPN-Profile konfiguriert.</div>

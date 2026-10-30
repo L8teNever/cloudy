@@ -152,6 +152,10 @@ Gerät ──► Pi ──► WARP-Container (Account 1) ════Tunnel═�
 - **WARP einrichten:** Im Dashboard auf **„VPN“** → Token des Accounts einfügen.
 - **Gerät zuordnen:** Auf der Startseite in der Tabelle unter „Internet über“ **WARP 1** oder **WARP 2** wählen.
   Oder oben eine **Standard-Route** für alle Geräte ohne eigene Zuordnung einstellen.
+- **Gerätegruppen:** Unter **Gruppen** z. B. „TV“, „Handys“, „Smart Home“ anlegen, Geräte zuordnen und
+  pro Gruppe „Internet über“ setzen (etwa TVs fest auf **normal/Fritzbox**, damit Streaming nicht am VPN hängt).
+  Mit **festgelegt** kann niemand das Gerät auf `/mein` umstellen. Ein Gerät darf in mehreren Gruppen sein;
+  die weiter oben stehende Gruppe gewinnt.
 - **Fällt der Tunnel aus**, gehen die Geräte automatisch wieder normal über die Fritzbox. Soll das Gerät dann
   gar kein Internet mehr haben (Kill-Switch), in `~/cloudy/.env` `WARP_KILLSWITCH=1` setzen.
 
