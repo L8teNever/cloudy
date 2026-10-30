@@ -263,7 +263,23 @@ def ctx_statistik(request: Request, zeitraum: str | None = None) -> dict:
 
 
 def ctx_schutz(request: Request) -> dict:
+    from . import adblock
+
+    s: Settings = request.app.state.settings
+    runner = getattr(request.app.state, "runner", None)
+    ad = getattr(runner, "adblock", None)
+    names = {}
+    for row in db.devices():
+        mac = (row.get("mac") or "").strip().lower()
+        if mac and mac not in names:
+            names[mac] = device_name(row)
     return {
+        "adblock": {
+            "enabled": adblock.is_enabled(),
+            "running": bool(ad and ad.running),
+            "count": adblock.count(s),
+            "off": sorted(((names.get(m, m), m) for m in adblock.off_macs()), key=lambda x: x[0].lower()),
+        },
         "blocklist_enabled": blocklist.is_enabled(),
         "blocklist_paused_until": blocklist.paused_until(),
         "whitelist": db.whitelist(),

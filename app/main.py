@@ -17,7 +17,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import blocklist, certs, db, fritz, localdomain, policy, slots, stats, views, warp
+from . import adblock, blocklist, certs, db, fritz, localdomain, policy, slots, stats, views, warp
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -195,7 +195,7 @@ async def redirect_middleware(request: Request, call_next):
         if path == "/":
             return RedirectResponse("/hub", status_code=302)
         if (
-            path not in ("/healthz", "/favicon.ico", "/hub", "/hub/statistik", "/mein")
+            path not in ("/healthz", "/favicon.ico", "/hub", "/hub/statistik", "/hub/werbeblocker", "/mein")
             and not path.startswith("/mein/")
             and not path.startswith("/static/")
         ):
@@ -364,6 +364,9 @@ async def hub_page(request: Request):
         if mein_base:
             mein_href = f"{mein_base}/mein"
     name = ((device or {}).get("hostname") or (device or {}).get("fritz_name") or "").strip() or "dieses Gerät"
+    mac = ((device or {}).get("mac") or "").strip().lower()
+    ad_global = await run_in_threadpool(adblock.is_enabled)
+    ad_on = await run_in_threadpool(adblock.device_on, mac) if mac else True
     return templates.TemplateResponse(
         request,
         "seiten/hub.html",
@@ -379,8 +382,43 @@ async def hub_page(request: Request):
             "status_href": f"{dash_base}/" if dash_base else "/",
             "statistik_href": "/hub/statistik",
             "ha_url": ha,
+            "adblock": {"known": bool(warp.MAC_RE.match(mac)), "on": ad_on, "global": ad_global},
         },
     )
+
+
+def _adblock_apply(request: Request) -> None:
+    runner = getattr(request.app.state, "runner", None)
+    ad = getattr(runner, "adblock", None)
+    if ad:
+        ad.update_rules()
+
+
+@app.post("/hub/werbeblocker")
+async def hub_werbeblocker(request: Request, on: str = Form("1")):
+    """Jeder im Heimnetz: Werbeblocker für das eigene Gerät an/aus (erkannt über die Client-IP)."""
+    ip = client_ip(request)
+    device = await run_in_threadpool(db.device, ip) if ip else None
+    try:
+        await run_in_threadpool(adblock.set_device, (device or {}).get("mac") or "", on == "1")
+    except ValueError:
+        return RedirectResponse("/hub", status_code=303)
+    await run_in_threadpool(_adblock_apply, request)
+    return RedirectResponse("/hub", status_code=303)
+
+
+@app.post("/werbeblocker", dependencies=[Depends(require_password)])
+async def werbeblocker_global(request: Request, on: str = Form("1"), mac: str = Form(""), back: str = Form("/schutz")):
+    """Admin: global an/aus, oder mit mac= für ein bestimmtes Gerät."""
+    if mac:
+        try:
+            await run_in_threadpool(adblock.set_device, mac, on == "1")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    else:
+        await run_in_threadpool(adblock.set_enabled, on == "1")
+    await run_in_threadpool(_adblock_apply, request)
+    return RedirectResponse(back if back.startswith("/") and not back.startswith("//") else "/schutz", status_code=303)
 
 
 def _hub_series_bars(series: list[dict]) -> tuple[list[dict], int]:
@@ -959,6 +997,7 @@ async def blocklist_resume(request: Request):
 async def blocklist_whitelist_add(request: Request, domain: str = Form(...)):
     await run_in_threadpool(db.add_whitelist, domain)
     await run_in_threadpool(blocklist.generate_blocklist, request.app.state.settings)
+    await run_in_threadpool(adblock.drop_whitelisted, request.app.state.settings)
     _reload_dnsmasq(request)
     return RedirectResponse("/#blocklist", status_code=303)
 

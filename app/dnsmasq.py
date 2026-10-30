@@ -179,12 +179,21 @@ class Collector:
         db.add_queries(rows)
 
 
+_SERIAL_RE = re.compile(r" (\d+) (?=[0-9A-Fa-f:.]+/\d+ )")
+
+
+def shift_serial(line: str, offset: int = 1_000_000_000) -> str:
+    """Anfrage-Nummern des zweiten dnsmasq verschieben, damit sie sich nicht mit dem ersten überschneiden."""
+    return _SERIAL_RE.sub(lambda m: f" {int(m.group(1)) + offset} ", line, count=1)
+
+
 class DnsmasqRunner:
     def __init__(self, settings: Settings, collector: Collector, flush_interval: float = 5.0):
         self.settings = settings
         self.collector = collector
         self.flush_interval = flush_interval
         self.proc: subprocess.Popen | None = None
+        self.adblock = None
         self._stopping = threading.Event()
         self._restart_lock = threading.Lock()
 
@@ -211,6 +220,21 @@ class DnsmasqRunner:
         )
         self._spawn()
         threading.Thread(target=self._flush_loop, daemon=True).start()
+        self._start_adblock()
+
+    def _start_adblock(self) -> None:
+        from . import adblock
+
+        def feed(line: str) -> None:
+            line = shift_serial(line)
+            if not self.collector.feed(line) and not any(n in line for n in NOISY):
+                print(line, end="", flush=True)
+
+        try:
+            self.adblock = adblock.AdblockDns(self.settings, build_config(self.settings), feed)
+            threading.Thread(target=self.adblock.start, daemon=True).start()
+        except Exception as exc:  # noqa: BLE001 – ohne Werbeblocker läuft DNS normal weiter
+            print(f"cloudy: Werbeblocker nicht verfügbar: {exc}", file=sys.stderr, flush=True)
 
     def _spawn(self) -> None:
         proc = subprocess.Popen(
@@ -237,8 +261,12 @@ class DnsmasqRunner:
                     old.wait()
             if not self._stopping.is_set():
                 self._spawn()
+        if self.adblock and not self._stopping.is_set():
+            threading.Thread(target=self.adblock.restart, daemon=True).start()
 
     def reload_hosts(self) -> None:
+        if self.adblock:
+            self.adblock.reload_hosts()
         if self.proc and self.proc.poll() is None:
             sighup = getattr(signal, "SIGHUP", None)
             if sighup is not None:
@@ -273,6 +301,8 @@ class DnsmasqRunner:
 
     def stop(self) -> None:
         self._stopping.set()
+        if self.adblock:
+            self.adblock.stop()
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:

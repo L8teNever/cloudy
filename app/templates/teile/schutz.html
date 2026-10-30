@@ -1,3 +1,36 @@
+<div class="card" id="werbeblocker">
+  <h2>Werbeblocker <span class="muted small">(pro Gerät, auch mit WARP/VPN)</span></h2>
+  <div class="actions" style="margin-bottom:.6rem">
+    {% if not adblock.enabled %}
+      <span class="pill">Für alle ausgeschaltet</span>
+    {% elif adblock.running %}
+      <span class="pill on"><span class="dot on"></span> Aktiv · {{ adblock.count | count }} Domains</span>
+    {% else %}
+      <span class="pill warn">Eingeschaltet, Werbeblocker-DNS läuft nicht (nur im Betrieb auf dem Pi)</span>
+    {% endif %}
+    <form method="post" action="/werbeblocker" class="inline">
+      <input type="hidden" name="on" value="{{ '0' if adblock.enabled else '1' }}">
+      <button class="{{ 'secondary' if adblock.enabled }}">{{ 'Für alle ausschalten' if adblock.enabled else 'Einschalten' }}</button>
+    </form>
+  </div>
+  <p class="muted small">
+    Standardmäßig an. Jeder kann ihn im Hub für das eigene Gerät ausschalten. Ausnahmen (z. B. eine Seite geht nicht)
+    unten bei der Whitelist eintragen – sie gelten auch hier. Die Liste wird täglich aktualisiert.
+  </p>
+  {% if adblock.off %}
+  <div class="small"><b>Ausgeschaltet bei:</b></div>
+  <div class="chips" style="margin-top:.35rem">
+    {% for name, mac in adblock.off %}
+    <span class="chip" title="{{ mac }}">{{ name }}
+      <form method="post" action="/werbeblocker" class="inline">
+        <input type="hidden" name="mac" value="{{ mac }}"><input type="hidden" name="on" value="1">
+        <button class="secondary" style="padding:.1rem .45rem;font-size:.74rem">wieder an</button>
+      </form>
+    </span>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
 <div class="card">
   <h2>Cookie- &amp; Tracking-Schutz <span class="muted small">(Anti-Adblock-sicher)</span></h2>
   
