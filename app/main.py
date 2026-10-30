@@ -195,7 +195,7 @@ async def redirect_middleware(request: Request, call_next):
         if path == "/":
             return RedirectResponse("/hub", status_code=302)
         if (
-            path not in ("/healthz", "/favicon.ico", "/hub", "/hub/statistik", "/hub/werbeblocker", "/mein")
+            path not in ("/healthz", "/favicon.ico", "/hub", "/hub/statistik", "/mein")
             and not path.startswith("/mein/")
             and not path.startswith("/static/")
         ):
@@ -364,9 +364,6 @@ async def hub_page(request: Request):
         if mein_base:
             mein_href = f"{mein_base}/mein"
     name = ((device or {}).get("hostname") or (device or {}).get("fritz_name") or "").strip() or "dieses Gerät"
-    mac = ((device or {}).get("mac") or "").strip().lower()
-    ad_global = await run_in_threadpool(adblock.is_enabled)
-    ad_on = await run_in_threadpool(adblock.device_on, mac) if mac else True
     return templates.TemplateResponse(
         request,
         "seiten/hub.html",
@@ -382,7 +379,6 @@ async def hub_page(request: Request):
             "status_href": f"{dash_base}/" if dash_base else "/",
             "statistik_href": "/hub/statistik",
             "ha_url": ha,
-            "adblock": {"known": bool(warp.MAC_RE.match(mac)), "on": ad_on, "global": ad_global},
         },
     )
 
@@ -394,17 +390,17 @@ def _adblock_apply(request: Request) -> None:
         ad.update_rules()
 
 
-@app.post("/hub/werbeblocker")
-async def hub_werbeblocker(request: Request, on: str = Form("1")):
+@app.post("/mein/werbeblocker")
+async def mein_werbeblocker(request: Request, on: str = Form("1")):
     """Jeder im Heimnetz: Werbeblocker für das eigene Gerät an/aus (erkannt über die Client-IP)."""
     ip = client_ip(request)
     device = await run_in_threadpool(db.device, ip) if ip else None
     try:
         await run_in_threadpool(adblock.set_device, (device or {}).get("mac") or "", on == "1")
     except ValueError:
-        return RedirectResponse("/hub", status_code=303)
+        return RedirectResponse(f"/mein?fehler={quote('Gerät noch nicht erkannt.')}", status_code=303)
     await run_in_threadpool(_adblock_apply, request)
-    return RedirectResponse("/hub", status_code=303)
+    return RedirectResponse("/mein?ok=1", status_code=303)
 
 
 @app.post("/werbeblocker", dependencies=[Depends(require_password)])
@@ -534,6 +530,10 @@ async def mein_geraet(request: Request, ok: int | None = None, fehler: str | Non
             "fehler": fehler,
             "effective": eff,
             "effective_label": policy.label_for(eff, labels, warp_default),
+            "adblock": {
+                "global": await run_in_threadpool(adblock.is_enabled),
+                "on": await run_in_threadpool(adblock.device_on, mac) if mac else True,
+            },
         },
     )
 

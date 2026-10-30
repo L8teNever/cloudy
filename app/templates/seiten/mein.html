@@ -59,6 +59,31 @@
       {% endif %}
     </section>
 
+    <section class="panel ad-panel">
+      <div class="ad-left">
+        <div class="ad-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m4.5 4.5 15 15"/></svg>
+        </div>
+        <div>
+          <div class="ad-title">Werbeblocker</div>
+          <div class="ad-sub">
+            {% if not adblock.global %}vom Admin ausgeschaltet
+            {% elif adblock.on %}an – auch mit WARP/VPN
+            {% else %}aus für dieses Gerät{% endif %}
+          </div>
+        </div>
+      </div>
+      {% if adblock.global %}
+      <form method="post" action="/mein/werbeblocker">
+        <input type="hidden" name="on" value="{{ '0' if adblock.on else '1' }}">
+        <button type="submit" class="switch {{ 'on' if adblock.on }}" role="switch" aria-checked="{{ 'true' if adblock.on else 'false' }}"
+                aria-label="Werbeblocker {{ 'ausschalten' if adblock.on else 'einschalten' }}" title="{{ 'Ausschalten' if adblock.on else 'Einschalten' }}">
+          <span class="switch-knob"></span>
+        </button>
+      </form>
+      {% endif %}
+    </section>
+
     {% if not settings.gateway_enabled %}
     <div class="notice warn">
       Gateway ist aus – VPN/WARP greift erst mit <span class="mono">cloudy gateway an</span>.

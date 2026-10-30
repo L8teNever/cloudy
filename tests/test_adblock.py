@@ -40,17 +40,18 @@ def test_serial_shift():
 
 def test_hub_toggle_and_admin(client):
     db.upsert_devices([("testclient", MAC, "handy")])
-    page = client.get("/hub").text
+    assert "Werbeblocker" not in client.get("/hub").text  # gehört zu „Mein Gerät“
+    page = client.get("/mein").text
     assert "Werbeblocker" in page and 'aria-checked="true"' in page
-    client.post("/hub/werbeblocker", data={"on": "0"})
+    client.post("/mein/werbeblocker", data={"on": "0"})
     assert not adblock.device_on(MAC)
-    assert 'aria-checked="false"' in client.get("/hub").text
+    assert 'aria-checked="false"' in client.get("/mein").text
     assert "handy" in client.get("/schutz").text  # Liste „Ausgeschaltet bei“
     client.post("/werbeblocker", data={"mac": MAC, "on": "1"})
     assert adblock.device_on(MAC)
     client.post("/werbeblocker", data={"on": "0"})
     assert not adblock.is_enabled()
-    assert "vom Admin ausgeschaltet" in client.get("/hub").text
+    assert "vom Admin ausgeschaltet" in client.get("/mein").text
 
 
 def test_whitelist_removes_from_ad_list(client, tmp_path):
