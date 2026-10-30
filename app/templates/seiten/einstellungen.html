@@ -128,7 +128,7 @@
     <label class="small">Domain nur für „Mein Gerät“ (VPN umstellen, nur <code>/mein</code>)
       <input name="name" autocomplete="off" style="width:100%" value="{{ ld.domain }}" placeholder="main.kulbarts.com (leer = aus)">
     </label>
-    <label class="small">Cloudflare-API-Token (nur Zone → DNS → Bearbeiten für diese Domain)
+    <label class="small">Cloudflare-API-Token (Rechte: Zone → Zone → Lesen UND Zone → DNS → Bearbeiten, nur für diese Zone)
       <input name="cf_token" type="password" autocomplete="off" style="width:100%"
              placeholder="{{ 'Neuer Token (leer = behalten)' if ld.has_token else 'Token aus dash.cloudflare.com → Mein Profil → API-Tokens' }}">
     </label>
