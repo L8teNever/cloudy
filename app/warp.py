@@ -18,7 +18,7 @@ import threading
 import time
 from dataclasses import dataclass
 
-from . import db
+from . import db, ipv6
 from .settings import Settings
 from .traffic import FWD_CHAIN, _run, _write_sysctl
 
@@ -29,6 +29,7 @@ TABLE_BASE = 200
 MARK_BASE = 0x100
 RULE_PRIORITY_BASE = 1000
 STATUS_MAX_AGE = 60  # Sekunden; der Container schreibt alle paar Sekunden
+IPV6_MAX_AGE = 120  # Der Container prüft IPv6 etwa alle 30 Sekunden
 MAC_RE = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
 
 
@@ -121,18 +122,31 @@ def read_status(s: Settings, slot: str, now: float | None = None) -> SlotStatus:
     return SlotStatus(False, text or "unbekannt")
 
 
+def read_ipv6_ok(s: Settings, slot: str, now: float | None = None) -> bool:
+    """Kann der Tunnel dieses Containers IPv6? (Der Container prüft das selbst und schreibt "ok" nach <slot>/ipv6.)"""
+    path = os.path.join(slot_dir(s, slot), "ipv6")
+    now = now if now is not None else time.time()
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.readline().strip()
+        age = now - os.path.getmtime(path)
+    except FileNotFoundError:
+        return False
+    return text == "ok" and age <= IPV6_MAX_AGE
+
+
 @dataclass(frozen=True)
 class Plan:
     mangle_rules: tuple[tuple[str, ...], ...]
     routes: tuple[tuple[str, ...], ...]  # pro Slot: Argumente für "ip route replace ... table N"
+    mangle_rules6: tuple[tuple[str, ...], ...] = ()  # wie mangle_rules, für ip6tables (nur mit IPV6_ENABLED)
+    routes6: tuple[tuple[str, ...], ...] = ()  # wie routes, für "ip -6 route replace"
 
 
-def build_plan(
-    s: Settings, assignments: dict[str, str], connected: dict[str, bool], default_slot: str = ""
-) -> Plan:
-    """assignments: MAC -> Slot (oder "direct"). connected: Slot -> Tunnel verbunden? default_slot: für alle anderen."""
-    lan = str(s.lan_network)
-    index_of = {slot: i for i, (slot, _) in enumerate(s.warp_slots, start=1)}
+def _mark_rules(
+    s: Settings, assignments: dict[str, str], default_slot: str, index_of: dict[str, int], local_net: str
+) -> tuple[tuple[str, ...], ...]:
+    """Markierungen nach MAC. local_net: Ziele im eigenen Heimnetz (IPv4 oder IPv6) werden nie getunnelt."""
     rules = []
     for mac in sorted(m for m in assignments if MAC_RE.match(m)):
         slot = assignments[mac]
@@ -142,14 +156,28 @@ def build_plan(
         elif slot in index_of:
             rules.append((
                 "-i", s.lan_interface, "-m", "mac", "--mac-source", mac,
-                "!", "-d", lan, "-j", "MARK", "--set-mark", mark(index_of[slot]),
+                "!", "-d", local_net, "-j", "MARK", "--set-mark", mark(index_of[slot]),
             ))
     if default_slot in index_of:
         # Alle Geräte, die noch keine Markierung haben.
         rules.append((
             "-i", s.lan_interface, "-m", "mark", "--mark", "0x0",
-            "!", "-d", lan, "-j", "MARK", "--set-mark", mark(index_of[default_slot]),
+            "!", "-d", local_net, "-j", "MARK", "--set-mark", mark(index_of[default_slot]),
         ))
+    return tuple(rules)
+
+
+def build_plan(
+    s: Settings,
+    assignments: dict[str, str],
+    connected: dict[str, bool],
+    default_slot: str = "",
+    ipv6_ok: dict[str, bool] | None = None,
+) -> Plan:
+    """assignments: MAC -> Slot (oder "direct"). connected: Slot -> Tunnel verbunden? default_slot: für alle anderen.
+    ipv6_ok: Slot -> Tunnel kann IPv6 (nur mit IPV6_ENABLED)."""
+    index_of = {slot: i for i, (slot, _) in enumerate(s.warp_slots, start=1)}
+    rules = _mark_rules(s, assignments, default_slot, index_of, str(s.lan_network))
     routes = []
     for index, (slot, ip) in enumerate(s.warp_slots, start=1):
         table = str(TABLE_BASE + index)
@@ -159,7 +187,18 @@ def build_plan(
             routes.append(("unreachable", "default", "table", table))
         else:
             routes.append(("default", "via", s.router_ip, "dev", s.lan_interface, "table", table))
-    return Plan(tuple(rules), tuple(routes))
+    if not s.ipv6_enabled:
+        return Plan(rules, tuple(routes))
+    rules6 = _mark_rules(s, assignments, default_slot, index_of, str(ipv6.prefix(s)))
+    routes6 = []
+    for index, (slot, ip) in enumerate(s.warp_slots, start=1):
+        table = str(TABLE_BASE + index)
+        if connected.get(slot) and (ipv6_ok or {}).get(slot):
+            routes6.append(("default", "via", ipv6.slot_address(ip), "table", table))
+        else:
+            # Kein IPv6 im Tunnel (oder Tunnel weg): nie über die Fritzbox, sondern sofort "keine Route".
+            routes6.append(("unreachable", "default", "table", table))
+    return Plan(rules, tuple(routes), rules6, tuple(routes6))
 
 
 def route_device(ip: str) -> str | None:
@@ -206,6 +245,9 @@ class WarpRouter:
         self._stopping = threading.Event()
         self._applied_rules: tuple | None = None
         self._applied_routes: dict[int, tuple] = {}
+        self._applied_rules6: tuple | None = None
+        self._applied_routes6: dict[int, tuple] = {}
+        self._ticks = 0
         self._forwarded: set[str] = set()
 
     def setup(self) -> bool:
@@ -222,9 +264,17 @@ class WarpRouter:
                 pass
             ok &= _run(["ip", "rule", "add", "fwmark", mark(index), "table", table, "priority", prio])
 
-        # IPv6 geht nie über den Pi (die Fritzbox ist IPv6-Router). Reste früherer Versionen entfernen.
+        # Alte Regeln aus einem früheren Lauf entfernen; mit IPV6_ENABLED werden sie gleich neu aufgebaut.
         _cleanup_ipv6(len(self.s.warp_slots))
-
+        if self.s.ipv6_enabled:
+            _run(["ip6tables", "-t", "mangle", "-N", MANGLE_CHAIN])
+            _run(["ip6tables", "-t", "mangle", "-F", MANGLE_CHAIN])
+            if not _run(["ip6tables", "-t", "mangle", "-C", "PREROUTING", "-j", MANGLE_CHAIN]):
+                _run(["ip6tables", "-t", "mangle", "-I", "PREROUTING", "1", "-j", MANGLE_CHAIN])
+            for index, _ in enumerate(self.s.warp_slots, start=1):
+                prio, table = str(RULE_PRIORITY_BASE + index), str(TABLE_BASE + index)
+                _run(["ip", "-6", "rule", "add", "fwmark", mark(index), "table", table, "priority", prio])
+            _write_sysctl("/proc/sys/net/ipv6/conf/all/forwarding", "1")
         # Antworten kommen über die Docker-Bridge zurück, obwohl der Absender "im Internet" liegt.
         _write_sysctl("/proc/sys/net/ipv4/conf/all/rp_filter", "2")
         return ok
@@ -243,6 +293,9 @@ class WarpRouter:
             if _run(["iptables", "-A", FWD_CHAIN, "-i", lan, "-o", dev, "-j", "ACCEPT"]) and _run(
                 ["iptables", "-A", FWD_CHAIN, "-i", dev, "-o", lan, "-j", "ACCEPT"]
             ):
+                if self.s.ipv6_enabled:
+                    _run(["ip6tables", "-A", FWD_CHAIN, "-i", lan, "-o", dev, "-j", "ACCEPT"])
+                    _run(["ip6tables", "-A", FWD_CHAIN, "-i", dev, "-o", lan, "-j", "ACCEPT"])
                 self._forwarded.add(dev)
 
     def apply(self, plan: Plan) -> None:
@@ -256,10 +309,28 @@ class WarpRouter:
             if self._applied_routes.get(index) != route and _run(["ip", "route", "replace", *route]):
                 print(f"cloudy: WARP {self.s.warp_slots[index][0]}: {' '.join(route)}", flush=True)
                 self._applied_routes[index] = route
+        if not self.s.ipv6_enabled:
+            return
+        if plan.mangle_rules6 != self._applied_rules6:
+            _run(["ip6tables", "-t", "mangle", "-F", MANGLE_CHAIN])
+            for rule in plan.mangle_rules6:
+                _run(["ip6tables", "-t", "mangle", "-A", MANGLE_CHAIN, *rule])
+            self._applied_rules6 = plan.mangle_rules6
+        for index, route in enumerate(plan.routes6):
+            if self._applied_routes6.get(index) != route and _run(["ip", "-6", "route", "replace", *route]):
+                print(f"cloudy: WARP {self.s.warp_slots[index][0]} IPv6: {' '.join(route)}", flush=True)
+                self._applied_routes6[index] = route
 
     def tick(self) -> None:
         connected = {slot: read_status(self.s, slot).connected for slot, _ in self.s.warp_slots}
-        self.apply(build_plan(self.s, db.device_warp(), connected, db.get_setting(DEFAULT_KEY)))
+        ipv6_ok = None
+        if self.s.ipv6_enabled:
+            ipv6_ok = {slot: read_ipv6_ok(self.s, slot) for slot, _ in self.s.warp_slots}
+            # Adresse des Pi im Heimnetz gelegentlich erneuern (z. B. nach einem Neustart des Netzwerks).
+            self._ticks += 1
+            if self._ticks % 12 == 1:
+                ipv6.ensure_lan(self.s)
+        self.apply(build_plan(self.s, db.device_warp(), connected, db.get_setting(DEFAULT_KEY), ipv6_ok))
 
     def start(self) -> None:
         try:

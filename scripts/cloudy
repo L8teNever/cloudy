@@ -32,8 +32,10 @@ cloudy dhcp an     Pi verteilt die IP-Adressen (vorher DHCP in der Fritzbox AUS!
 cloudy dhcp aus    Pi verteilt keine IP-Adressen mehr (danach DHCP in der Fritzbox wieder AN)
 cloudy gateway an  Gesamter Datenverkehr läuft über den Pi und wird gemessen (braucht "dhcp an")
 cloudy gateway aus Datenverkehr geht wieder direkt zur Fritzbox (DNS bleibt beim Pi)
+cloudy ipv6 an     Pi verteilt IPv6 und schickt es durch WARP/VPN (vorher in der Fritzbox "Router Advertisement" AUS!)
+cloudy ipv6 aus    Wieder nur IPv4 (der Standard)
 cloudy status      Zeigt, ob alles läuft
-cloudy logs        Live-Logs anzeigen (Strg+C zum Beenden), nur WARP: cloudy logs warp1 / vpn1
+cloudy logs        Live-Logs anzeigen (Strg+C zum Beenden), einzeln: cloudy logs warp1 / vpn1 / tunnel
 cloudy restart     Neu starten
 EOF
 }
@@ -86,11 +88,12 @@ case "${1:-}" in
           exit 1
         fi
         echo "Danach läuft der gesamte Internetverkehr über den Pi (Pi 3B+: max. ca. 150 Mbit/s für alle zusammen)."
+        echo "DNS-Force: Auch fest eingestellte DNS-Server (z. B. 8.8.8.8) werden auf den Pi umgeleitet – nichts an den Geräten ändern."
         echo "Geräte mit Portfreigabe vorher in ~/cloudy/data/dhcp-hosts.conf mit 'set:direkt' eintragen."
         ask "Gateway einschalten?" || { echo "Abgebrochen."; exit 1; }
         set_env GATEWAY_ENABLED 1
         $DOCKER compose up -d
-        echo "Gateway ist an. Geräte kurz WLAN aus/an schalten, damit sie es sofort übernehmen."
+        echo "Gateway ist an (inkl. DNS-Force). Geräte kurz WLAN aus/an schalten, damit sie es sofort übernehmen."
         ;;
       aus|off)
         set_env GATEWAY_ENABLED 0
@@ -102,16 +105,33 @@ case "${1:-}" in
     esac
     ;;
   ipv6)
-    set_env IPV6_ENABLED 0
-    echo "IPv6 läuft nie über den Pi: Im Heimnetz ist die Fritzbox der IPv6-Router."
-    echo "Damit alles durchs VPN geht: Fritzbox → Heimnetz → Netzwerk → Netzwerkeinstellungen → IPv6"
-    echo "→ 'Router Advertisement im LAN aktiv' ausschalten. Das Dashboard warnt, solange das noch an ist."
+    case "${2:-}" in
+      an|on)
+        echo "Voraussetzung: Fritzbox → Heimnetz → Netzwerk → Netzwerkeinstellungen → IPv6"
+        echo "→ 'Router Advertisement im LAN aktiv' ausschalten, sonst gibt es zwei IPv6-Router im Heimnetz."
+        set_env IPV6_ENABLED 1
+        $DOCKER compose up -d
+        echo "IPv6 ist an. Geräte kurz WLAN aus/an. Geräte ohne WARP/VPN bleiben bei IPv4 (kein IPv6-Internet ohne Tunnel)."
+        echo "Prüfen: cloudy status (zeigt, welche Tunnel IPv6 können) und https://speed.cloudflare.com ('Connected via')."
+        ;;
+      aus|off)
+        set_env IPV6_ENABLED 0
+        $DOCKER compose up -d
+        echo "IPv6 ist aus: Alles läuft über IPv4 durch den Pi (Fritzbox: 'Router Advertisement' bleibt am besten aus)."
+        ;;
+      *) usage; exit 1 ;;
+    esac
     ;;
   status)
     $DOCKER compose ps
     grep -E "^(PI_IP|DHCP_ENABLED|GATEWAY_ENABLED|IPV6_ENABLED|UPSTREAM_DNS|WARP_KILLSWITCH)=" .env
     for f in data/warp/*/status; do
+      case "$f" in */tunnel/*) continue ;; esac
       [ -f "$f" ] && echo "WARP $(basename "$(dirname "$f")"): $(cat "$f")"
+    done
+    [ -f data/warp/tunnel/status ] && echo "Fernzugriff (Tunnel): $(cat data/warp/tunnel/status)"
+    for f in data/warp/*/ipv6; do
+      [ -f "$f" ] && echo "IPv6 im Tunnel $(basename "$(dirname "$f")"): $(cat "$f")"
     done
     ;;
   logs) $DOCKER compose logs -f --tail 100 ${2:+"$2"} ;;

@@ -129,6 +129,8 @@ def init() -> None:
             );
             """
         )
+        # Alte DB: gleiches Gerät unter mehreren IPs (MAC doppelt) → zusammenführen.
+        _reconcile_duplicate_macs(conn)
         conn.commit()
 
 
@@ -241,23 +243,150 @@ def traffic_for(ip: str, limit: int = 200) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _merge_ip_into(conn: sqlite3.Connection, old_ip: str, new_ip: str) -> None:
+    """Verschiebt Stats/Traffic von old_ip nach new_ip (gleiches Gerät, neue Adresse)."""
+    if old_ip == new_ip:
+        return
+
+    conn.execute(
+        """
+        INSERT INTO domain_stats (ip, domain, hits, first_seen, last_seen)
+        SELECT ?, domain, hits, first_seen, last_seen FROM domain_stats WHERE ip = ?
+        ON CONFLICT (ip, domain) DO UPDATE SET
+            hits = domain_stats.hits + excluded.hits,
+            first_seen = MIN(domain_stats.first_seen, excluded.first_seen),
+            last_seen = MAX(domain_stats.last_seen, excluded.last_seen)
+        """,
+        (new_ip, old_ip),
+    )
+    conn.execute("DELETE FROM domain_stats WHERE ip = ?", (old_ip,))
+
+    conn.execute(
+        """
+        INSERT INTO traffic (ip, target, bytes_up, bytes_down, conns, first_seen, last_seen)
+        SELECT ?, target, bytes_up, bytes_down, conns, first_seen, last_seen FROM traffic WHERE ip = ?
+        ON CONFLICT (ip, target) DO UPDATE SET
+            bytes_up = traffic.bytes_up + excluded.bytes_up,
+            bytes_down = traffic.bytes_down + excluded.bytes_down,
+            conns = traffic.conns + excluded.conns,
+            first_seen = MIN(traffic.first_seen, excluded.first_seen),
+            last_seen = MAX(traffic.last_seen, excluded.last_seen)
+        """,
+        (new_ip, old_ip),
+    )
+    conn.execute("DELETE FROM traffic WHERE ip = ?", (old_ip,))
+
+    conn.execute("UPDATE queries SET ip = ? WHERE ip = ?", (new_ip, old_ip))
+
+    conn.execute(
+        """
+        INSERT INTO dns_hourly (hour, ip, hits)
+        SELECT hour, ?, hits FROM dns_hourly WHERE ip = ?
+        ON CONFLICT (hour, ip) DO UPDATE SET hits = dns_hourly.hits + excluded.hits
+        """,
+        (new_ip, old_ip),
+    )
+    conn.execute("DELETE FROM dns_hourly WHERE ip = ?", (old_ip,))
+
+    conn.execute(
+        """
+        INSERT INTO dns_daily (day, ip, domain, hits)
+        SELECT day, ?, domain, hits FROM dns_daily WHERE ip = ?
+        ON CONFLICT (day, ip, domain) DO UPDATE SET hits = dns_daily.hits + excluded.hits
+        """,
+        (new_ip, old_ip),
+    )
+    conn.execute("DELETE FROM dns_daily WHERE ip = ?", (old_ip,))
+
+    conn.execute(
+        """
+        INSERT INTO traffic_hourly (hour, ip, bytes_up, bytes_down)
+        SELECT hour, ?, bytes_up, bytes_down FROM traffic_hourly WHERE ip = ?
+        ON CONFLICT (hour, ip) DO UPDATE SET
+            bytes_up = traffic_hourly.bytes_up + excluded.bytes_up,
+            bytes_down = traffic_hourly.bytes_down + excluded.bytes_down
+        """,
+        (new_ip, old_ip),
+    )
+    conn.execute("DELETE FROM traffic_hourly WHERE ip = ?", (old_ip,))
+
+    conn.execute(
+        """
+        INSERT INTO traffic_daily (day, ip, target, bytes_up, bytes_down, conns)
+        SELECT day, ?, target, bytes_up, bytes_down, conns FROM traffic_daily WHERE ip = ?
+        ON CONFLICT (day, ip, target) DO UPDATE SET
+            bytes_up = traffic_daily.bytes_up + excluded.bytes_up,
+            bytes_down = traffic_daily.bytes_down + excluded.bytes_down,
+            conns = traffic_daily.conns + excluded.conns
+        """,
+        (new_ip, old_ip),
+    )
+    conn.execute("DELETE FROM traffic_daily WHERE ip = ?", (old_ip,))
+
+    conn.execute("DELETE FROM devices WHERE ip = ?", (old_ip,))
+
+
+def _reconcile_duplicate_macs(conn: sqlite3.Connection) -> None:
+    """Pro MAC nur eine aktuelle IP behalten (neueste Lease); ältere IPs zusammenführen."""
+    dupes = conn.execute(
+        """
+        SELECT mac FROM devices
+        WHERE mac IS NOT NULL AND mac != ''
+        GROUP BY mac HAVING COUNT(*) > 1
+        """
+    ).fetchall()
+    for row in dupes:
+        ips = conn.execute(
+            "SELECT ip FROM devices WHERE mac = ? ORDER BY updated DESC, ip ASC",
+            (row["mac"],),
+        ).fetchall()
+        keep = ips[0]["ip"]
+        for other in ips[1:]:
+            _merge_ip_into(conn, other["ip"], keep)
+
+
 def upsert_devices(devices: list[tuple[str, str, str | None]]) -> None:
-    """devices: (ip, mac, hostname) aus der DHCP-Lease-Datei"""
+    """devices: (ip, mac, hostname) aus der DHCP-Lease-Datei.
+
+    Identität ist die MAC: Bekommt ein Gerät eine neue IP, werden alte Einträge und Stats
+    auf die neue Adresse zusammengeführt – sonst erscheinen Handy/Laptop mehrfach.
+    """
     if not devices:
         return
     now = int(time.time())
     with closing(_connect()) as conn:
-        conn.executemany(
-            """
-            INSERT INTO devices (ip, mac, hostname, updated) VALUES (?, ?, ?, ?)
-            ON CONFLICT (ip) DO UPDATE SET
-                mac = excluded.mac,
-                hostname = COALESCE(excluded.hostname, devices.hostname),
-                updated = excluded.updated
-            """,
-            [(ip, mac, hostname, now) for ip, mac, hostname in devices],
-        )
+        for ip, mac, hostname in devices:
+            mac = (mac or "").strip().lower()
+            if mac:
+                old_ips = [
+                    r["ip"]
+                    for r in conn.execute(
+                        "SELECT ip FROM devices WHERE mac = ? AND ip != ?", (mac, ip)
+                    ).fetchall()
+                ]
+                for old_ip in old_ips:
+                    _merge_ip_into(conn, old_ip, ip)
+            conn.execute(
+                """
+                INSERT INTO devices (ip, mac, hostname, updated) VALUES (?, ?, ?, ?)
+                ON CONFLICT (ip) DO UPDATE SET
+                    mac = excluded.mac,
+                    hostname = COALESCE(excluded.hostname, devices.hostname),
+                    updated = excluded.updated
+                """,
+                (ip, mac or None, hostname, now),
+            )
+        _reconcile_duplicate_macs(conn)
         conn.commit()
+
+
+def ip_for_mac(mac: str) -> str | None:
+    """Aktuelle IPv4-Adresse (Lease) eines Geräts, anhand der MAC."""
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            "SELECT ip FROM devices WHERE mac = ? ORDER BY updated DESC LIMIT 1", ((mac or "").strip().lower(),)
+        ).fetchone()
+    return row["ip"] if row else None
 
 
 def device_warp() -> dict[str, str]:
@@ -413,7 +542,8 @@ def devices() -> list[dict]:
             SELECT ips.ip AS ip, d.mac AS mac, d.hostname AS hostname,
                    COALESCE(dns.hits, 0) AS hits, COALESCE(dns.domains, 0) AS domains,
                    COALESCE(tr.up, 0) AS bytes_up, COALESCE(tr.down, 0) AS bytes_down,
-                   MAX(COALESCE(dns.ls, 0), COALESCE(tr.ls, 0)) AS last_seen
+                   MAX(COALESCE(dns.ls, 0), COALESCE(tr.ls, 0)) AS last_seen,
+                   COALESCE(d.updated, 0) AS updated
             FROM ips
             LEFT JOIN dns ON dns.ip = ips.ip
             LEFT JOIN tr ON tr.ip = ips.ip
@@ -422,7 +552,37 @@ def devices() -> list[dict]:
             """
         ).fetchall()
     sites = current_sites()
-    return [{**dict(r), "current_site": sites.get(r["ip"])} for r in rows]
+    # Pro MAC nur eine Zeile (aktuelle Lease); Stats ohne MAC bleiben eigene Zeilen.
+    by_mac: dict[str, dict] = {}
+    plain: list[dict] = []
+    for r in rows:
+        d = {**dict(r), "current_site": sites.get(r["ip"])}
+        mac = (d.get("mac") or "").strip().lower()
+        if not mac:
+            plain.append(d)
+            continue
+        prev = by_mac.get(mac)
+        if prev is None:
+            by_mac[mac] = d
+            continue
+        # Neuere Lease / frischere Aktivität behalten, Zahlen addieren.
+        keep, drop = (d, prev) if (d["updated"], d["last_seen"]) >= (prev["updated"], prev["last_seen"]) else (prev, d)
+        site = keep.get("current_site")
+        other = drop.get("current_site")
+        if other and (not site or other.get("ts", 0) >= site.get("ts", 0)):
+            site = other
+        by_mac[mac] = {
+            **keep,
+            "hits": keep["hits"] + drop["hits"],
+            "domains": keep["domains"] + drop["domains"],
+            "bytes_up": keep["bytes_up"] + drop["bytes_up"],
+            "bytes_down": keep["bytes_down"] + drop["bytes_down"],
+            "last_seen": max(keep["last_seen"], drop["last_seen"]),
+            "current_site": site,
+        }
+    out = plain + list(by_mac.values())
+    out.sort(key=lambda x: x["last_seen"], reverse=True)
+    return out
 
 
 def device(ip: str) -> dict | None:

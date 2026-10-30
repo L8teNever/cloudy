@@ -26,6 +26,9 @@ class Settings:
     https_port: int
     warp_slots: list[tuple[str, str]]
     warp_killswitch: bool
+    ipv6_enabled: bool = False
+    ipv6_prefix: str = ""
+    tunnel_ip: str = "172.29.88.10"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -42,7 +45,7 @@ class Settings:
             dhcp_enabled=_flag("DHCP_ENABLED", "0"),
             dhcp_start=os.environ.get("DHCP_START", "192.168.178.20"),
             dhcp_end=os.environ.get("DHCP_END", "192.168.178.200"),
-            dhcp_lease=os.environ.get("DHCP_LEASE", "1h"),
+            dhcp_lease=os.environ.get("DHCP_LEASE", "30d"),
             gateway_enabled=_flag("GATEWAY_ENABLED", "0"),
             traffic_poll_seconds=float(os.environ.get("TRAFFIC_POLL_SECONDS", "10")),
             local_name=os.environ.get("LOCAL_NAME", "cloudy.lan").strip().lower().rstrip("."),
@@ -57,6 +60,10 @@ class Settings:
                 if name.strip() and ip.strip()
             ],
             warp_killswitch=_flag("WARP_KILLSWITCH", "0"),
+            ipv6_enabled=_flag("IPV6_ENABLED", "0"),
+            ipv6_prefix=os.environ.get("IPV6_PREFIX", "").strip(),
+            # Absender-IP des Tunnel-Containers (Netz cloudy-tunnel in docker-compose.yml).
+            tunnel_ip=os.environ.get("TUNNEL_IP", "172.29.88.10").strip(),
         )
 
     @property

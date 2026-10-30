@@ -21,6 +21,26 @@ ip6tables -t nat -C POSTROUTING -o CloudflareWARP -j MASQUERADE 2>/dev/null \
 ip6tables -t mangle -C FORWARD -o CloudflareWARP -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null \
   || ip6tables -t mangle -A FORWARD -o CloudflareWARP -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
 
+# IPv6 der Geräte nur durchlassen, wenn der Tunnel es nachweislich kann (v6_probe). Bis dahin: sofort "keine Route",
+# damit die Geräte ohne Wartezeit auf IPv4 ausweichen (statt in ein Loch zu senden).
+v6state() { printf '%s\n' "$1" > "$DIR/ipv6.tmp" && mv "$DIR/ipv6.tmp" "$DIR/ipv6"; }
+v6_block() {
+  ip6tables -C FORWARD -i eth0 -j REJECT --reject-with icmp6-no-route 2>/dev/null \
+    || ip6tables -I FORWARD 1 -i eth0 -j REJECT --reject-with icmp6-no-route 2>/dev/null || true
+}
+v6_probe() {
+  # Klartext-HTTP an eine IPv6-Adresse von Cloudflare: jede Antwort (auch eine Weiterleitung) heißt, IPv6 geht durch.
+  if curl -6 -s -m 8 -o /dev/null "http://[2606:4700:4700::1111]/" 2>/dev/null; then
+    while ip6tables -D FORWARD -i eth0 -j REJECT --reject-with icmp6-no-route 2>/dev/null; do :; done
+    v6state ok
+  else
+    v6_block
+    v6state nein
+  fi
+}
+v6_block
+v6state nein
+
 start_svc() {
   if [ -n "$svc_pid" ] && kill -0 "$svc_pid" 2>/dev/null; then return 0; fi
   rm -f /run/dbus/pid
@@ -41,6 +61,7 @@ stop_svc() {
 
 trap 'stop_svc; exit 0' TERM INT
 
+n=0
 while true; do
   token=""
   [ -s "$DIR/token" ] && token="$(tr -d ' \r\n' < "$DIR/token")"
@@ -92,13 +113,19 @@ while true; do
   s="$(printf '%s\n' "$full" | sed -n 's/^Status update: //p' | head -n1)"
   reason="$(printf '%s\n' "$full" | sed -n 's/^Reason: //p' | head -n1)"
   case "$s" in
-    Connected*) status "Connected" ;;
+    Connected*)
+      status "Connected"
+      # IPv6-Prüfung beim ersten Mal und danach etwa alle 30 Sekunden.
+      n=$((n + 1))
+      [ $((n % 6)) -eq 1 ] && v6_probe
+      ;;
     Disconnected*)
       status "Getrennt${reason:+ ($reason)} – verbinde neu"
+      v6state nein; n=0
       warp connect >/dev/null 2>&1
       ;;
-    "") status "Unbekannt: $(warp status 2>&1 | tr '\n' ' ' | cut -c1-120)" ;;
-    *) status "$s" ;;
+    "") status "Unbekannt: $(warp status 2>&1 | tr '\n' ' ' | cut -c1-120)"; v6state nein; n=0 ;;
+    *) status "$s"; v6state nein; n=0 ;;
   esac
   sleep 5 & wait $!
 done

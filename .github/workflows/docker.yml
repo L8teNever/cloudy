@@ -30,6 +30,8 @@ jobs:
         run: |
           docker run --rm cloudy-test sh -c 'python -m app.dnsmasq > /tmp/d.conf && dnsmasq --test --conf-file=/tmp/d.conf'
           docker run --rm -e DHCP_ENABLED=1 cloudy-test sh -c 'python -m app.dnsmasq > /tmp/d.conf && dnsmasq --test --conf-file=/tmp/d.conf'
+          # IPv6 über den Pi: Router Advertisement mit eigenem ULA-Netz muss von dnsmasq akzeptiert werden
+          docker run --rm -e DHCP_ENABLED=1 -e GATEWAY_ENABLED=1 -e IPV6_ENABLED=1 -e IPV6_PREFIX=fd12:3456:789a:1::/64 cloudy-test sh -c 'python -m app.dnsmasq > /tmp/d.conf && grep -q enable-ra /tmp/d.conf && ! grep -q filter-AAAA /tmp/d.conf && dnsmasq --test --conf-file=/tmp/d.conf'
 
       - name: End-to-End – DNS-Anfrage erscheint im Dashboard
         run: |
@@ -214,6 +216,25 @@ jobs:
           done
           exit 1
 
+      - name: Tunnel-Image – startet ohne Token nichts und meldet einen falschen Token als Fehler
+        run: |
+          bash -n tunnel/entrypoint.sh
+          docker build -t cloudy-tunnel-test tunnel
+          docker run --rm cloudy-tunnel-test cloudflared --version
+          mkdir -p /tmp/tunnel
+          docker run -d --name tunnel-echt -v /tmp/tunnel:/cloudy cloudy-tunnel-test
+          sleep 8
+          test "$(sudo cat /tmp/tunnel/status)" = "Nicht eingerichtet"
+          echo ungueltiger-token | sudo tee /tmp/tunnel/token >/dev/null
+          for i in $(seq 1 30); do
+            s="$(sudo cat /tmp/tunnel/status 2>/dev/null || true)"
+            echo "Status: $s"
+            case "$s" in "Fehler:"*) echo "Tunnel-Image ok"; exit 0 ;; esac
+            sleep 2
+          done
+          docker logs tunnel-echt
+          exit 1
+
       - name: VPN-Image – WireGuard-Tunnel baut sich auf und leitet Geräte durch
         run: |
           docker build -t cloudy-vpn-test vpn
@@ -254,6 +275,7 @@ jobs:
           docker logs cloudy-dhcp || true
           docker logs cloudy-wr || true
           docker logs warp-echt || true
+          docker logs tunnel-echt || true
           docker logs wg-server || true
           docker logs vpn-client || true
 
@@ -329,3 +351,21 @@ jobs:
           labels: ${{ steps.meta-warp.outputs.labels }}
           cache-from: type=gha,scope=warp
           cache-to: type=gha,scope=warp,mode=max
+
+      - id: meta-tunnel
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}
+          tags: |
+            type=raw,value=tunnel
+            type=sha,prefix=tunnel-
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: tunnel
+          platforms: linux/arm64,linux/amd64
+          push: true
+          tags: ${{ steps.meta-tunnel.outputs.tags }}
+          labels: ${{ steps.meta-tunnel.outputs.labels }}
+          cache-from: type=gha,scope=tunnel
+          cache-to: type=gha,scope=tunnel,mode=max

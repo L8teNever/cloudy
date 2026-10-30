@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import blocklist, charts, db, stats, warp
+from . import access, blocklist, charts, db, stats, warp
 from .settings import Settings
 
 BASE_DIR = Path(__file__).parent
@@ -121,7 +121,11 @@ def ctx_status(request: Request) -> dict:
         "settings": s,
         "blocklist_enabled": blocklist.is_enabled(),
         "blocklist_paused_until": blocklist.paused_until(),
-        "ipv6_bypass": s.gateway_enabled and vpn_in_use and warp.ipv6_bypass(s.lan_interface),
+        # Mit IPV6_ENABLED stört eine Fritzbox mit Router Advertisement immer (zwei IPv6-Router im Heimnetz).
+        "ipv6_bypass": s.gateway_enabled and (vpn_in_use or s.ipv6_enabled) and warp.ipv6_bypass(s.lan_interface),
+        "ipv6_tunnels": (
+            [slot for slot, _ in s.warp_slots if warp.read_ipv6_ok(s, slot)] if s.gateway_enabled and s.ipv6_enabled else []
+        ),
     }
 
 
@@ -289,9 +293,27 @@ async def vpn(request: Request):
     return await page(request, "seiten/vpn.html", "VPN", "/vpn", ["vpn"])
 
 
+def tunnel_ctx(request: Request) -> dict:
+    """Fernzugriff (Cloudflare Tunnel) für die Einstellungsseite."""
+    s: Settings = request.app.state.settings
+    team, aud = access.config()
+    gateway = s.tunnel_ip.rsplit(".", 1)[0] + ".1"  # Pi aus Sicht des Tunnel-Containers
+    return {
+        "has_token": warp.has_token(s, access.SLOT),
+        "status": warp.read_status(s, access.SLOT),
+        "team": team,
+        "team_default": team or access.DEFAULT_TEAM,
+        "aud": aud,
+        "target": f"http://{gateway}:{os.environ.get('DASHBOARD_PORT', '8080')}",
+        "secured": bool(team and aud),
+        "email": getattr(request.state, "access_email", None),
+    }
+
+
 @router.get("/einstellungen", response_class=HTMLResponse, dependencies=[Depends(require_password)])
 async def einstellungen(request: Request):
-    return await page(request, "seiten/einstellungen.html", "Einstellungen", "/einstellungen", [])
+    tunnel = await run_in_threadpool(tunnel_ctx, request)
+    return await page(request, "seiten/einstellungen.html", "Einstellungen", "/einstellungen", [], tunnel=tunnel)
 
 
 @router.get("/teil/{name}", response_class=HTMLResponse, dependencies=[Depends(require_password)])

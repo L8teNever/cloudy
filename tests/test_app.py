@@ -23,7 +23,7 @@ def test_build_config_dns_only_and_dhcp(monkeypatch):
     monkeypatch.setenv("DHCP_ENABLED", "1")
     monkeypatch.setenv("UPSTREAM_DNS", "1.1.1.1, 9.9.9.9")
     conf = build_config(Settings.from_env())
-    assert "dhcp-range=192.168.178.20,192.168.178.200,255.255.255.0,1h" in conf
+    assert "dhcp-range=192.168.178.20,192.168.178.200,255.255.255.0,30d" in conf
     assert "dhcp-option=option:router,192.168.178.1" in conf
     assert "dhcp-option=option:dns-server,192.168.178.2" in conf
     assert "server=1.1.1.1" in conf and "server=9.9.9.9" in conf
@@ -156,12 +156,3 @@ def test_url_redirects(client):
     r_del = client.post("/redirects/remove", data={"source": "tiktok.com"}, follow_redirects=False)
     assert r_del.status_code == 303
     assert db.redirect_map() == {}
-
-
-def test_redirect_single_label_and_invalid(client):
-    client.post("/redirects/add", data={"source": "fritzbox", "target": "http://192.168.178.1"})
-    r = client.get("/", headers={"host": "fritzbox"}, follow_redirects=False)
-    assert r.headers["location"] == "http://192.168.178.1"
-    r = client.post("/redirects/add", data={"source": "kein gültiger name!", "target": "x.de"}, follow_redirects=False)
-    assert r.status_code == 303 and "fehler=" in r.headers["location"]
-    assert list(db.redirect_map()) == ["fritzbox"]

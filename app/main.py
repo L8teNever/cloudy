@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import blocklist, certs, db, views, warp
+from . import access, blocklist, certs, db, views, warp
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -156,11 +156,50 @@ async def redirect_middleware(request: Request, call_next):
             if short:
                 own_hosts.add(short)
 
-    if raw_host and raw_host not in own_hosts:
+    if raw_host and raw_host not in own_hosts and not from_tunnel(request):
         rule = find_rule(raw_host, await run_in_threadpool(db.redirect_map))
         if rule:
             return RedirectResponse(rule[1], status_code=302)
 
+    return await call_next(request)
+
+
+def from_tunnel(request: Request) -> bool:
+    """Kommt die Anfrage über den Cloudflare Tunnel (Fernzugriff) statt aus dem Heimnetz?"""
+    settings = getattr(request.app.state, "settings", None)
+    host = request.client.host if request.client else ""
+    return bool(settings and settings.tunnel_ip and host == settings.tunnel_ip)
+
+
+def _tunnel_denied(title: str, text: str) -> HTMLResponse:
+    body = (
+        '<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
+        f"<title>cloudy – {title}</title><body style=\"font-family:system-ui;max-width:32rem;margin:4rem auto;padding:0 1rem\">"
+        f"<h1>🔒 {title}</h1><p>{text}</p></body></html>"
+    )
+    return HTMLResponse(body, status_code=403)
+
+
+# Wird nach redirect_middleware registriert und läuft damit zuerst.
+@app.middleware("http")
+async def tunnel_guard(request: Request, call_next):
+    """Fernzugriff: Nur mit gültiger Cloudflare-Access-Anmeldung, sonst nichts – auch wenn bei Cloudflare
+    die Access-App fehlt oder falsch eingestellt ist."""
+    if not from_tunnel(request):
+        return await call_next(request)
+    path = request.url.path
+    if path == "/mein" or path.startswith("/mein/"):
+        return _tunnel_denied("Nur im Heimnetz", "„Mein Gerät“ erkennt dein Gerät im WLAN und geht deshalb nur zu Hause.")
+    team, aud = await run_in_threadpool(access.config)
+    token = request.headers.get("cf-access-jwt-assertion") or request.cookies.get("CF_Authorization") or ""
+    email = await run_in_threadpool(access.verify, token, team, aud) if team and aud and token else None
+    if not email:
+        return _tunnel_denied(
+            "Nur mit Cloudflare-Anmeldung",
+            "Der Fernzugriff auf cloudy braucht eine Anmeldung über Cloudflare Zero Trust. "
+            "Ist sie eingerichtet (Einstellungen → Fernzugriff: Team-Domain und AUD), Seite neu laden.",
+        )
+    request.state.access_email = email
     return await call_next(request)
 
 
@@ -253,7 +292,61 @@ def online_ips(request: Request) -> frozenset[str]:
     return presence.online if presence else frozenset()
 
 
+def client_ip(request: Request) -> str:
+    """IP des aufrufenden Geräts im Heimnetz (ohne Proxy – cloudy läuft direkt auf dem Pi)."""
+    host = (request.client.host if request.client else "") or ""
+    return host.strip()
+
+
 app.include_router(views.router)
+
+
+@app.get("/mein", response_class=HTMLResponse)
+async def mein_geraet(request: Request, ok: int | None = None, fehler: str | None = None):
+    """Öffentliche Self-Service-Seite: nur das eigene Gerät, erkannt über die Client-IP."""
+    ip = client_ip(request)
+    device = await run_in_threadpool(db.device, ip) if ip else None
+    settings = request.app.state.settings
+    profiles = await run_in_threadpool(warp_profiles, settings)
+    warp_by_mac = await run_in_threadpool(db.device_warp)
+    warp_default = await run_in_threadpool(db.get_setting, warp.DEFAULT_KEY)
+    labels = {w["slot"]: w["label"] for w in profiles}
+    online = online_ips(request)
+    return templates.TemplateResponse(
+        request,
+        "seiten/mein.html",
+        {
+            "title": "Mein Gerät",
+            "ip": ip,
+            "device": device,
+            "online": online,
+            "warp": profiles,
+            "warp_names": labels,
+            "warp_by_mac": warp_by_mac,
+            "warp_default": warp_default,
+            "settings": settings,
+            "ok": bool(ok),
+            "fehler": fehler,
+        },
+    )
+
+
+@app.post("/mein/warp")
+async def mein_set_warp(request: Request, slot: str = Form("")):
+    """VPN/WARP nur für das Gerät umstellen, das gerade die Seite aufruft (MAC aus Client-IP)."""
+    ip = client_ip(request)
+    device = await run_in_threadpool(db.device, ip) if ip else None
+    mac = (device or {}).get("mac") or ""
+    mac = mac.strip().lower()
+    if not warp.MAC_RE.match(mac):
+        return RedirectResponse(
+            f"/mein?fehler={quote('Gerät noch nicht erkannt – bitte kurz warten oder WLAN neu verbinden.')}",
+            status_code=303,
+        )
+    if slot and slot != warp.DIRECT:
+        _check_slot(request, slot)
+    await run_in_threadpool(db.set_device_warp, mac, slot or None)
+    return RedirectResponse("/mein?ok=1", status_code=303)
 
 
 @app.get("/api/devices", dependencies=[Depends(require_password)])
@@ -323,6 +416,34 @@ async def warp_logout(request: Request, slot: str):
     settings = _check_slot(request, slot)
     await run_in_threadpool(warp.remove_token, settings, slot)
     return RedirectResponse("/#warp", status_code=303)
+
+
+@app.post("/tunnel/login", dependencies=[Depends(require_password)])
+async def tunnel_login(request: Request, token: str = Form(""), team: str = Form(""), aud: str = Form("")):
+    """Fernzugriff einrichten: Tunnel-Token (leer = behalten) und Access-Daten (Team-Domain, AUD)."""
+    settings = request.app.state.settings
+    token = token.strip()
+    try:
+        team_n = access.normalize_team(team) if team.strip() else ""
+        aud_n = access.normalize_aud(aud) if aud.strip() else ""
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if token and (len(token) > 8192 or any(ch.isspace() for ch in token)):
+        raise HTTPException(status_code=400, detail="Ungültiger Token")
+    if team_n:
+        await run_in_threadpool(db.set_setting, access.TEAM_KEY, team_n)
+    if aud_n:
+        await run_in_threadpool(db.set_setting, access.AUD_KEY, aud_n)
+    if token:
+        await run_in_threadpool(warp.save_token, settings, access.SLOT, token)
+    return RedirectResponse("/einstellungen#fernzugriff", status_code=303)
+
+
+@app.post("/tunnel/logout", dependencies=[Depends(require_password)])
+async def tunnel_logout(request: Request):
+    """Tunnel aus: Token löschen (der Container beendet cloudflared). Team/AUD bleiben gespeichert."""
+    await run_in_threadpool(warp.remove_token, request.app.state.settings, access.SLOT)
+    return RedirectResponse("/einstellungen#fernzugriff", status_code=303)
 
 
 @app.post("/devices/warp", dependencies=[Depends(require_password)])

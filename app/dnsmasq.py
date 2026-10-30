@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 
-from . import db
+from . import db, ipv6
 from .settings import Settings
 
 QUERY_RE = re.compile(r"query\[(?P<qtype>[A-Za-z0-9]+)\] (?P<domain>\S+) from (?P<ip>\S+)")
@@ -93,7 +93,10 @@ def build_config(s: Settings) -> str:
         short_name = s.local_name.split(".")[0]
         if short_name and short_name != s.local_name:
             lines.append(f"address=/{short_name}/{s.pi_ip}")
-    if s.gateway_enabled:
+    if s.gateway_enabled and s.ipv6_enabled:
+        # IPv6 über den Pi: Router Advertisement mit eigenem Netz, AAAA-Antworten bleiben erhalten.
+        lines += ipv6.dnsmasq_lines(s)
+    elif s.gateway_enabled:
         # Nur IPv4-Adressen ausliefern: Verbindungen laufen dann über IPv4 durch den Pi (und ggf. das VPN).
         # IPv6 ginge direkt zur Fritzbox und am Pi vorbei.
         lines.append("filter-AAAA")
@@ -150,6 +153,11 @@ class Collector:
         if parsed is None:
             return " query[" in line
         qtype, domain, ip = parsed
+        if ":" in ip:
+            # Anfrage über IPv6: dem Gerät zuordnen (über die MAC), sonst entsteht ein zweiter Eintrag.
+            ip = ipv6.to_ipv4(ip)
+            if ip is None:
+                return True
         now = now if now is not None else int(time.time())
         key = (ip, domain)
         with self._lock:

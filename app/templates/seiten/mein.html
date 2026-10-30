@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} · cloudy</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #f6f4fb; --card: #fcfcfb; --ink: #1f1b2e; --ink2: #52514e; --muted: #898781;
+      --line: #e9e6f0; --brand: #9333ea; --brand-ink: #7e22ce; --brand-soft: #efe7fb;
+      --good: #0ca30c; --good-soft: #dcf5dc; --warn-soft: #fef3c7; --bad: #d03b3b; --bad-soft: #fde2e2;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --page: #0d0d0d; --card: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7; --muted: #898781;
+        --line: #2c2c2a; --brand: #a855f7; --brand-ink: #c084fc; --brand-soft: #2a1f3d;
+        --good-soft: #13301a; --warn-soft: #3a2f10; --bad-soft: #3b1717;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: var(--page); color: var(--ink); min-height: 100vh; }
+    main { max-width: 420px; margin: 0 auto; padding: 1.25rem 1rem 2rem; }
+    .logo { font-weight: 700; font-size: 1.35rem; color: var(--brand); text-decoration: none; }
+    h1 { font-size: 1.35rem; margin: .75rem 0 .35rem; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem 1.15rem; margin: 1rem 0; }
+    .muted { color: var(--muted); }
+    .small { font-size: .88rem; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; word-break: break-all; }
+    .pill { display: inline-flex; align-items: center; gap: .3rem; padding: .12rem .55rem; border-radius: 99px; background: var(--brand-soft); font-size: .8rem; }
+    .pill.on { background: var(--good-soft); }
+    .alert { background: var(--bad-soft); border-radius: 10px; padding: .75rem 1rem; margin: 1rem 0; font-size: .9rem; }
+    .info { background: var(--brand-soft); border-radius: 10px; padding: .75rem 1rem; margin: 1rem 0; font-size: .9rem; }
+    .ok { background: var(--good-soft); border-radius: 10px; padding: .75rem 1rem; margin: 1rem 0; font-size: .9rem; }
+    .warn { background: var(--warn-soft); border-radius: 10px; padding: .75rem 1rem; margin: 1rem 0; font-size: .9rem; }
+    label { display: block; font-weight: 600; margin-bottom: .45rem; }
+    select, button { font: inherit; font-size: 1rem; padding: .65rem .75rem; border-radius: 10px; border: 1px solid var(--line); width: 100%; }
+    select { background: var(--card); color: var(--ink); margin-bottom: .75rem; }
+    button { background: var(--brand); color: #fff; border: 0; cursor: pointer; font-weight: 600; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    .choices { display: flex; flex-direction: column; gap: .55rem; margin: .75rem 0 1rem; }
+    .choice {
+      display: flex; align-items: flex-start; gap: .7rem; padding: .75rem .85rem;
+      border: 1px solid var(--line); border-radius: 12px; background: var(--card); cursor: pointer;
+    }
+    .choice:has(input:checked) { border-color: var(--brand); background: var(--brand-soft); }
+    .choice input { margin-top: .2rem; accent-color: var(--brand); }
+    .choice strong { display: block; }
+    .choice span { display: block; color: var(--muted); font-size: .82rem; margin-top: .15rem; }
+    footer { margin-top: 1.5rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <main>
+    <a class="logo" href="/mein">cloudy</a>
+    <h1>Mein Gerät</h1>
+    <p class="muted small">Nur du siehst diese Einstellung – erkannt über deine IP im Heimnetz.</p>
+
+    {% if ok %}
+    <div class="ok">Gespeichert. Die Umstellung wirkt meist nach wenigen Sekunden.</div>
+    {% endif %}
+    {% if fehler %}
+    <div class="alert">{{ fehler }}</div>
+    {% endif %}
+
+    {% if not ip %}
+    <div class="alert">Deine IP konnte nicht ermittelt werden.</div>
+    {% elif not device or not device.mac %}
+    <div class="card">
+      <p style="margin:0 0 .5rem"><strong>Gerät noch nicht erkannt</strong></p>
+      <p class="muted small" style="margin:0">
+        Deine IP ist <span class="mono">{{ ip }}</span>. Der Pi kennt dazu noch keine MAC-Adresse.
+        Kurz etwas im Browser öffnen oder WLAN aus/an – dann diese Seite neu laden.
+      </p>
+    </div>
+    {% else %}
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:.75rem;flex-wrap:wrap">
+        <div>
+          <div style="font-size:1.15rem;font-weight:650">{{ device.hostname or device.ip }}</div>
+          <div class="muted small mono" style="margin-top:.25rem">{{ device.ip }}</div>
+        </div>
+        {% if device.ip in online %}
+        <span class="pill on">● online</span>
+        {% else %}
+        <span class="pill">offline</span>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if not settings.gateway_enabled %}
+    <div class="warn">
+      Gateway ist aus – VPN/WARP greift erst, wenn der Pi als Gateway läuft
+      (<span class="mono">cloudy gateway an</span>).
+    </div>
+    {% endif %}
+
+    {% if warp %}
+    {% set current = warp_by_mac.get(device.mac, '') %}
+    <div class="card">
+      <form method="post" action="/mein/warp">
+        <label>Internet für dieses Gerät</label>
+        <div class="choices">
+          <label class="choice">
+            <input type="radio" name="slot" value="" {{ 'checked' if not current }}>
+            <div>
+              <strong>Standard</strong>
+              <span>{{ warp_names.get(warp_default, 'normal über Fritzbox') if warp_default else 'normal über Fritzbox' }}</span>
+            </div>
+          </label>
+          <label class="choice">
+            <input type="radio" name="slot" value="direct" {{ 'checked' if current == 'direct' }}>
+            <div>
+              <strong>Normal</strong>
+              <span>Direkt über die Fritzbox, ohne VPN/WARP</span>
+            </div>
+          </label>
+          {% for w in warp %}
+          <label class="choice">
+            <input type="radio" name="slot" value="{{ w.slot }}" {{ 'checked' if current == w.slot }}>
+            <div>
+              <strong>{{ w.label }}</strong>
+              <span>{% if w.kind == 'vpn' %}Über VPN{% else %}Über Cloudflare WARP{% endif %}{% if not w.has_token %} · noch nicht eingerichtet{% endif %}</span>
+            </div>
+          </label>
+          {% endfor %}
+        </div>
+        <button type="submit">Übernehmen</button>
+      </form>
+    </div>
+    {% else %}
+    <div class="info">Es sind keine WARP-/VPN-Profile konfiguriert.</div>
+    {% endif %}
+    {% endif %}
+
+    <footer class="muted small">
+      Adresse zum Merken: <span class="mono">{{ settings.local_name or 'cloudy.lan' }}/mein</span>
+    </footer>
+  </main>
+</body>
+</html>

@@ -5,10 +5,23 @@
   </span>
   <span class="pill {{ 'on' if settings.dhcp_enabled else '' }}">DHCP {{ 'an' if settings.dhcp_enabled else 'aus' }}</span>
   <span class="pill {{ 'on' if settings.gateway_enabled else '' }}">Gateway {{ 'an' if settings.gateway_enabled else 'aus' }}</span>
+  {% if settings.gateway_enabled %}
+  <span class="pill on" title="DNS-Anfragen an fremde Resolver (z. B. 8.8.8.8) werden auf den Pi umgeleitet">DNS-Force an</span>
+  {% endif %}
+  {% if settings.gateway_enabled and settings.ipv6_enabled %}
+  <span class="pill {{ 'on' if ipv6_tunnels else 'warn' }}" title="Der Pi verteilt IPv6 im Heimnetz. Geräte mit Tunnel nutzen IPv6 nur, wenn der Tunnel es kann.">
+    IPv6 an{% if ipv6_tunnels %} · Tunnel: {{ ipv6_tunnels | join(', ') }}{% else %} · kein Tunnel mit IPv6{% endif %}
+  </span>
+  {% endif %}
   <span class="pill">Pi: {{ settings.pi_ip }}{% if settings.local_name %} · {{ settings.local_name }}{% endif %}</span>
   <span class="pill">Upstream: {{ settings.upstream_dns | join(', ') }}</span>
 </div>
-{% if ipv6_bypass %}
+{% if ipv6_bypass and settings.ipv6_enabled %}
+<div class="alert" style="margin-top:.75rem">
+  <b>⚠️ Zwei IPv6-Router im Heimnetz:</b> Die Fritzbox verteilt noch IPv6, obwohl der Pi das jetzt übernimmt (IPV6_ENABLED). Geräte bekommen dann zwei Adressen und schicken IPv6 teils an der Fritzbox vorbei.<br>
+  <b>So beheben:</b> In der Fritzbox unter <i>Heimnetz → Netzwerk → Netzwerkeinstellungen → IPv6</i> den Haken bei <b>„Router Advertisement im LAN aktiv“ entfernen</b> und übernehmen. Danach an den Geräten WLAN kurz aus- und wieder anschalten.
+</div>
+{% elif ipv6_bypass %}
 <div class="alert" style="margin-top:.75rem">
   <b>⚠️ IPv6 läuft am VPN vorbei:</b> Die Fritzbox verteilt im Heimnetz IPv6. Die Geräte schicken IPv6 direkt an die Fritzbox – der Pi sieht diesen Verkehr nicht und kann ihn nicht ins VPN leiten.<br>
   <b>So beheben:</b> In der Fritzbox unter <i>Heimnetz → Netzwerk → Netzwerkeinstellungen → IPv6</i> den Haken bei <b>„Router Advertisement im LAN aktiv“ entfernen</b> und übernehmen. Danach an den Geräten WLAN kurz aus- und wieder anschalten. Das Internet läuft dann vollständig und sicher über IPv4 durch den Pi/VPN.

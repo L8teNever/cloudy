@@ -7,6 +7,7 @@ IF=wg0
 mkdir -p "$DIR"
 
 status() { printf '%s\n' "$1" | head -n1 > "$DIR/status.tmp" && mv "$DIR/status.tmp" "$DIR/status"; }
+v6state() { printf '%s\n' "$1" > "$DIR/ipv6.tmp" && mv "$DIR/ipv6.tmp" "$DIR/ipv6"; }
 
 # Kill-Switch im Container (IPv4 & IPv6): Pakete der Geräte dürfen NUR in den Tunnel, nie an ihm vorbei ins Internet.
 iptables -P FORWARD DROP
@@ -84,8 +85,11 @@ while true; do
   now="$(date +%s)"
   if [ -n "$hs" ] && [ "$hs" -gt 0 ] && [ $((now - hs)) -lt 180 ]; then
     status "Connected"
+    # IPv6 nur, wenn die WireGuard-Konfiguration auch eine IPv6-Adresse hat (sonst bleibt "keine Route").
+    if ip -6 addr show dev "$IF" 2>/dev/null | grep -q "inet6"; then v6state ok; else v6state nein; fi
   else
     status "Getrennt – kein Kontakt zum VPN-Server"
+    v6state nein
   fi
   sleep 5 & wait $!
 done

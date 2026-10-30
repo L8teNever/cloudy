@@ -80,3 +80,29 @@ def test_cookie_blocklist_info_and_recent():
 
     recent = blocklist.recent_blocked()
     assert isinstance(recent, list)
+
+
+def test_mein_self_service(client):
+    # TestClient meldet sich als Host "testclient"
+    res = client.get("/mein")
+    assert res.status_code == 200
+    assert "Gerät noch nicht erkannt" in res.text
+
+    db.upsert_devices([("testclient", "aa:bb:cc:dd:ee:55", "mein-handy")])
+    res = client.get("/mein")
+    assert res.status_code == 200
+    assert "mein-handy" in res.text
+    assert "Internet für dieses Gerät" in res.text
+    assert "/geraete" not in res.text  # keine Admin-Navigation
+
+    res = client.post("/mein/warp", data={"slot": "direct"}, follow_redirects=False)
+    assert res.status_code == 303
+    assert res.headers["location"] == "/mein?ok=1"
+    assert db.device_warp().get("aa:bb:cc:dd:ee:55") == "direct"
+
+    # Fremde MAC darf nicht per Formular untergeschoben werden – Endpoint nimmt nur Client-IP
+    db.upsert_devices([("192.168.178.99", "aa:bb:cc:dd:ee:99", "fremd")])
+    res = client.post("/mein/warp", data={"slot": "warp1"}, follow_redirects=False)
+    assert res.status_code == 303
+    assert db.device_warp().get("aa:bb:cc:dd:ee:99") is None
+    assert db.device_warp().get("aa:bb:cc:dd:ee:55") == "warp1"

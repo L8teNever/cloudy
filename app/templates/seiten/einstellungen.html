@@ -7,6 +7,11 @@
     (ohne Portangabe) in Safari oder Chrome ein. Sobald dein Handy den Pi als DNS-Server nutzt oder DHCP aktiv ist, 
     funktioniert auch <a href="http://{{ settings.local_name or 'cloudy.lan' }}" style="font-weight:600">http://{{ settings.local_name or 'cloudy.lan' }}</a>.
   </p>
+  <p class="small" style="margin-top:.75rem">
+    <strong>Self-Service für jedes Gerät:</strong>
+    <a href="/mein" style="font-weight:600">http://{{ settings.local_name or 'cloudy.lan' }}/mein</a>
+    – ohne Passwort, erkennt automatisch wer aufruft, und zeigt nur die VPN/WARP-Einstellung für dieses eine Gerät.
+  </p>
 
   {% if settings.https_port %}
   <div style="margin-top:1.25rem">
@@ -53,6 +58,53 @@
         <tr><td><strong>HTTPS-Port</strong></td><td class="mono">{{ settings.https_port if settings.https_port else 'Aus' }}</td></tr>
       </tbody>
     </table>
+  </div>
+</div>
+<div class="card" id="fernzugriff">
+  {% set tn = params.tunnel %}
+  <h2>🌍 Fernzugriff (Cloudflare Tunnel)</h2>
+  <p class="small">
+    Das Dashboard von unterwegs unter deiner eigenen Adresse (z. B. <code>https://cloudy.kulbarts.com</code>) –
+    nur nach Anmeldung über Cloudflare Zero Trust.
+  </p>
+  <div class="status-row" style="margin:.5rem 0 1rem">
+    <span class="pill {{ 'on' if tn.status.connected else ('warn' if tn.has_token else '') }}">
+      Tunnel: {{ tn.status.text if tn.has_token else 'nicht eingerichtet' }}
+    </span>
+    <span class="pill {{ 'on' if tn.secured else 'warn' }}">
+      Anmeldung: {{ 'geprüft (' ~ tn.team ~ ')' if tn.secured else 'Team-Domain und AUD fehlen – Fernzugriff gesperrt' }}
+    </span>
+    {% if tn.email %}<span class="pill">Angemeldet als {{ tn.email }}</span>{% endif %}
+  </div>
+
+  <form method="post" action="/tunnel/login" style="display:grid;gap:.5rem;max-width:38rem">
+    <label class="small">Tunnel-Token
+      <input name="token" type="password" autocomplete="off" style="width:100%"
+             placeholder="{{ 'Neuer Token (leer = behalten)' if tn.has_token else 'eyJh… aus Zero Trust → Networks → Tunnels' }}">
+    </label>
+    <label class="small">Team-Domain
+      <input name="team" autocomplete="off" style="width:100%" value="{{ tn.team_default }}">
+    </label>
+    <label class="small">AUD-Tag der Access-App
+      <input name="aud" autocomplete="off" style="width:100%" value="{{ tn.aud }}" placeholder="Access → Applications → cloudy → Übersicht → Application Audience (AUD) Tag">
+    </label>
+    <div><button type="submit">Speichern</button></div>
+  </form>
+  {% if tn.has_token %}
+  <form method="post" action="/tunnel/logout" style="margin-top:.5rem"
+        onsubmit="return confirm('Tunnel ausschalten? Von unterwegs ist cloudy dann nicht mehr erreichbar.')">
+    <button type="submit">Tunnel ausschalten</button>
+  </form>
+  {% endif %}
+
+  <div class="info small" style="margin-top:1rem">
+    <b>Einrichtung bei Cloudflare:</b><br>
+    1. Zero Trust → <i>Networks → Tunnels</i> → Tunnel anlegen (z. B. <code>cloudy-pi</code>), den Token (<code>eyJh…</code>) oben einfügen.<br>
+    2. Beim Tunnel <i>Public Hostname</i>: <code>cloudy.kulbarts.com</code> → Service <code>{{ tn.target }}</code><br>
+    3. <i>Access → Applications</i> → Self-hosted für <code>cloudy.kulbarts.com</code> mit Policy (z. B. deine E-Mail),
+       „Mit Cloudflare One Client authentifizieren“ an. Den <i>AUD-Tag</i> der App oben eintragen.<br>
+    Ohne gültige Anmeldung lässt cloudy über den Tunnel nichts durch – auch wenn die Access-App fehlt.
+    „Mein Gerät“ (<code>/mein</code>) geht nur im Heimnetz.
   </div>
 </div>
 {% endblock %}

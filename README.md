@@ -11,7 +11,7 @@ Drei Stufen, jede einzeln ein- und ausschaltbar:
 |---|---|---|
 | 1. DNS | nur die Namensabfragen | welche Domains jedes Gerät aufruft |
 | 2. + DHCP (`cloudy dhcp an`) | + IP-Verteilung | + Gerätenamen und MAC-Adressen |
-| 3. + Gateway (`cloudy gateway an`) | **der gesamte Datenverkehr** (Videos, Downloads …) | + Download/Upload pro Gerät und Domain |
+| 3. + Gateway (`cloudy gateway an`) | **der gesamte Datenverkehr** + DNS-Force (auch fremde Resolver → Pi) | + Download/Upload pro Gerät und Domain |
 
 ```
 Stufe 3:  Gerät ──alles──► Pi (misst) ──► Fritzbox ──► Internet
@@ -19,6 +19,8 @@ Stufe 3:  Gerät ──alles──► Pi (misst) ──► Fritzbox ──► In
 
 - Dashboard: **`http://cloudy.lan`** (oder `http://<pi-ip>`) – nur im Heimnetz erreichbar (keine Portfreigabe nötig).
   Der Name `cloudy.lan` funktioniert auf allen Geräten, die den Pi als DNS-Server nutzen.
+- Self-Service ohne Passwort: **`http://cloudy.lan/mein`** – erkennt das aufrufende Gerät per IP und lässt nur dessen
+  Internet-Weg (normal / WARP / VPN) umstellen; andere Geräte sieht man dort nicht.
 - Die Geräteliste zeigt, **welches Gerät gerade online ist** (der Pi fragt alle bekannten Geräte alle 8 Sekunden aktiv per ARP ab;
   schaltet man am Handy das WLAN aus, steht innerhalb weniger Sekunden „offline“ da; über den Button „Prüfen“ im Dashboard auch sofort).
 - Pro Gerät: Name, IP, MAC, alle aufgerufenen Domains, Datenmenge pro Domain (z. B. `youtube.com 1,2 GB`).
@@ -86,6 +88,30 @@ Danach läuft alles über IPv4 durch den Pi (und bei zugeordneten Geräten durch
 der Pi außerdem nur IPv4-Adressen aus (`filter-AAAA`). Das Dashboard zeigt eine rote Warnung, solange die Fritzbox
 noch IPv6 verteilt und ein VPN benutzt wird.
 
+#### Optional: IPv6 durch den Pi und WARP/VPN (`cloudy ipv6 an`)
+
+Willst du IPv6 nicht nur abschalten, sondern selbst durch WARP/VPN schicken (dann zeigt z. B. speed.cloudflare.com
+„Connected via IPv6“ mit Cloudflare als Netzwerk), übernimmt der Pi das IPv6 im Heimnetz:
+
+1. Fritzbox: **„Router Advertisement im LAN aktiv“ aus** (wie oben). Sonst gibt es zwei IPv6-Router im Heimnetz.
+2. Auf dem Pi: `cloudy ipv6 an` (setzt `IPV6_ENABLED=1`, braucht `GATEWAY_ENABLED=1`).
+3. Geräte kurz WLAN aus/an.
+
+So funktioniert es:
+- Der Pi verteilt per Router Advertisement ein **eigenes privates Netz** (zufälliges `fdXX:XXXX:XXXX:1::/64`, gespeichert in
+  `data/ipv6-prefix`, oder fest über `IPV6_PREFIX` in der `.env`). Die Geräte bilden daraus selbst ihre Adresse.
+- Geräte mit **WARP/VPN** (einzeln oder als Standard) schicken ihr IPv6 durch den Container; der schreibt die Absender
+  auf seine Tunnel-Adresse um. Die Zuordnung läuft wie bei IPv4 nach MAC-Adresse.
+- Der Container prüft selbst (alle ~30 Sekunden), ob sein Tunnel IPv6 durchlässt, und meldet das nach
+  `data/warp/<slot>/ipv6` (`ok` oder `nein`; `cloudy status` zeigt es). Nur bei `ok` geht IPv6 in den Tunnel, sonst
+  bekommen die Geräte sofort „keine Route“ und nehmen IPv4 – nie der Weg an der Tunnel vorbei.
+- Geräte **ohne** Tunnel haben hinter der Fritzbox kein IPv6-Internet (die Fritzbox verteilt ja keins mehr). Sie bekommen
+  ebenfalls sofort „keine Route“ und nutzen IPv4.
+- Statistik und Domain-Liste ordnen IPv6-Anfragen über die MAC dem Gerät zu (kein zweiter Eintrag pro Gerät).
+- Ob Cloudflares WARP-Connector IPv6 wirklich durchlässt, hängt von deinem Konto ab. Zeigt `cloudy status`
+  „IPv6 im Tunnel warp1: nein“, bleibt alles auf IPv4 – dann ist nichts kaputt, nur kein IPv6 im Tunnel.
+- Zurück: `cloudy ipv6 aus`.
+
 ## 4. Gesamter Datenverkehr über den Pi (Gateway)
 
 1. Geräte mit **Portfreigabe** in der Fritzbox (NAS, Kamera, Server …) in `~/cloudy/data/dhcp-hosts.conf`
@@ -98,6 +124,11 @@ noch IPv6 verteilt und ein VPN benutzt wird.
 
 Der Pi leitet dann alles an die Fritzbox weiter (NAT) und misst pro Gerät und Domain, wie viel geladen wurde.
 Damit nichts über IPv6 an ihm vorbeiläuft, liefert er im Gateway-Modus nur IPv4-Adressen aus (`filter-AAAA`).
+
+**DNS-Force (automatisch mit Gateway):** Anfragen an fremde DNS-Server (z. B. fest eingestelltes `8.8.8.8`)
+werden auf dem Pi abgefangen und von cloudy beantwortet – an den Geräten musst du DNS nicht umstellen.
+Ausnahmen: Geräte mit `set:direkt` (gehen an der Fritzbox vorbei) und „Sicheres DNS“/DoH über HTTPS
+(die bekannten DoH-Hosts blockt cloudy separat).
 
 **Gut zu wissen:**
 - **Tempo:** Ein Pi 3B+ schafft ca. **150 Mbit/s für alle Geräte zusammen**. Ist dein Anschluss schneller,
@@ -259,6 +290,27 @@ Ausschalten: in `~/cloudy/.env` `HTTPS_PORT=0`, dann `cloudy restart`.
   zurückgeschaltet. Chrome/Edge mit fest eingestelltem „Sicheres DNS“ oder VPN-Apps gehen trotzdem am Pi vorbei.
 - **Mitbewohner/Familie:** Protokollieren, was andere im Netz aufrufen, ist ein Eingriff in deren
   Privatsphäre – sag ihnen Bescheid.
+
+## Fernzugriff über `cloudy.kulbarts.com` (Cloudflare Tunnel + Zero Trust)
+
+Das Dashboard ist von unterwegs unter deiner eigenen Adresse erreichbar – **nur nach Anmeldung** über Cloudflare
+Zero Trust (Mail-Code/Google, mit WARP-Client automatisch). Eingerichtet wird alles im Dashboard unter
+**Einstellungen → Fernzugriff**; auf dem Pi läuft dafür der Container `cloudy-tunnel` (ohne Token tut er nichts).
+
+1. Zero Trust → **Networks → Tunnels** → Tunnel anlegen (z. B. `cloudy-pi`). Den langen Token (`eyJh…`) im Dashboard
+   bei *Tunnel-Token* einfügen → Speichern. Nach ein paar Sekunden steht dort „Tunnel: verbunden“.
+2. Beim Tunnel einen **Public Hostname** anlegen: `cloudy.kulbarts.com` → Service `http://172.29.88.1:<DASHBOARD_PORT>`
+   (genau diese Adresse zeigt auch das Dashboard an).
+3. Zero Trust → **Access → Applications** → *Self-hosted* für `cloudy.kulbarts.com`, Policy z. B. „nur meine E-Mail“,
+   „Mit Cloudflare One Client authentifizieren“ an. Den **AUD-Tag** der App (und die Team-Domain, z. B.
+   `l8tenever.cloudflareaccess.com`) im Dashboard eintragen → Speichern.
+
+Sicherheit:
+- cloudy prüft bei **jeder** Anfrage über den Tunnel selbst das Access-Token (Signatur, Team, AUD, Ablauf). Fehlt es,
+  ist es falsch oder sind Team/AUD nicht eingetragen, gibt es nur „Nur mit Cloudflare-Anmeldung“ – auch dann, wenn die
+  Access-App bei Cloudflare fehlt oder falsch eingestellt ist.
+- Im Heimnetz ändert sich nichts (optional weiter `DASHBOARD_PASSWORD`). „Mein Gerät“ (`/mein`) geht nur zu Hause.
+- Status: `cloudy status`, Logs: `cloudy logs tunnel`. Ausschalten: im Dashboard „Tunnel ausschalten“.
 
 ## Entwickeln
 

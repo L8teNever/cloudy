@@ -4,7 +4,7 @@ from app import db
 from app.dnsmasq import build_config
 from app.main import fmt_bytes
 from app.settings import Settings
-from app.traffic import Conn, DomainMap, TrafficMeter, gateway_rules, parse_conntrack
+from app.traffic import Conn, DomainMap, TrafficMeter, dns_force_rules, gateway_rules, parse_conntrack
 
 CT_LINE = (
     "ipv4     2 tcp      6 431999 ESTABLISHED src=192.168.178.25 dst=142.250.1.1 sport=51234 dport=443 "
@@ -89,6 +89,18 @@ def test_gateway_rules():
             "-o", "eth0", "-j", "MASQUERADE"] in rules
 
 
+def test_dns_force_rules():
+    rules = dns_force_rules(Settings.from_env())
+    assert [
+        "iptables", "-t", "nat", "-A", "CLOUDY-DNS", "-i", "eth0", "-p", "udp", "--dport", "53",
+        "!", "-d", "192.168.178.2", "-j", "REDIRECT", "--to-ports", "53",
+    ] in rules
+    assert [
+        "iptables", "-t", "nat", "-A", "CLOUDY-DNS", "-i", "eth0", "-p", "tcp", "--dport", "53",
+        "!", "-d", "192.168.178.2", "-j", "REDIRECT", "--to-ports", "53",
+    ] in rules
+
+
 def test_dashboard_shows_traffic(client):
     now = int(time.time())
     db.add_traffic([("192.168.178.25", "youtube.com", 1000, 5 * 1024 * 1024, 3, now)])
@@ -104,12 +116,10 @@ def test_fmt_bytes():
     assert fmt_bytes(3 * 1024**3) == "3,0 GB"
 
 
-def test_ipv6_is_always_filtered_in_gateway_mode(monkeypatch):
-    # Der alte Schalter IPV6_ENABLED wird ignoriert: IPv6 ginge immer an Pi und VPN vorbei.
+def test_ipv6_is_filtered_in_gateway_mode_by_default(monkeypatch):
+    # Ohne IPV6_ENABLED läuft alles über IPv4: IPv6 ginge sonst an Pi und VPN vorbei.
     monkeypatch.setenv("DHCP_ENABLED", "1")
     monkeypatch.setenv("GATEWAY_ENABLED", "1")
-    monkeypatch.setenv("IPV6_ENABLED", "1")
     conf = build_config(Settings.from_env())
     assert "filter-AAAA" in conf
     assert "enable-ra" not in conf
-
