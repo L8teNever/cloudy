@@ -64,9 +64,9 @@ def mein_choice_ok(slot: str, current: str) -> bool:
     return allowed is None or (slot or STANDARD) in allowed or slot == current
 
 
-def site_set(index: int, v6: bool = False) -> str:
-    """Name des ipset, in das dnsmasq die IPs der Seiten für dieses Profil einträgt."""
-    return f"cloudy_s{index}" + ("_6" if v6 else "")
+def site_set(index: int | str, v6: bool = False) -> str:
+    """Name des ipset, in das dnsmasq die IPs der Seiten für dieses Profil einträgt ("direct" = immer normal)."""
+    return f"cloudy_s{'d' if index == DIRECT else index}" + ("_6" if v6 else "")
 
 
 def slot_dir(s: Settings, slot: str) -> str:
@@ -182,6 +182,9 @@ def _mark_rules(
     """Markierungen nach MAC. local_net: Ziele im eigenen Heimnetz (IPv4 oder IPv6) werden nie getunnelt."""
     rules = []
     # Seiten-Regeln zuerst und mit RETURN beenden: sie gelten für alle Geräte (auch für „direkt“).
+    if DIRECT in (site_routes or {}).values():
+        # Seiten, die immer normal (über die Fritzbox) rausgehen sollen: nie markieren, egal was beim Gerät steht.
+        rules.append(("-i", s.lan_interface, "-m", "set", "--match-set", site_set(DIRECT, v6), "dst", "-j", "RETURN"))
     for slot in sorted({sl for sl in (site_routes or {}).values() if sl in index_of}, key=index_of.get):
         rules.append((
             "-i", s.lan_interface, "-m", "set", "--match-set", site_set(index_of[slot], v6), "dst",
@@ -257,7 +260,7 @@ def cleanup() -> None:
 
 def create_site_sets(s: Settings) -> None:
     """ipsets für die Seiten-Regeln anlegen (gibt es sie schon, bleibt der Inhalt). Einträge laufen nach 24 h ab."""
-    for index, _ in enumerate(s.warp_slots, start=1):
+    for index in [*range(1, len(s.warp_slots) + 1), DIRECT]:
         _run(["ipset", "create", "-exist", site_set(index), "hash:ip", "timeout", "86400"])
         if s.ipv6_enabled:
             _run(["ipset", "create", "-exist", site_set(index, True), "hash:ip", "family", "inet6", "timeout", "86400"])

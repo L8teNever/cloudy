@@ -259,3 +259,21 @@ def test_mein_choices_are_limited_by_admin(client):
     client.post("/mein-auswahl", data={})
     assert warp.mein_allowed() == set()
     assert client.post("/mein/warp", data={"slot": "direct"}, follow_redirects=False).headers["location"].startswith("/mein?fehler=")
+
+
+def test_direct_site_routes_skip_marking_and_come_first(monkeypatch):
+    from app import dnsmasq
+
+    s = Settings.from_env()
+    plan = warp.build_plan(s, {MAC: "vpn1"}, {"vpn1": True}, "warp1", None, {"bank.de": "direct", "netflix.com": "vpn1"})
+    assert plan.mangle_rules[0] == ("-i", "eth0", "-m", "set", "--match-set", "cloudy_sd", "dst", "-j", "RETURN")
+    assert "cloudy_s3" in plan.mangle_rules[1]
+    monkeypatch.setenv("GATEWAY_ENABLED", "1")
+    lines = dnsmasq.site_route_lines(Settings.from_env(), {"bank.de": "direct"})
+    assert lines == ["ipset=/bank.de/cloudy_sd"]
+
+
+def test_direct_site_route_page(client):
+    client.post("/seiten-routen/add", data={"domain": "bank.de", "slot": "direct"})
+    assert db.site_routes() == {"bank.de": "direct"}
+    assert "Normal (Fritzbox)" in client.get("/vpn").text

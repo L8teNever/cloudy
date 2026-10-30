@@ -495,7 +495,8 @@ async def site_route_add(request: Request, domain: str = Form(...), slot: str = 
     """Eine Seite (inkl. Subdomains) für alle Geräte immer durch ein bestimmtes WARP-/VPN-Profil schicken."""
     from .redirects import normalize_source
 
-    _check_slot(request, slot)
+    if slot != warp.DIRECT:
+        _check_slot(request, slot)
     try:
         domain = normalize_source(domain)
     except ValueError as exc:

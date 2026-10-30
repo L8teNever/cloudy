@@ -155,13 +155,16 @@ Gerät ──► Pi ──► WARP-Container (Account 1) ════Tunnel═�
 - **Fällt der Tunnel aus**, gehen die Geräte automatisch wieder normal über die Fritzbox. Soll das Gerät dann
   gar kein Internet mehr haben (Kill-Switch), in `~/cloudy/.env` `WARP_KILLSWITCH=1` setzen.
 
-### Einzelne Seiten immer über ein Profil
+### Einzelne Seiten immer über ein Profil (oder immer normal)
 
 Dashboard → **VPN → „Seiten immer über ein Profil“**: z. B. `netflix.com` → *VPN 1*. Ruft **irgendein** Gerät im Heimnetz die Seite
 (oder eine Subdomain) auf, läuft nur diese Seite durch das gewählte Profil, egal was beim Gerät eingestellt ist.
 dnsmasq trägt dafür beim Auflösen die IPs der Seite in ein ipset ein. Grenzen: Das Gerät muss den Pi als DNS nutzen (kein
 „Sicheres DNS“, kein WARP-Client auf dem Gerät), der Gateway-Modus muss an sein, und Seiten, die sich per CDN eine IP mit
 anderen teilen, ziehen diese mit.
+
+Umgekehrt geht es auch: Wählst du als Ziel **Normal**, geht diese Seite immer direkt über die Fritzbox raus – auch bei
+Geräten, die sonst komplett durch ein VPN laufen (z. B. für Banking oder Seiten, die VPNs sperren).
 
 ## 6. Einzelne Geräte durch ein normales WireGuard-VPN schicken (z. B. Proton VPN)
 

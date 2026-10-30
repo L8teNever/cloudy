@@ -301,8 +301,9 @@ def site_route_lines(s: Settings, routes: dict[str, str]) -> list[str]:
     index_of = {slot: i for i, (slot, _) in enumerate(s.warp_slots, start=1)}
     lines = []
     for domain, slot in sorted(routes.items()):
-        if slot in index_of:
-            sets = [warp.site_set(index_of[slot])] + ([warp.site_set(index_of[slot], True)] if s.ipv6_enabled else [])
+        key = slot if slot == warp.DIRECT else index_of.get(slot)
+        if key is not None:
+            sets = [warp.site_set(key)] + ([warp.site_set(key, True)] if s.ipv6_enabled else [])
             lines.append(f"ipset=/{domain}/{','.join(sets)}")
     return lines
 

@@ -1,8 +1,9 @@
 <div class="card" id="seitenrouten">
-  <h2>Seiten immer über ein Profil</h2>
+  <h2>Seiten immer über ein Profil – oder immer normal</h2>
   <p class="muted small">
     Ruft ein Gerät im Heimnetz eine dieser Seiten (inkl. aller Subdomains) auf, läuft <b>nur diese Seite</b> durch das gewählte
-    WARP-/VPN-Profil – egal, was beim Gerät eingestellt ist. Alles andere geht wie gewohnt.
+    WARP-/VPN-Profil – oder mit <b>Normal</b> immer direkt über die Fritzbox, auch wenn das Gerät sonst durch ein VPN geht.
+    Egal, was beim Gerät eingestellt ist. Alles andere geht wie gewohnt.
     Das klappt nur, wenn das Gerät den Pi als DNS nutzt (kein „Sicheres DNS“ im Browser, kein eigener WARP-Client auf dem Gerät)
     und der Gateway-Modus an ist. Teilt sich eine Seite die IP mit anderen (CDN), laufen diese mit.
   </p>
@@ -12,6 +13,7 @@
   <form method="post" action="/seiten-routen/add" class="inline" style="margin:.75rem 0 1rem;gap:.5rem">
     <input name="domain" placeholder="Seite (z. B. netflix.com)" size="26" required>
     <select name="slot" aria-label="Profil">
+      <option value="direct">Normal – direkt über die Fritzbox</option>
       {% for w in site_profiles %}<option value="{{ w.slot }}">{{ w.label }}{{ '' if w.has_token else ' (nicht eingerichtet)' }}</option>{% endfor %}
     </select>
     <button>Regel speichern</button>
@@ -24,7 +26,7 @@
     {% for domain, slot in site_routes.items() %}
       <tr>
         <td class="mono" style="font-weight:600;color:var(--brand)">{{ domain }}</td>
-        <td>{% for w in site_profiles if w.slot == slot %}{{ w.label }}{% else %}{{ slot }}{% endfor %}</td>
+        <td>{% if slot == 'direct' %}Normal (Fritzbox){% else %}{% for w in site_profiles if w.slot == slot %}{{ w.label }}{% else %}{{ slot }}{% endfor %}{% endif %}</td>
         <td>
           <form method="post" action="/seiten-routen/remove" class="inline">
             <input type="hidden" name="domain" value="{{ domain }}">
