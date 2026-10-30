@@ -69,7 +69,7 @@
   {% if not site_gateway %}<div class="info small">Gateway-Modus ist aus – die Regeln greifen erst mit <code>cloudy gateway an</code>.</div>{% endif %}
 
   {{ sm.add_form("/gruppen/" ~ group.id ~ "/seiten/add", site_profiles, "Regeln speichern") }}
-  {{ sm.route_list(group_site_routes, site_profiles, "/gruppen/" ~ group.id ~ "/seiten/remove", empty="Noch keine Gruppen-Seitenregeln.") }}
+  {{ sm.route_list(group_site_routes, site_profiles, "/gruppen/" ~ group.id ~ "/seiten/remove", empty="Noch keine Gruppen-Seitenregeln.", extras=site_extras, bundles=site_bundles, suggest=site_suggest, add_action="/gruppen/" ~ group.id ~ "/seiten/add") }}
   </div>
 
   <div id="seitenrouten-box" data-refresh-box>
@@ -78,6 +78,6 @@
     Gilt fürs ganze Heimnetz – hier bearbeiten oder unter <a href="/vpn#seitenrouten" data-nav>VPN → Seiten</a>.
   </p>
   {{ sm.add_form("/seiten-routen/add", site_profiles, "Global speichern", next="/gruppen/" ~ group.id ~ "#seitenrouten") }}
-  {{ sm.route_list(site_routes, site_profiles, "/seiten-routen/remove", next="/gruppen/" ~ group.id ~ "#seitenrouten", empty="Keine globalen Regeln.") }}
+  {{ sm.route_list(site_routes, site_profiles, "/seiten-routen/remove", next="/gruppen/" ~ group.id ~ "#seitenrouten", empty="Keine globalen Regeln.", extras=site_extras, bundles=site_bundles, suggest=site_suggest, add_action="/seiten-routen/add") }}
   </div>
 </div>

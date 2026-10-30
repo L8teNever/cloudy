@@ -15,7 +15,7 @@
 </form>
 {% endmacro %}
 
-{% macro route_list(routes, profiles, remove_action, next="", empty="Noch keine Regeln.") %}
+{% macro route_list(routes, profiles, remove_action, next="", empty="Noch keine Regeln.", extras={}, bundles={}, suggest={}, add_action="") %}
 {% if routes %}
 {% set names = {'direct': 'Normal (Fritzbox)'} %}
 {% for w in profiles %}{% set _ = names.update({w.slot: w.label}) %}{% endfor %}
@@ -28,8 +28,10 @@
     </div>
     <div class="chips">
       {% for domain, _ in items | sort %}
+      {% set more = extras.get(domain) or [] %}
       <span class="chip site-chip">
         <span class="mono">{{ domain }}</span>
+        {% if more %}<span class="site-extra" title="Läuft automatisch mit: {{ more | join(', ') }}">{{ bundles.get(domain) or 'Dienst' }} +{{ more | length }}</span>{% endif %}
         <form method="post" action="{{ remove_action }}" class="inline" data-ok="Entfernt">
           <input type="hidden" name="domain" value="{{ domain }}">
           {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
@@ -38,9 +40,24 @@
       </span>
       {% endfor %}
     </div>
+    {% set found = [] %}
+    {% for domain, _ in items %}{% for d, n in suggest.get(domain) or [] %}{% if d not in found | map(attribute=0) | list %}{% set _ = found.append((d, n, domain)) %}{% endif %}{% endfor %}{% endfor %}
+    {% if found and add_action %}
+    <div class="site-suggest">
+      <span class="muted small" title="Diese Domains fragen Geräte meist direkt nach der Seite ab – wahrscheinlich gehören sie dazu.">Erkannt, gehört evtl. dazu:</span>
+      {% for d, n, src in found %}
+      <form method="post" action="{{ add_action }}" class="inline" data-ok="{{ d }} hinzugefügt">
+        <input type="hidden" name="domain" value="{{ d }}"><input type="hidden" name="slot" value="{{ slot }}">
+        {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+        <button class="suggest-btn" title="Bei {{ n }} Aufrufen von {{ src }} dabei">+ {{ d }}</button>
+      </form>
+      {% endfor %}
+    </div>
+    {% endif %}
   </div>
   {% endfor %}
 </div>
+<p class="muted small" style="margin:.6rem 0 0">Bekannte Dienste (Netflix, Disney+, Prime Video, YouTube …) nehmen ihre Video- und Bild-Domains automatisch mit – siehe „+N“ an der Seite.</p>
 {% else %}
 <p class="muted small">{{ empty }}</p>
 {% endif %}

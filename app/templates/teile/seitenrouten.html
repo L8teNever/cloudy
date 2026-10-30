@@ -12,5 +12,5 @@
   {% if params.fehler %}<div class="info small">{{ params.fehler }}</div>{% endif %}
 
   {{ sm.add_form("/seiten-routen/add", site_profiles, "Regeln speichern") }}
-  {{ sm.route_list(site_routes, site_profiles, "/seiten-routen/remove") }}
+  {{ sm.route_list(site_routes, site_profiles, "/seiten-routen/remove", extras=site_extras, bundles=site_bundles, suggest=site_suggest, add_action="/seiten-routen/add") }}
 </div>

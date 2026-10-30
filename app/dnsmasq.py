@@ -361,7 +361,10 @@ def sync_redirects_hosts(s: Settings) -> None:
         merged: dict[str, set[str]] = {d: {sl} for d, sl in db.site_routes().items()}
         for domain, slots in db.all_group_site_domains().items():
             merged.setdefault(domain, set()).update(slots)
-        lines += site_route_lines_multi(s, merged)
+        from .dienste import expand
+
+        # Zugehörige Domains (z. B. nflxvideo.net zu netflix.com) laufen automatisch mit.
+        lines += site_route_lines_multi(s, expand(merged))
     os.makedirs(s.data_dir, exist_ok=True)
     tmp = s.redirects_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:

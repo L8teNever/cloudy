@@ -993,3 +993,36 @@ def move_group(group_id: int, direction: int) -> None:
 def connect() -> sqlite3.Connection:
     """Für Lese-Abfragen anderer Module (z. B. Statistik)."""
     return _connect()
+
+
+def query_sessions(rule: str, since: int, window: int = 90, max_sessions: int = 60) -> list[set[str]]:
+    """Für Vorschläge zugehöriger Domains: Pro Aufruf der Seite (Gerät + Zeitpunkt) die Domains, die dasselbe
+    Gerät in den `window` Sekunden danach abgefragt hat (ohne die Seite selbst)."""
+    rule = rule.lower().strip(".")
+    with closing(_connect()) as conn:
+        hits = conn.execute(
+            """SELECT ip, ts FROM queries
+               WHERE ts >= ? AND (domain = ? OR domain LIKE ?)
+               ORDER BY ip, ts""",
+            (since, rule, "%." + rule),
+        ).fetchall()
+        starts: list[tuple[str, int]] = []
+        last: dict[str, int] = {}
+        for row in hits:
+            ip, ts = row["ip"], row["ts"]
+            if ip in last and ts - last[ip] < window:
+                continue  # gehört noch zur selben Sitzung
+            last[ip] = ts
+            starts.append((ip, ts))
+        starts = sorted(starts, key=lambda x: -x[1])[:max_sessions]
+        out = []
+        for ip, ts in starts:
+            names = {
+                r["domain"].lower()
+                for r in conn.execute(
+                    "SELECT DISTINCT domain FROM queries WHERE ip = ? AND ts BETWEEN ? AND ?",
+                    (ip, ts - 5, ts + window),
+                )
+            }
+            out.append({n for n in names if n != rule and not n.endswith("." + rule)})
+        return out

@@ -231,6 +231,7 @@ def ctx_gruppe(request: Request, group_id: int) -> dict:
         "group_colors": db.GROUP_COLORS,
         "group_site_routes": db.group_site_routes(group_id),
         "site_routes": db.site_routes(),
+        **site_hints([*db.group_site_routes(group_id), *db.site_routes()]),
         "site_profiles": warp_profiles(s),
         "site_gateway": s.gateway_enabled,
         **_warp_ctx(request),
@@ -296,10 +297,22 @@ def ctx_weiterleitungen(request: Request) -> dict:
     }
 
 
+def site_hints(domains: list[str]) -> dict:
+    """Zugehörige Domains (laufen automatisch mit) und Vorschläge aus dem DNS-Verkehr."""
+    from . import dienste
+
+    return {
+        "site_extras": {d: dienste.companions(d) for d in domains},
+        "site_bundles": {d: (dienste.bundle_of(d) or ("", ()))[0] for d in domains},
+        "site_suggest": dienste.suggestions(domains),
+    }
+
+
 def ctx_seitenrouten(request: Request) -> dict:
     s: Settings = request.app.state.settings
     return {
         "site_routes": db.site_routes(),
+        **site_hints(list(db.site_routes())),
         "site_profiles": warp_profiles(s),
         "site_gateway": s.gateway_enabled,
         "mein_allowed": warp.mein_allowed(),
