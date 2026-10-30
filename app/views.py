@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import access, blocklist, charts, db, fritz, localdomain, stats, system_info, warp
+from . import blocklist, charts, db, fritz, localdomain, stats, system_info, warp
 from .settings import Settings
 
 BASE_DIR = Path(__file__).parent
@@ -236,7 +236,11 @@ def ctx_schutz(request: Request) -> dict:
 
 
 def ctx_weiterleitungen(request: Request) -> dict:
-    return {"redirects": db.redirects()}
+    return {
+        "redirects": db.redirects(),
+        "real_certs": localdomain.real_cert_hosts(request.app.state.settings),
+        "has_cf_token": bool(db.get_setting(localdomain.TOKEN_KEY)),
+    }
 
 
 def ctx_vpn(request: Request) -> dict:
@@ -338,41 +342,6 @@ async def fritzbox_page(request: Request, fehler: str | None = None, erfolg: str
     return await page(request, "seiten/fritzbox.html", "FRITZ!Box", "/fritzbox", ["fritzbox"], fehler=fehler, erfolg=erfolg)
 
 
-def tunnel_ctx(request: Request) -> dict:
-    """Fernzugriff (Cloudflare Tunnel) für die Einstellungsseite."""
-    s: Settings = request.app.state.settings
-    team, aud = access.config()
-    gateway = s.tunnel_ip.rsplit(".", 1)[0] + ".1"  # Pi aus Sicht des Tunnel-Containers
-    return {
-        "has_token": warp.has_token(s, access.SLOT),
-        "status": warp.read_status(s, access.SLOT),
-        "team": team,
-        "team_default": team or access.DEFAULT_TEAM,
-        "aud": aud,
-        "target": f"http://{gateway}:{os.environ.get('DASHBOARD_PORT', '8080')}",
-        "secured": bool(team and aud),
-        "email": getattr(request.state, "access_email", None),
-    }
-
-
-def portal_ctx(request: Request) -> dict:
-    """Geräte-Portal (eigene Seite für unterwegs) für die Einstellungsseite."""
-    s: Settings = request.app.state.settings
-    gateway = s.tunnel_ip.rsplit(".", 1)[0] + ".1"
-    team, aud = access.portal_config()
-    return {
-        "enabled": bool(s.portal_port),
-        "target": f"http://{gateway}:{s.portal_port}",
-        "aud": aud,
-        "secured": bool(team and aud),
-        "has_api": bool(db.get_setting(access.CF_TOKEN_KEY) and db.get_setting(access.CF_ACCOUNT_KEY)),
-        "account": db.get_setting(access.CF_ACCOUNT_KEY),
-        "links": db.portal_links(),
-        "pairing": db.pairing_open(),
-        "devices": [d for d in db.devices() if d.get("mac")],
-    }
-
-
 def localdomain_ctx(request: Request) -> dict:
     """Eigene Domain nur im Heimnetz (Let's Encrypt per DNS-Challenge) für die Einstellungsseite."""
     s: Settings = request.app.state.settings
@@ -383,16 +352,15 @@ def localdomain_ctx(request: Request) -> dict:
         "email": db.get_setting(localdomain.EMAIL_KEY),
         "has_token": bool(db.get_setting(localdomain.TOKEN_KEY)),
         "cert": info,
+        "redirect_certs": sorted(localdomain.real_cert_hosts(s) - set(localdomain.domains())),
         "status": localdomain.status(),
     }
 
 
 @router.get("/einstellungen", response_class=HTMLResponse, dependencies=[Depends(require_password)])
 async def einstellungen(request: Request):
-    tunnel = await run_in_threadpool(tunnel_ctx, request)
-    portal = await run_in_threadpool(portal_ctx, request)
     lokal = await run_in_threadpool(localdomain_ctx, request)
-    return await page(request, "seiten/einstellungen.html", "Einstellungen", "/einstellungen", [], tunnel=tunnel, portal=portal, lokal=lokal)
+    return await page(request, "seiten/einstellungen.html", "Einstellungen", "/einstellungen", [], lokal=lokal)
 
 
 @router.get("/teil/{name}", response_class=HTMLResponse, dependencies=[Depends(require_password)])

@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import access, blocklist, certs, db, fritz, localdomain, portal as portal_app, views, warp
+from . import blocklist, certs, db, fritz, localdomain, views, warp
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -114,27 +114,6 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # noqa: BLE001
             print(f"cloudy: Port 80 nicht gebunden: {exc}", flush=True)
 
-    # Geräte-Portal (eigene Seite, eigener Port) – nur erreichbar über den Cloudflare Tunnel.
-    portal_server = None
-    if settings.portal_port and "PYTEST_CURRENT_TEST" not in os.environ:
-        try:
-            portal_app.portal.state.settings = settings
-            portal_app.portal.state.presence = presence
-            portal_server = uvicorn.Server(
-                uvicorn.Config(portal_app.portal, host="0.0.0.0", port=settings.portal_port, lifespan="off", log_level="warning")
-            )
-
-            def _run_portal():
-                try:
-                    portal_server.run()
-                except BaseException as exc:  # noqa: BLE001 – das Portal darf das Dashboard nie verhindern
-                    print(f"cloudy: Geräte-Portal beendet: {exc}", flush=True)
-
-            threading.Thread(target=_run_portal, daemon=True).start()
-            print(f"cloudy: Geräte-Portal an (Port {settings.portal_port})", flush=True)
-        except Exception as exc:  # noqa: BLE001
-            print(f"cloudy: Geräte-Portal nicht gestartet: {exc}", flush=True)
-
     https_server = None
     if settings.https_port:
         try:
@@ -155,8 +134,6 @@ async def lifespan(app: FastAPI):
         threading.Thread(target=localdomain.renew_loop, args=(settings, renew_stop), daemon=True).start()
     yield
     renew_stop.set()
-    if portal_server:
-        portal_server.should_exit = True
     if https_server:
         https_server.should_exit = True
     if http_80_server:
@@ -180,7 +157,7 @@ async def redirect_middleware(request: Request, call_next):
     settings = getattr(request.app.state, "settings", None)
     own_domain = await run_in_threadpool(localdomain.domain)
     dash_domain = await run_in_threadpool(localdomain.dashboard_domain)
-    if dash_domain and raw_host == dash_domain and request.url.scheme == "http" and not from_tunnel(request):
+    if dash_domain and raw_host == dash_domain and request.url.scheme == "http":
         # Dashboard unter der eigenen Domain: Passwort und Daten nur verschlüsselt, sobald das Zertifikat da ist.
         if settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
             port = "" if settings.https_port == 443 else f":{settings.https_port}"
@@ -188,8 +165,6 @@ async def redirect_middleware(request: Request, call_next):
     if own_domain and raw_host == own_domain:
         # Eigene Domain nur im Heimnetz (z. B. main.kulbarts.com): zeigt ausschließlich „Mein Gerät“.
         path = request.url.path
-        if from_tunnel(request):
-            return Response("Nur im Heimnetz.", status_code=404)
         if request.url.scheme == "http" and settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
             port = "" if settings.https_port == 443 else f":{settings.https_port}"
             return RedirectResponse(f"https://{own_domain}{port}/mein", status_code=302)
@@ -208,50 +183,11 @@ async def redirect_middleware(request: Request, call_next):
             if short:
                 own_hosts.add(short)
 
-    if raw_host and raw_host not in own_hosts and not from_tunnel(request):
+    if raw_host and raw_host not in own_hosts:
         rule = find_rule(raw_host, await run_in_threadpool(db.redirect_map))
         if rule:
             return RedirectResponse(rule[1], status_code=302)
 
-    return await call_next(request)
-
-
-def from_tunnel(request: Request) -> bool:
-    """Kommt die Anfrage über den Cloudflare Tunnel (Fernzugriff) statt aus dem Heimnetz?"""
-    settings = getattr(request.app.state, "settings", None)
-    host = request.client.host if request.client else ""
-    return bool(settings and settings.tunnel_ip and host == settings.tunnel_ip)
-
-
-def _tunnel_denied(title: str, text: str) -> HTMLResponse:
-    body = (
-        '<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
-        f"<title>cloudy – {title}</title><body style=\"font-family:system-ui;max-width:32rem;margin:4rem auto;padding:0 1rem\">"
-        f"<h1>🔒 {title}</h1><p>{text}</p></body></html>"
-    )
-    return HTMLResponse(body, status_code=403)
-
-
-# Wird nach redirect_middleware registriert und läuft damit zuerst.
-@app.middleware("http")
-async def tunnel_guard(request: Request, call_next):
-    """Fernzugriff: Nur mit gültiger Cloudflare-Access-Anmeldung, sonst nichts – auch wenn bei Cloudflare
-    die Access-App fehlt oder falsch eingestellt ist."""
-    if not from_tunnel(request):
-        return await call_next(request)
-    path = request.url.path
-    if path == "/mein" or path.startswith("/mein/"):
-        return _tunnel_denied("Nur im Heimnetz", "„Mein Gerät“ erkennt dein Gerät im WLAN und geht deshalb nur zu Hause.")
-    team, aud = await run_in_threadpool(access.config)
-    token = request.headers.get("cf-access-jwt-assertion") or request.cookies.get("CF_Authorization") or ""
-    email = await run_in_threadpool(access.verify, token, team, aud) if team and aud and token else None
-    if not email:
-        return _tunnel_denied(
-            "Nur mit Cloudflare-Anmeldung",
-            "Der Fernzugriff auf cloudy braucht eine Anmeldung über Cloudflare Zero Trust. "
-            "Ist sie eingerichtet (Einstellungen → Fernzugriff: Team-Domain und AUD), Seite neu laden.",
-        )
-    request.state.access_email = email
     return await call_next(request)
 
 
@@ -383,19 +319,6 @@ async def mein_geraet(request: Request, ok: int | None = None, fehler: str | Non
     )
 
 
-@app.post("/mein/koppeln")
-async def mein_koppeln(request: Request, code: str = Form("")):
-    """Kopplungscode vom Geräte-Portal einlösen: das Portal-Gerät gehört dann zu diesem Gerät (MAC aus Client-IP)."""
-    ip = client_ip(request)
-    device = await run_in_threadpool(db.device, ip) if ip else None
-    mac = ((device or {}).get("mac") or "").strip().lower()
-    if not warp.MAC_RE.match(mac):
-        return RedirectResponse(f"/mein?fehler={quote('Gerät noch nicht erkannt – bitte kurz warten.')}", status_code=303)
-    if not await run_in_threadpool(db.pairing_redeem, code, mac):
-        return RedirectResponse(f"/mein?fehler={quote('Code ungültig oder abgelaufen.')}", status_code=303)
-    return RedirectResponse("/mein?ok=1", status_code=303)
-
-
 @app.post("/mein/warp")
 async def mein_set_warp(request: Request, slot: str = Form("")):
     """VPN/WARP nur für das Gerät umstellen, das gerade die Seite aufruft (MAC aus Client-IP)."""
@@ -483,34 +406,6 @@ async def warp_logout(request: Request, slot: str):
     return RedirectResponse("/#warp", status_code=303)
 
 
-@app.post("/tunnel/login", dependencies=[Depends(require_password)])
-async def tunnel_login(request: Request, token: str = Form(""), team: str = Form(""), aud: str = Form("")):
-    """Fernzugriff einrichten: Tunnel-Token (leer = behalten) und Access-Daten (Team-Domain, AUD)."""
-    settings = request.app.state.settings
-    token = token.strip()
-    try:
-        team_n = access.normalize_team(team) if team.strip() else ""
-        aud_n = access.normalize_aud(aud) if aud.strip() else ""
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if token and (len(token) > 8192 or any(ch.isspace() for ch in token)):
-        raise HTTPException(status_code=400, detail="Ungültiger Token")
-    if team_n:
-        await run_in_threadpool(db.set_setting, access.TEAM_KEY, team_n)
-    if aud_n:
-        await run_in_threadpool(db.set_setting, access.AUD_KEY, aud_n)
-    if token:
-        await run_in_threadpool(warp.save_token, settings, access.SLOT, token)
-    return RedirectResponse("/einstellungen#fernzugriff", status_code=303)
-
-
-@app.post("/tunnel/logout", dependencies=[Depends(require_password)])
-async def tunnel_logout(request: Request):
-    """Tunnel aus: Token löschen (der Container beendet cloudflared). Team/AUD bleiben gespeichert."""
-    await run_in_threadpool(warp.remove_token, request.app.state.settings, access.SLOT)
-    return RedirectResponse("/einstellungen#fernzugriff", status_code=303)
-
-
 @app.post("/lokale-domain", dependencies=[Depends(require_password)])
 async def lokale_domain_set(
     request: Request, name: str = Form(""), dashboard: str = Form(""), cf_token: str = Form(""), email: str = Form("")
@@ -533,58 +428,25 @@ async def lokale_domain_set(
     await run_in_threadpool(db.set_setting, localdomain.DASH_KEY, dashboard)
     await run_in_threadpool(db.set_setting, localdomain.EMAIL_KEY, email)
     if cf_token:
+        # Der Token bleibt gespeichert, bis er ausdrücklich gelöscht wird (auch wenn die Domains leer sind).
         await run_in_threadpool(db.set_setting, localdomain.TOKEN_KEY, cf_token)
-    if not name and not dashboard:
-        await run_in_threadpool(db.set_setting, localdomain.TOKEN_KEY, "")
+        await run_in_threadpool(localdomain.reset_skipped)
     await run_in_threadpool(_apply_redirects, request)  # schreibt auch die DNS-Zeilen für die Domains
-    if name or dashboard:
-        localdomain.start_in_background(request.app.state.settings)
+    localdomain.start_in_background(request.app.state.settings)
     return RedirectResponse("/einstellungen#lokale-domain", status_code=303)
 
 
 @app.post("/lokale-domain/neu", dependencies=[Depends(require_password)])
 async def lokale_domain_neu(request: Request):
+    await run_in_threadpool(localdomain.reset_skipped)
     localdomain.start_in_background(request.app.state.settings)
     return RedirectResponse("/einstellungen#lokale-domain", status_code=303)
 
 
-@app.post("/portal/config", dependencies=[Depends(require_password)])
-async def portal_config(aud: str = Form(""), cf_token: str = Form(""), cf_account: str = Form("")):
-    """Geräte-Portal einrichten: AUD der Portal-Access-App, optional Cloudflare-API (Zero Trust: Read) für die Geräte-Zuordnung."""
-    try:
-        aud_n = access.normalize_aud(aud) if aud.strip() else ""
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    account = cf_account.strip().lower()
-    if account and not re.match(r"^[0-9a-f]{32}$", account):
-        raise HTTPException(status_code=400, detail="Account-ID ungültig (32 Hex-Zeichen)")
-    cf_token = cf_token.strip()
-    if cf_token and (len(cf_token) > 512 or any(ch.isspace() for ch in cf_token)):
-        raise HTTPException(status_code=400, detail="Ungültiger API-Token")
-    if aud_n:
-        await run_in_threadpool(db.set_setting, access.PORTAL_AUD_KEY, aud_n)
-    if account:
-        await run_in_threadpool(db.set_setting, access.CF_ACCOUNT_KEY, account)
-    if cf_token:
-        await run_in_threadpool(db.set_setting, access.CF_TOKEN_KEY, cf_token)
-    return RedirectResponse("/einstellungen#portal", status_code=303)
-
-
-@app.post("/portal/pair", dependencies=[Depends(require_password)])
-async def portal_pair(code: str = Form(""), mac: str = Form("")):
-    """Kopplungscode im Dashboard einlösen und einem Gerät zuordnen."""
-    mac = mac.strip().lower()
-    if not warp.MAC_RE.match(mac):
-        raise HTTPException(status_code=400, detail="Ungültige MAC-Adresse")
-    if not await run_in_threadpool(db.pairing_redeem, code, mac):
-        return RedirectResponse(f"/einstellungen?fehler={quote('Code ungültig oder abgelaufen.')}#portal", status_code=303)
-    return RedirectResponse("/einstellungen#portal", status_code=303)
-
-
-@app.post("/portal/unlink", dependencies=[Depends(require_password)])
-async def portal_unlink(cf_device_id: str = Form(...)):
-    await run_in_threadpool(db.portal_unlink, cf_device_id)
-    return RedirectResponse("/einstellungen#portal", status_code=303)
+@app.post("/lokale-domain/token-loeschen", dependencies=[Depends(require_password)])
+async def lokale_domain_token_loeschen():
+    await run_in_threadpool(db.set_setting, localdomain.TOKEN_KEY, "")
+    return RedirectResponse("/einstellungen#lokale-domain", status_code=303)
 
 
 @app.post("/devices/warp", dependencies=[Depends(require_password)])
@@ -685,6 +547,8 @@ async def redirects_add(request: Request, source: str = Form(...), target: str =
     except ValueError as exc:
         return RedirectResponse(f"/?fehler={quote(str(exc))}#redirects", status_code=303)
     await run_in_threadpool(_apply_redirects, request)
+    # Liegt die Quelle in einer Zone des Cloudflare-Tokens (z. B. pimmel.kulbarts.com), gibt es dafür ein echtes Zertifikat.
+    localdomain.start_in_background(request.app.state.settings)
     return RedirectResponse("/#redirects", status_code=303)
 
 

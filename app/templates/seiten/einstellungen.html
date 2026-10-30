@@ -60,66 +60,21 @@
     </table>
   </div>
 </div>
-<div class="card" id="fernzugriff">
-  {% set tn = params.tunnel %}
-  <h2>🌍 Fernzugriff (Cloudflare Tunnel)</h2>
-  <p class="small">
-    Das Dashboard von unterwegs unter deiner eigenen Adresse (z. B. <code>https://cloudy.kulbarts.com</code>) –
-    nur nach Anmeldung über Cloudflare Zero Trust.
-  </p>
-  <div class="status-row" style="margin:.5rem 0 1rem">
-    <span class="pill {{ 'on' if tn.status.connected else ('warn' if tn.has_token else '') }}">
-      Tunnel: {{ tn.status.text if tn.has_token else 'nicht eingerichtet' }}
-    </span>
-    <span class="pill {{ 'on' if tn.secured else 'warn' }}">
-      Anmeldung: {{ 'geprüft (' ~ tn.team ~ ')' if tn.secured else 'Team-Domain und AUD fehlen – Fernzugriff gesperrt' }}
-    </span>
-    {% if tn.email %}<span class="pill">Angemeldet als {{ tn.email }}</span>{% endif %}
-  </div>
-
-  <form method="post" action="/tunnel/login" style="display:grid;gap:.5rem;max-width:38rem">
-    <label class="small">Tunnel-Token
-      <input name="token" type="password" autocomplete="off" style="width:100%"
-             placeholder="{{ 'Neuer Token (leer = behalten)' if tn.has_token else 'eyJh… aus Zero Trust → Networks → Tunnels' }}">
-    </label>
-    <label class="small">Team-Domain
-      <input name="team" autocomplete="off" style="width:100%" value="{{ tn.team_default }}">
-    </label>
-    <label class="small">AUD-Tag der Access-App
-      <input name="aud" autocomplete="off" style="width:100%" value="{{ tn.aud }}" placeholder="Access → Applications → cloudy → Übersicht → Application Audience (AUD) Tag">
-    </label>
-    <div><button type="submit">Speichern</button></div>
-  </form>
-  {% if tn.has_token %}
-  <form method="post" action="/tunnel/logout" style="margin-top:.5rem"
-        onsubmit="return confirm('Tunnel ausschalten? Von unterwegs ist cloudy dann nicht mehr erreichbar.')">
-    <button type="submit">Tunnel ausschalten</button>
-  </form>
-  {% endif %}
-
-  <div class="info small" style="margin-top:1rem">
-    <b>Einrichtung bei Cloudflare:</b><br>
-    1. Zero Trust → <i>Networks → Tunnels</i> → Tunnel anlegen (z. B. <code>cloudy-pi</code>), den Token (<code>eyJh…</code>) oben einfügen.<br>
-    2. Beim Tunnel <i>Public Hostname</i>: <code>cloudy.kulbarts.com</code> → Service <code>{{ tn.target }}</code><br>
-    3. <i>Access → Applications</i> → Self-hosted für <code>cloudy.kulbarts.com</code> mit Policy (z. B. deine E-Mail),
-       „Mit Cloudflare One Client authentifizieren“ an. Den <i>AUD-Tag</i> der App oben eintragen.<br>
-    Ohne gültige Anmeldung lässt cloudy über den Tunnel nichts durch – auch wenn die Access-App fehlt.
-    „Mein Gerät“ (<code>/mein</code>) geht nur im Heimnetz.
-  </div>
-</div>
 <div class="card" id="lokale-domain">
   {% set ld = params.lokal %}
-  <h2>🔐 Eigene Domain nur im Heimnetz (z. B. main.kulbarts.com)</h2>
+  <h2>🔐 Eigene Domains nur im Heimnetz &amp; Cloudflare-Token (z. B. cloudy.kulbarts.com)</h2>
   <p class="small">
     Der Pi beantwortet die Domains im Heimnetz selbst: eine zeigt das ganze Dashboard, die andere nur <code>/mein</code> („Mein Gerät“: VPN an/aus).
     Das Zertifikat holt er sich bei Let's Encrypt per DNS-Challenge – auf den Geräten muss nichts installiert werden.
-    Von außen ist die Seite nicht erreichbar. Der Token wird nur hier in der Datenbank gespeichert, nicht im Repo.
+    Von außen ist die Seite nicht erreichbar. Der Token wird nur hier in der Datenbank gespeichert (nicht im Repo) und bleibt, bis du ihn löschst.
+    Dasselbe Zertifikat bekommen auch Domain-Weiterleitungen, deren Quelle in deiner Cloudflare-Zone liegt.
   </p>
   <div class="status-row" style="margin:.5rem 0 1rem">
     <span class="pill {{ 'on' if ld.cert else ('warn' if (ld.domain or ld.dashboard) else '') }}">
       Zertifikat: {{ ('gültig bis ' ~ ld.cert.expires.strftime('%d.%m.%Y')) if ld.cert else ('noch keins' if (ld.domain or ld.dashboard) else 'nicht eingerichtet') }}
     </span>
     {% if ld.status.state %}<span class="pill {{ 'warn' if ld.status.state == 'fehler' else '' }}">{{ ld.status.text }}</span>{% endif %}
+    {% if ld.redirect_certs %}<span class="pill on">Auch für Weiterleitungen: {{ ld.redirect_certs | join(', ') }}</span>{% endif %}
   </div>
   <form method="post" action="/lokale-domain" style="display:grid;gap:.5rem;max-width:38rem">
     <label class="small">Domain fürs ganze Dashboard (wie <code>cloudy.lan</code>)
@@ -137,101 +92,18 @@
     </label>
     <div><button type="submit">Speichern &amp; Zertifikat holen</button></div>
   </form>
-  {% if (ld.domain or ld.dashboard) and ld.has_token %}
-  <form method="post" action="/lokale-domain/neu" style="margin-top:.5rem"><button type="submit">Zertifikat jetzt neu holen</button></form>
+  {% if ld.has_token %}
+  <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.5rem">
+    <form method="post" action="/lokale-domain/neu"><button type="submit">Zertifikat jetzt neu holen</button></form>
+    <form method="post" action="/lokale-domain/token-loeschen" onsubmit="return confirm('Gespeicherten Cloudflare-Token löschen?')">
+      <button type="submit" class="secondary">Token löschen</button>
+    </form>
+  </div>
   {% endif %}
   <div class="info small" style="margin-top:1rem">
-    <b>Wichtig:</b> Bei Cloudflare den Tunnel-Hostnamen und den DNS-Eintrag für diese Domain <b>löschen</b>,
-    sonst führt sie von außen weiter zum Tunnel. Geräte mit dem echten WARP-Client (Cloudflare One) fragen Cloudflare statt des Pi –
+    <b>Wichtig:</b> Bei Cloudflare darf es für diese Domains keinen öffentlichen DNS-Eintrag auf deine Zuhause-Adresse geben –
+    sie sollen nur im Heimnetz auflösen. Geräte mit dem echten WARP-Client (Cloudflare One) fragen Cloudflare statt des Pi –
     dort wird die Domain nicht aufgelöst; Geräte, die der Pi per VPN/WARP-Container leitet, funktionieren.
   </div>
-</div>
-<div class="card" id="portal">
-  {% set portal = params.portal %}
-  <h2>📱 Geräte-Portal (von unterwegs)</h2>
-  {% if not portal.enabled %}
-  <p class="small muted">Das Portal ist aus (<code>PORTAL_PORT=0</code> in der <code>.env</code>).</p>
-  {% else %}
-  <p class="small">
-    Eigene Seite (z. B. <code>https://main.kulbarts.com</code>) – erkennt das Gerät, das aufruft, und lässt dort einstellen,
-    ob es über VPN/WARP oder normal ins Internet geht. Läuft auf Port <code>{{ settings.portal_port }}</code>, geschützt durch Cloudflare Access.
-  </p>
-  <div class="status-row" style="margin:.5rem 0 1rem">
-    <span class="pill {{ 'on' if portal.secured else 'warn' }}">
-      Anmeldung: {{ 'AUD eingetragen' if portal.secured else 'AUD der Portal-App fehlt – Portal gesperrt' }}
-    </span>
-    <span class="pill {{ 'on' if portal.has_api else '' }}">
-      Automatische Zuordnung: {{ 'API-Token da' if portal.has_api else 'nur Kopplungscode / Namensvorschlag' }}
-    </span>
-  </div>
-
-  <form method="post" action="/portal/config" style="display:grid;gap:.5rem;max-width:38rem">
-    <label class="small">AUD-Tag der Portal-Access-App
-      <input name="aud" autocomplete="off" style="width:100%" value="{{ portal.aud }}"
-             placeholder="Access → Applications → cloudy Geräte-Portal → Application Audience (AUD) Tag">
-    </label>
-    <label class="small">Cloudflare-API-Token (optional, Recht „Zero Trust: Read“)
-      <input name="cf_token" type="password" autocomplete="off" style="width:100%"
-             placeholder="{{ 'Neuer Token (leer = behalten)' if portal.has_api else 'Token für die automatische Geräte-Zuordnung' }}">
-    </label>
-    <label class="small">Cloudflare-Account-ID (optional)
-      <input name="cf_account" autocomplete="off" style="width:100%" value="{{ portal.account }}" placeholder="32 Zeichen, steht in der Cloudflare-URL">
-    </label>
-    <div><button type="submit">Speichern</button></div>
-  </form>
-
-  <h3 style="margin-top:1.25rem">Offene Kopplungen</h3>
-  {% if portal.pairing %}
-  <form method="post" action="/portal/pair" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:end">
-    <label class="small">Code
-      <select name="code">
-        {% for p in portal.pairing %}<option value="{{ p.code }}">{{ p.code }} · {{ p.cf_name or p.email or 'Browser' }}</option>{% endfor %}
-      </select>
-    </label>
-    <label class="small">gehört zu Gerät
-      <select name="mac">
-        {% for d in portal.devices %}<option value="{{ d.mac }}">{{ d.hostname or d.ip or d.mac }} ({{ d.mac }})</option>{% endfor %}
-      </select>
-    </label>
-    <button type="submit">Zuordnen</button>
-  </form>
-  {% else %}
-  <p class="muted small">Keine. Ein Code erscheint auf der Portal-Seite, wenn ein Gerät noch nicht zugeordnet ist.</p>
-  {% endif %}
-
-  <h3 style="margin-top:1.25rem">Zugeordnete Geräte</h3>
-  {% if portal.links %}
-  <div class="table-wrap"><table>
-    <thead><tr><th>Cloudflare-Gerät</th><th>Gerät im Heimnetz</th><th>Zuletzt</th><th></th></tr></thead>
-    <tbody>
-    {% for l in portal.links %}
-      <tr>
-        <td>{{ l.cf_name or l.email or '–' }}<div class="muted small mono">{{ l.cf_device_id[:24] }}</div></td>
-        <td>{{ l.hostname or '–' }}<div class="muted small mono">{{ l.mac }}</div></td>
-        <td class="muted small">{{ fmt_time(l.last_used) if l.last_used else '–' }}</td>
-        <td>
-          <form method="post" action="/portal/unlink" class="inline">
-            <input type="hidden" name="cf_device_id" value="{{ l.cf_device_id }}">
-            <button class="secondary small">Entfernen</button>
-          </form>
-        </td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table></div>
-  {% else %}
-  <p class="muted small">Noch keine.</p>
-  {% endif %}
-
-  <div class="info small" style="margin-top:1rem">
-    <b>Einrichtung bei Cloudflare:</b><br>
-    1. Zero Trust → <i>Networks → Tunnels</i> → vorhandener Tunnel → <i>Public Hostname</i> hinzufügen:
-       <code>main.kulbarts.com</code> → Service <code>{{ portal.target }}</code><br>
-    2. <i>Access → Applications</i> → Self-hosted „cloudy Geräte-Portal“ für <code>main.kulbarts.com</code>, Policy z. B. deine E-Mail,
-       „Mit Cloudflare One Client authentifizieren“ (WARP) an. AUD-Tag oben eintragen.<br>
-    3. <i>Settings → WARP Client</i>: „Allow WARP authentication identity“ einschalten.<br>
-    Ohne gültige Anmeldung für <b>diese</b> App lässt das Portal nichts durch – das Dashboard-Token reicht nicht.
-  </div>
-  {% endif %}
 </div>
 {% endblock %}

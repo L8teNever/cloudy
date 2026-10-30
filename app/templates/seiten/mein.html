@@ -89,21 +89,6 @@
     {% endif %}
     {% endif %}
 
-    {% if device and device.mac %}
-    <div class="card">
-      <form method="post" action="/mein/koppeln">
-        <label>Mit „Geräte-Portal“ verknüpfen</label>
-        <p class="muted small" style="margin:0 0 .6rem">
-          Auf der Portal-Seite (von unterwegs) wird ein 6-stelliger Code angezeigt. Hier eingeben, damit das Portal weiß,
-          welches Gerät du bist.
-        </p>
-        <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="123456" autocomplete="off"
-               style="font:inherit;font-size:1rem;padding:.65rem .75rem;border-radius:10px;border:1px solid var(--line);width:100%;margin-bottom:.75rem;background:var(--card);color:var(--ink)">
-        <button type="submit">Verknüpfen</button>
-      </form>
-    </div>
-    {% endif %}
-
     <footer class="muted small">
       Adresse zum Merken: <span class="mono">{{ settings.local_name or 'cloudy.lan' }}/mein</span>
     </footer>

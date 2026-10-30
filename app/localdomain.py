@@ -2,6 +2,9 @@
 
 Zwei Namen sind einstellbar: einer für das ganze Dashboard (statt cloudy.lan, z. B. cloudy.kulbarts.com) und einer
 nur für „Mein Gerät“ (/mein, z. B. main.kulbarts.com). Beide bekommen zusammen ein Zertifikat.
+Auch Domain-Weiterleitungen, deren Quelle in einer Cloudflare-Zone des Tokens liegt (z. B. pimmel.kulbarts.com),
+landen im selben Zertifikat und laufen so ohne Warnung und ohne lokale CA auf dem Gerät. Alle anderen Quellen
+(tiktok.com …) bleiben bei der lokalen cloudy-CA.
 
 So funktioniert es:
 1. DNS: dnsmasq beantwortet die Domains im Heimnetz mit der IP des Pi. Von außen führt nichts hierher
@@ -9,6 +12,7 @@ So funktioniert es:
 2. Zertifikat: Let's Encrypt per DNS-Challenge (ACME DNS-01). Dafür legt cloudy kurz einen TXT-Eintrag
    `_acme-challenge.<domain>` über die Cloudflare-API an. Port 80/443 müssen nicht aus dem Internet erreichbar sein.
 3. Der Cloudflare-API-Token steht nur in der Datenbank (Dashboard → Einstellungen), nie im Repo oder in .env.
+   Er bleibt gespeichert, bis man ihn ausdrücklich löscht.
 Auf den Geräten muss nichts installiert werden: Browser vertrauen Let's Encrypt von sich aus.
 """
 
@@ -36,6 +40,7 @@ DASH_KEY = "local_domain_dashboard"  # das ganze Dashboard (wie cloudy.lan)
 TOKEN_KEY = "local_domain_cf_token"
 EMAIL_KEY = "local_domain_email"
 STATUS_KEY = "local_domain_status"
+SKIPPED_KEY = "local_domain_skipped"  # Weiterleitungs-Quellen ohne passende Zone beim Token (eine pro Zeile)
 DIRECTORY = "https://acme-v02.api.letsencrypt.org/directory"
 CF_API = "https://api.cloudflare.com/client/v4"
 RENEW_BEFORE_DAYS = 30
@@ -50,6 +55,10 @@ _issue_lock = threading.Lock()
 
 class AcmeError(Exception):
     pass
+
+
+class NoZone(AcmeError):
+    """Die Domain liegt in keiner Cloudflare-Zone, auf die der Token zugreifen darf."""
 
 
 def normalize_domain(text: str) -> str:
@@ -75,6 +84,25 @@ def domains() -> list[str]:
     return list(dict.fromkeys(d for d in (dashboard_domain(), domain()) if d))
 
 
+def skipped() -> set[str]:
+    return {n for n in db.get_setting(SKIPPED_KEY).split("\n") if n}
+
+
+def reset_skipped() -> None:
+    db.set_setting(SKIPPED_KEY, "")
+
+
+def redirect_names() -> list[str]:
+    """Quellen der Domain-Weiterleitungen, für die ein echtes Zertifikat versucht wird (nur echte Domains)."""
+    own, skip = set(domains()), skipped()
+    return [n for n in sorted(db.redirect_map()) if n not in own and n not in skip and HOST_RE.match(n)]
+
+
+def cert_names() -> list[str]:
+    """Alle Namen, die ins gemeinsame Zertifikat sollen (Let's Encrypt erlaubt höchstens 100)."""
+    return list(dict.fromkeys(domains() + redirect_names()))[:100]
+
+
 def paths(s: Settings) -> tuple[str, str]:
     d = os.path.join(s.data_dir, "certs")
     return os.path.join(d, "lokale-domain.crt"), os.path.join(d, "lokale-domain.key")
@@ -88,16 +116,34 @@ def dnsmasq_lines(names: list[str], pi_ip: str) -> list[str]:
     return [f"address=/{n}/{pi_ip}" for n in names]
 
 
+_cert_cache: dict[str, tuple[float, dict | None]] = {}
+
+
 def cert_info(s: Settings) -> dict | None:
-    """{'names': [...], 'expires': datetime} des aktuellen Zertifikats oder None."""
+    """{'names': [...], 'expires': datetime} des aktuellen Zertifikats oder None (nur bei Änderung neu gelesen)."""
     crt, _ = paths(s)
+    try:
+        mtime = os.path.getmtime(crt)
+    except OSError:
+        return None
+    cached = _cert_cache.get(crt)
+    if cached and cached[0] == mtime:
+        return cached[1]
     try:
         with open(crt, "rb") as f:
             cert = x509.load_pem_x509_certificate(f.read())
-    except (FileNotFoundError, ValueError):
-        return None
-    san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
-    return {"names": san.get_values_for_type(x509.DNSName), "expires": cert.not_valid_after_utc}
+        san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+        info = {"names": san.get_values_for_type(x509.DNSName), "expires": cert.not_valid_after_utc}
+    except (OSError, ValueError, x509.ExtensionNotFound):
+        info = None
+    _cert_cache[crt] = (mtime, info)
+    return info
+
+
+def real_cert_hosts(s: Settings) -> set[str]:
+    """Namen, für die gerade wirklich das Let's-Encrypt-Zertifikat ausgeliefert wird."""
+    info = cert_info(s)
+    return set(info["names"]) & set(cert_names()) if info else set()
 
 
 def needs_issue(s: Settings, names: list[str]) -> bool:
@@ -112,7 +158,8 @@ def needs_issue(s: Settings, names: list[str]) -> bool:
 
 def sni_pair(s: Settings, host: str) -> tuple[str, str] | None:
     """Für den HTTPS-Server: Zertifikat + Schlüssel, wenn der Browser genau diese Domain aufruft."""
-    if host.lower().rstrip(".") not in domains():
+    host = host.lower().rstrip(".")
+    if host not in domains() and host not in real_cert_hosts(s):
         return None
     crt, key = paths(s)
     return (crt, key) if os.path.exists(crt) and os.path.exists(key) else None
@@ -135,6 +182,7 @@ class Cloudflare:
     def __init__(self, token: str, http=_http):
         self.token = token
         self.http = http
+        self._zones: dict[str, str] = {}
 
     def _call(self, method: str, path: str, body: dict | None = None):
         headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
@@ -154,10 +202,13 @@ class Cloudflare:
         parts = name.split(".")
         for i in range(len(parts) - 1):
             zone = ".".join(parts[i:])
-            result = self._call("GET", f"/zones?name={zone}")
-            if result:
-                return result[0]["id"]
-        raise AcmeError("Cloudflare: keine Zone für diese Domain gefunden (oder Token darf sie nicht lesen)")
+            if zone not in self._zones:
+                result = self._call("GET", f"/zones?name={zone}")
+                if not result:
+                    continue
+                self._zones[zone] = result[0]["id"]
+            return self._zones[zone]
+        raise NoZone("Cloudflare: keine Zone für diese Domain gefunden (oder Token darf sie nicht lesen)")
 
     def add_txt(self, zone: str, name: str, value: str) -> str:
         record = self._call("POST", f"/zones/{zone}/dns_records",
@@ -308,25 +359,51 @@ def _write_private(path: str, data: bytes) -> None:
     os.replace(path + ".tmp", path)
 
 
+def _issue_once(s: Settings, acme_factory, token: str) -> None:
+    cf = Cloudflare(token)
+    own = set(domains())
+    names = []
+    for name in cert_names():
+        if name not in own:
+            try:
+                cf.zone_id(name)
+            except NoZone:  # gehört nicht zu dieser Cloudflare-Zone (z. B. tiktok.com): bleibt bei der lokalen CA
+                db.set_setting(SKIPPED_KEY, "\n".join(sorted(skipped() | {name})))
+                continue
+        names.append(name)
+    if not names:
+        db.set_setting(STATUS_KEY, f"{int(time.time())}|ok|Nichts zu tun.")
+        return
+    db.set_setting(STATUS_KEY, f"{int(time.time())}|läuft|Zertifikat wird geholt …")
+    acme = acme_factory(_account_key(s))
+    acme.account(db.get_setting(EMAIL_KEY))
+    chain, key_pem = acme.issue(names, cf)
+    crt, key = paths(s)
+    with open(crt, "w", encoding="utf-8") as f:
+        f.write(chain)
+    _write_private(key, key_pem.encode())
+    db.set_setting(STATUS_KEY, f"{int(time.time())}|ok|Zertifikat geholt ({len(names)} Namen).")
+
+
 def issue_now(s: Settings, acme_factory=Acme) -> None:
-    """Zertifikat für die eingestellte Domain holen und ablegen. Fehler landen als Status in der Datenbank."""
-    names, token = domains(), db.get_setting(TOKEN_KEY)
-    if not names or not token:
+    """Zertifikat für alle Namen holen und ablegen. Fehler landen als Status in der Datenbank.
+
+    Kommt währenddessen eine Weiterleitung dazu, wird danach gleich noch einmal geholt.
+    """
+    token = db.get_setting(TOKEN_KEY)
+    if not cert_names() or not token:
         return
     if not _issue_lock.acquire(blocking=False):
         return
     try:
-        db.set_setting(STATUS_KEY, f"{int(time.time())}|läuft|Zertifikat wird geholt …")
-        acme = acme_factory(_account_key(s))
-        acme.account(db.get_setting(EMAIL_KEY))
-        chain, key_pem = acme.issue(names, Cloudflare(token))
-        crt, key = paths(s)
-        with open(crt, "w", encoding="utf-8") as f:
-            f.write(chain)
-        _write_private(key, key_pem.encode())
-        db.set_setting(STATUS_KEY, f"{int(time.time())}|ok|Zertifikat geholt.")
-    except Exception as exc:  # noqa: BLE001 – Fehler anzeigen, nie den Dienst stoppen
-        db.set_setting(STATUS_KEY, f"{int(time.time())}|fehler|{exc}")
+        for _ in range(3):
+            try:
+                _issue_once(s, acme_factory, token)
+            except Exception as exc:  # noqa: BLE001 – Fehler anzeigen, nie den Dienst stoppen
+                db.set_setting(STATUS_KEY, f"{int(time.time())}|fehler|{exc}")
+                return
+            if not needs_issue(s, cert_names()):
+                return
     finally:
         _issue_lock.release()
 
@@ -346,7 +423,7 @@ def renew_loop(s: Settings, stop: threading.Event) -> None:
     while True:
         wait = CHECK_EVERY
         try:
-            if domains() and db.get_setting(TOKEN_KEY) and needs_issue(s, domains()):
+            if cert_names() and db.get_setting(TOKEN_KEY) and needs_issue(s, cert_names()):
                 issue_now(s)
                 if status()["state"] == "fehler":
                     wait = RETRY_AFTER_ERROR

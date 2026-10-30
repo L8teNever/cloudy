@@ -28,8 +28,6 @@ class Settings:
     warp_killswitch: bool
     ipv6_enabled: bool = False
     ipv6_prefix: str = ""
-    tunnel_ip: str = "172.29.88.10"
-    portal_port: int = 8081
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -63,9 +61,6 @@ class Settings:
             warp_killswitch=_flag("WARP_KILLSWITCH", "0"),
             ipv6_enabled=_flag("IPV6_ENABLED", "0"),
             ipv6_prefix=os.environ.get("IPV6_PREFIX", "").strip(),
-            # Absender-IP des Tunnel-Containers (Netz cloudy-tunnel in docker-compose.yml).
-            tunnel_ip=os.environ.get("TUNNEL_IP", "172.29.88.10").strip(),
-            portal_port=int(os.environ.get("PORTAL_PORT", "8081").strip() or 0),
         )
 
     @property

@@ -85,19 +85,7 @@ services:
         ipv4_address: 172.29.86.22
         ipv6_address: fd29:86::22
 
-  # Fernzugriff aufs Dashboard über einen Cloudflare Tunnel (z. B. https://cloudy.kulbarts.com, mit Zero-Trust-Login).
-  # Token im Dashboard unter Einstellungen → Fernzugriff einfügen. Ohne Token tut der Container nichts.
-  tunnel:
-    image: ghcr.io/l8tenever/cloudy:tunnel
-    container_name: cloudy-tunnel
-    restart: unless-stopped
-    environment:
-      TZ: Europe/Berlin
-      # Übergang: früher kam der Token aus der .env. Der Token aus dem Dashboard hat Vorrang.
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
-    volumes:
-      - ./data/warp/tunnel:/cloudy
-    networks:
+networks:
       cloudy-tunnel:
         ipv4_address: 172.29.88.10
 
@@ -111,11 +99,3 @@ networks:
       config:
         - subnet: 172.29.86.0/24
         - subnet: fd29:86::/64
-  # Der Tunnel erreicht das Dashboard (Host-Netz des Pi) über 172.29.88.1. cloudy erkennt Tunnel-Anfragen an 172.29.88.10.
-  cloudy-tunnel:
-    name: cloudy-tunnel
-    driver_opts:
-      com.docker.network.bridge.name: cloudy-tunnel
-    ipam:
-      config:
-        - subnet: 172.29.88.0/24

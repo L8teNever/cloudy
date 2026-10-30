@@ -185,3 +185,95 @@ def test_full_acme_flow_with_fake_servers():
     san = csr.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
     assert san.get_values_for_type(x509.DNSName) == ["main.kulbarts.com"]
     serialization.load_pem_private_key(key_pem.encode(), password=None)
+
+
+def _selfsigned(names):
+    import datetime
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, names[0])])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+        .serial_number(x509.random_serial_number()).not_valid_before(now).not_valid_after(now + datetime.timedelta(days=90))
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName(n) for n in names]), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    key_pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    return cert.public_bytes(serialization.Encoding.PEM).decode(), key_pem.decode()
+
+
+class ZoneCloudflare:
+    """Nur *.kulbarts.com liegt in der Zone des Tokens."""
+
+    def __init__(self, token):
+        pass
+
+    def zone_id(self, name):
+        if not name.endswith("kulbarts.com"):
+            raise localdomain.NoZone("keine Zone")
+        return "Z"
+
+
+def test_redirect_in_own_zone_gets_real_cert_and_others_are_skipped(client, monkeypatch):
+    monkeypatch.setattr(localdomain, "Cloudflare", ZoneCloudflare)
+    s = Settings.from_env()
+    db.set_setting(localdomain.TOKEN_KEY, "t")
+    db.add_redirect("pimmel.kulbarts.com", "https://cloudy.kulbarts.com")
+    db.add_redirect("tiktok.com", "https://wikipedia.org")
+    db.add_redirect("router", "http://192.168.178.1")
+    seen = {}
+
+    class Real(FakeAcme):
+        def issue(self, names, cf, **kw):
+            seen["names"] = names
+            return _selfsigned(names)
+
+    localdomain.issue_now(s, acme_factory=Real)
+    assert seen["names"] == ["pimmel.kulbarts.com"]
+    assert localdomain.skipped() == {"tiktok.com"}
+    crt, key = localdomain.paths(s)
+    assert localdomain.sni_pair(s, "pimmel.kulbarts.com") == (crt, key)
+    assert localdomain.sni_pair(s, "tiktok.com") is None
+    assert not localdomain.needs_issue(s, localdomain.cert_names())
+
+
+def test_new_redirect_needs_new_cert_and_removed_one_does_not(client, monkeypatch):
+    monkeypatch.setattr(localdomain, "Cloudflare", ZoneCloudflare)
+    s = Settings.from_env()
+    db.set_setting(localdomain.TOKEN_KEY, "t")
+    db.add_redirect("a.kulbarts.com", "https://x.de")
+
+    class Real(FakeAcme):
+        def issue(self, names, cf, **kw):
+            return _selfsigned(names)
+
+    localdomain.issue_now(s, acme_factory=Real)
+    assert not localdomain.needs_issue(s, localdomain.cert_names())
+    db.add_redirect("b.kulbarts.com", "https://x.de")
+    assert localdomain.needs_issue(s, localdomain.cert_names())
+    localdomain.issue_now(s, acme_factory=Real)
+    assert localdomain.sni_pair(s, "b.kulbarts.com") is not None
+    db.remove_redirect("a.kulbarts.com")
+    assert localdomain.sni_pair(s, "a.kulbarts.com") is None
+    assert not localdomain.needs_issue(s, localdomain.cert_names())
+
+
+def test_token_stays_when_domains_are_empty_and_can_be_deleted(client, monkeypatch):
+    monkeypatch.setattr(localdomain, "start_in_background", lambda s: None)
+    client.post("/lokale-domain", data={"name": "main.kulbarts.com", "cf_token": "abc"})
+    client.post("/lokale-domain", data={"name": "", "dashboard": ""})
+    assert db.get_setting(localdomain.TOKEN_KEY) == "abc"
+    client.post("/lokale-domain/token-loeschen")
+    assert db.get_setting(localdomain.TOKEN_KEY) == ""
+
+
+def test_tunnel_and_portal_are_gone(client):
+    assert client.post("/tunnel/login", data={}).status_code in (404, 405)
+    assert client.get("/einstellungen").status_code == 200
+    assert "Fernzugriff" not in client.get("/einstellungen").text
+    assert client.post("/mein/koppeln", data={"code": "123456"}).status_code in (404, 405)

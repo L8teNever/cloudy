@@ -35,7 +35,7 @@ cloudy gateway aus Datenverkehr geht wieder direkt zur Fritzbox (DNS bleibt beim
 cloudy ipv6 an     Pi verteilt IPv6 und schickt es durch WARP/VPN (vorher in der Fritzbox "Router Advertisement" AUS!)
 cloudy ipv6 aus    Wieder nur IPv4 (der Standard)
 cloudy status      Zeigt, ob alles läuft
-cloudy logs        Live-Logs anzeigen (Strg+C zum Beenden), einzeln: cloudy logs warp1 / vpn1 / tunnel
+cloudy logs        Live-Logs anzeigen (Strg+C zum Beenden), einzeln: cloudy logs warp1 / vpn1
 cloudy restart     Neu starten
 EOF
 }
@@ -126,10 +126,8 @@ case "${1:-}" in
     $DOCKER compose ps
     grep -E "^(PI_IP|DHCP_ENABLED|GATEWAY_ENABLED|IPV6_ENABLED|UPSTREAM_DNS|WARP_KILLSWITCH)=" .env
     for f in data/warp/*/status; do
-      case "$f" in */tunnel/*) continue ;; esac
       [ -f "$f" ] && echo "WARP $(basename "$(dirname "$f")"): $(cat "$f")"
     done
-    [ -f data/warp/tunnel/status ] && echo "Fernzugriff (Tunnel): $(cat data/warp/tunnel/status)"
     for f in data/warp/*/ipv6; do
       [ -f "$f" ] && echo "IPv6 im Tunnel $(basename "$(dirname "$f")"): $(cat "$f")"
     done

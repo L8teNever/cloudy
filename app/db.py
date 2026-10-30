@@ -133,23 +133,6 @@ def init() -> None:
                 last_seen INTEGER NOT NULL DEFAULT 0
             );
 
-            -- Geräte-Portal (von unterwegs): Cloudflare-Gerät (oder Browser) -> Gerät im Heimnetz (MAC).
-            CREATE TABLE IF NOT EXISTS portal_devices (
-                cf_device_id TEXT PRIMARY KEY,
-                mac TEXT NOT NULL,
-                email TEXT,
-                cf_name TEXT,
-                created INTEGER NOT NULL,
-                last_used INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS portal_pairing (
-                code TEXT PRIMARY KEY,
-                cf_device_id TEXT NOT NULL,
-                email TEXT,
-                cf_name TEXT,
-                expires INTEGER NOT NULL
-            );
-
             CREATE TABLE IF NOT EXISTS redirects (
                 source TEXT PRIMARY KEY,
                 target TEXT NOT NULL,
@@ -721,109 +704,6 @@ def _is_ipv4(val: str | None) -> bool:
         return ipaddress.ip_address(val or "").version == 4
     except ValueError:
         return False
-
-
-# --------------------------------------------------------------------------- Geräte-Portal
-
-PAIRING_TTL = 600  # Sekunden
-
-
-def portal_mac_for(cf_device_id: str) -> str | None:
-    rows = _rows("SELECT mac FROM portal_devices WHERE cf_device_id = ?", (cf_device_id,))
-    return rows[0]["mac"] if rows else None
-
-
-def portal_link(cf_device_id: str, mac: str, email: str | None = None, cf_name: str | None = None) -> None:
-    now = int(time.time())
-    with closing(_connect()) as conn:
-        conn.execute(
-            """
-            INSERT INTO portal_devices (cf_device_id, mac, email, cf_name, created, last_used) VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT (cf_device_id) DO UPDATE SET
-                mac = excluded.mac, email = COALESCE(excluded.email, portal_devices.email),
-                cf_name = COALESCE(excluded.cf_name, portal_devices.cf_name), last_used = excluded.last_used
-            """,
-            (cf_device_id, mac.strip().lower(), email, cf_name, now, now),
-        )
-        conn.commit()
-
-
-def portal_touch(cf_device_id: str) -> None:
-    with closing(_connect()) as conn:
-        conn.execute("UPDATE portal_devices SET last_used = ? WHERE cf_device_id = ?", (int(time.time()), cf_device_id))
-        conn.commit()
-
-
-def portal_unlink(cf_device_id: str) -> None:
-    with closing(_connect()) as conn:
-        conn.execute("DELETE FROM portal_devices WHERE cf_device_id = ?", (cf_device_id,))
-        conn.commit()
-
-
-def portal_links() -> list[dict]:
-    return [
-        dict(r)
-        for r in _rows(
-            """
-            SELECT p.cf_device_id, p.mac, p.email, p.cf_name, p.created, p.last_used,
-                   COALESCE(f.name, d.hostname) AS hostname
-            FROM portal_devices p
-            LEFT JOIN fritz_hosts f ON f.mac = p.mac
-            LEFT JOIN devices d ON d.mac = p.mac
-            GROUP BY p.cf_device_id ORDER BY p.created DESC
-            """
-        )
-    ]
-
-
-def pairing_create(cf_device_id: str, email: str | None, cf_name: str | None) -> str:
-    """6-stelliger Kopplungscode für ein Portal-Gerät. Derselbe Besucher bekommt solange gültig denselben Code."""
-    import secrets
-
-    now = int(time.time())
-    with closing(_connect()) as conn:
-        conn.execute("DELETE FROM portal_pairing WHERE expires < ?", (now,))
-        row = conn.execute("SELECT code FROM portal_pairing WHERE cf_device_id = ?", (cf_device_id,)).fetchone()
-        if row:
-            conn.commit()
-            return row["code"]
-        while True:
-            code = f"{secrets.randbelow(1_000_000):06d}"
-            if not conn.execute("SELECT 1 FROM portal_pairing WHERE code = ?", (code,)).fetchone():
-                break
-        conn.execute(
-            "INSERT INTO portal_pairing (code, cf_device_id, email, cf_name, expires) VALUES (?, ?, ?, ?, ?)",
-            (code, cf_device_id, email, cf_name, now + PAIRING_TTL),
-        )
-        conn.commit()
-    return code
-
-
-def pairing_redeem(code: str, mac: str) -> bool:
-    """Code einlösen: das Portal-Gerät gehört dann zu dieser MAC. Der Code ist danach verbraucht."""
-    code = (code or "").strip()
-    now = int(time.time())
-    with closing(_connect()) as conn:
-        conn.execute("DELETE FROM portal_pairing WHERE expires < ?", (now,))
-        row = conn.execute("SELECT * FROM portal_pairing WHERE code = ?", (code,)).fetchone()
-        if not row:
-            conn.commit()
-            return False
-        conn.execute("DELETE FROM portal_pairing WHERE code = ?", (code,))
-        conn.commit()
-    portal_link(row["cf_device_id"], mac, row["email"], row["cf_name"])
-    return True
-
-
-def pairing_open() -> list[dict]:
-    now = int(time.time())
-    return [
-        dict(r)
-        for r in _rows(
-            "SELECT code, cf_device_id, email, cf_name, expires FROM portal_pairing WHERE expires >= ? ORDER BY expires DESC",
-            (now,),
-        )
-    ]
 
 
 def redirects() -> list[dict]:

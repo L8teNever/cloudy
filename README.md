@@ -185,6 +185,9 @@ Subdomains (`www.`, `m.` …) auf allen Geräten, die den Pi als DNS benutzen. W
 - **https://-Seiten** (fast alle): Der Pi erzeugt automatisch ein passendes Zertifikat. Ohne Fehlermeldung klappt das
   nur auf Geräten, auf denen das **cloudy-Zertifikat** installiert ist (siehe „HTTPS mit eigenem Zertifikat“).
   Ohne Zertifikat zeigt der Browser eine Warnung statt weiterzuleiten.
+- **Eigene Domains** (z. B. `pimmel.kulbarts.com`, wenn `kulbarts.com` bei deinem Cloudflare-Konto liegt und der API-Token
+  hinterlegt ist, siehe „Eigene Domains nur im Heimnetz“) bekommen automatisch ein **echtes Let's-Encrypt-Zertifikat**:
+  keine Warnung, nichts am Gerät zu installieren. Fremde Domains nutzen weiter das cloudy-Zertifikat.
 - Geht nicht bei „Sicherem DNS“ im Browser und nicht bei Apps, die eigene DNS-Server benutzen.
 - Bereits geöffnete Seiten merkt sich der Browser kurz – ggf. Browser neu starten.
 
@@ -229,12 +232,13 @@ Ausschalten: in `~/cloudy/.env` `HTTPS_PORT=0`, dann `cloudy restart`.
 „Mein Gerät“ (VPN an/aus) unter einer echten Domain mit gültigem Zertifikat – ohne CA-Installation auf den Geräten und
 ohne dass die Seite von außen erreichbar ist.
 
-1. Bei Cloudflare den **Tunnel-Hostnamen** und den **DNS-Eintrag** für die Domain löschen (sonst führt sie von außen zum Tunnel).
+1. Bei Cloudflare darf es für die Domain **keinen öffentlichen DNS-Eintrag** auf deine Zuhause-Adresse geben – sie soll nur im Heimnetz auflösen.
 2. Bei Cloudflare einen **API-Token** anlegen (zwei Berechtigungen: Zone → Zone → Lesen und Zone → DNS → Bearbeiten, nur für diese Zone).
 3. Dashboard → **Einstellungen → Eigene Domain**: Token und mindestens eine Domain eintragen – eine fürs **ganze Dashboard** (wie `cloudy.lan`), eine nur für **„Mein Gerät“** (`/mein`). Beide bekommen zusammen ein Zertifikat. Es müssen Unternamen einer Domain sein, die dir gehört. Der Token liegt nur in der Datenbank (`data/`), nie im Repo.
 
 Der Pi beantwortet die Domain im Heimnetz mit seiner IP, holt das Zertifikat bei Let's Encrypt per DNS-Challenge
-(kein offener Port nötig) und erneuert es automatisch. Unter dieser Domain ist nur `/mein` erreichbar.
+(kein offener Port nötig) und erneuert es automatisch. Unter der „Mein Gerät“-Domain ist nur `/mein` erreichbar.
+Der Token bleibt in der Datenbank gespeichert, bis du ihn im Dashboard löschst. Das Dashboard ist nur im Heimnetz erreichbar, einen Fernzugriff gibt es nicht.
 Geräte mit dem echten WARP-Client fragen Cloudflare statt des Pi und lösen die Domain deshalb nicht auf.
 
 ## Hinweise
@@ -243,27 +247,6 @@ Geräte mit dem echten WARP-Client fragen Cloudflare statt des Pi und lösen die
   zurückgeschaltet. Chrome/Edge mit fest eingestelltem „Sicheres DNS“ oder VPN-Apps gehen trotzdem am Pi vorbei.
 - **Mitbewohner/Familie:** Protokollieren, was andere im Netz aufrufen, ist ein Eingriff in deren
   Privatsphäre – sag ihnen Bescheid.
-
-## Fernzugriff über `cloudy.kulbarts.com` (Cloudflare Tunnel + Zero Trust)
-
-Das Dashboard ist von unterwegs unter deiner eigenen Adresse erreichbar – **nur nach Anmeldung** über Cloudflare
-Zero Trust (Mail-Code/Google, mit WARP-Client automatisch). Eingerichtet wird alles im Dashboard unter
-**Einstellungen → Fernzugriff**; auf dem Pi läuft dafür der Container `cloudy-tunnel` (ohne Token tut er nichts).
-
-1. Zero Trust → **Networks → Tunnels** → Tunnel anlegen (z. B. `cloudy-pi`). Den langen Token (`eyJh…`) im Dashboard
-   bei *Tunnel-Token* einfügen → Speichern. Nach ein paar Sekunden steht dort „Tunnel: verbunden“.
-2. Beim Tunnel einen **Public Hostname** anlegen: `cloudy.kulbarts.com` → Service `http://172.29.88.1:<DASHBOARD_PORT>`
-   (genau diese Adresse zeigt auch das Dashboard an).
-3. Zero Trust → **Access → Applications** → *Self-hosted* für `cloudy.kulbarts.com`, Policy z. B. „nur meine E-Mail“,
-   „Mit Cloudflare One Client authentifizieren“ an. Den **AUD-Tag** der App (und die Team-Domain, z. B.
-   `l8tenever.cloudflareaccess.com`) im Dashboard eintragen → Speichern.
-
-Sicherheit:
-- cloudy prüft bei **jeder** Anfrage über den Tunnel selbst das Access-Token (Signatur, Team, AUD, Ablauf). Fehlt es,
-  ist es falsch oder sind Team/AUD nicht eingetragen, gibt es nur „Nur mit Cloudflare-Anmeldung“ – auch dann, wenn die
-  Access-App bei Cloudflare fehlt oder falsch eingestellt ist.
-- Im Heimnetz ändert sich nichts (optional weiter `DASHBOARD_PASSWORD`). „Mein Gerät“ (`/mein`) geht nur zu Hause.
-- Status: `cloudy status`, Logs: `cloudy logs tunnel`. Ausschalten: im Dashboard „Tunnel ausschalten“.
 
 ## Entwickeln
 

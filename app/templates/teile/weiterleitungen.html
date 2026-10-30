@@ -4,6 +4,12 @@
     Ruft ein Gerät im Heimnetz eine eingetragene Domain auf (inkl. aller Subdomains), wird es automatisch auf das Ziel umgeleitet.
     Bei <b>https://</b> klappt dies ohne Sicherheitswarnung, wenn das cloudy-Stammzertifikat auf dem Gerät installiert ist.
   </p>
+  <p class="muted small">
+    <b>Eigene Domains</b> (z. B. <code>pimmel.kulbarts.com</code>, wenn <code>kulbarts.com</code> bei Cloudflare liegt und der API-Token
+    unter Einstellungen hinterlegt ist) bekommen automatisch ein <b>echtes Zertifikat</b> – dort ist am Gerät nichts zu installieren
+    und es gibt keine Warnung. Fremde Domains wie <code>tiktok.com</code> nutzen weiter das cloudy-Stammzertifikat.
+    {% if not has_cf_token %}<b>Noch kein Cloudflare-Token hinterlegt</b> (Einstellungen → Eigene Domain).{% endif %}
+  </p>
 
   <form method="post" action="/redirects/add" class="inline" style="margin-bottom:1rem;gap:.5rem">
     <input name="source" placeholder="Von (z. B. tiktok.com oder fritzbox)" size="26" required>
@@ -24,7 +30,9 @@
       <tbody>
         {% for r in redirects %}
         <tr>
-          <td class="mono" style="font-weight:600;color:var(--brand)">{{ r.source }}</td>
+          <td class="mono" style="font-weight:600;color:var(--brand)">{{ r.source }}
+            {% if r.source in real_certs %}<span class="pill on" style="font-weight:400" title="Let's-Encrypt-Zertifikat – am Gerät muss nichts installiert werden">🔒 echtes Zertifikat</span>{% endif %}
+          </td>
           <td><a href="{{ r.target }}" target="_blank" rel="noopener">{{ r.target }}</a></td>
           <td>
             <form method="post" action="/redirects/remove" class="inline">

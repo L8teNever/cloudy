@@ -277,44 +277,6 @@ jobs:
           docker logs warp-echt || true
 
 
-  tunnel-image:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/build-push-action@v6
-        with:
-          context: tunnel
-          load: true
-          tags: cloudy-tunnel-test
-          cache-from: type=gha,scope=tunnel
-
-      - name: Tunnel-Image – startet ohne Token nichts und meldet einen falschen Token als Fehler
-        run: |
-          bash -n tunnel/entrypoint.sh
-          docker run --rm cloudy-tunnel-test cloudflared --version
-          mkdir -p /tmp/tunnel
-          docker run -d --name tunnel-echt -v /tmp/tunnel:/cloudy cloudy-tunnel-test
-          sleep 8
-          test "$(sudo cat /tmp/tunnel/status)" = "Nicht eingerichtet"
-          echo ungueltiger-token | sudo tee /tmp/tunnel/token >/dev/null
-          for i in $(seq 1 30); do
-            s="$(sudo cat /tmp/tunnel/status 2>/dev/null || true)"
-            echo "Status: $s"
-            case "$s" in "Fehler:"*) echo "Tunnel-Image ok"; exit 0 ;; esac
-            sleep 2
-          done
-          docker logs tunnel-echt
-          exit 1
-
-      - name: Logs bei Fehler
-        if: failure()
-        run: |
-          docker logs tunnel-echt || true
-
-
   vpn-image:
     runs-on: ubuntu-latest
     steps:
@@ -368,7 +330,7 @@ jobs:
 
 
   build:
-    needs: [unit, e2e, dhcp, warp-image, tunnel-image, vpn-image]
+    needs: [unit, e2e, dhcp, warp-image, vpn-image]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -380,7 +342,6 @@ jobs:
           - { context: ".",      scope: buildkit, tag: latest, sha_prefix: "sha-" }
           - { context: vpn,      scope: vpn,      tag: vpn,    sha_prefix: "vpn-" }
           - { context: warp,     scope: warp,     tag: warp,   sha_prefix: "warp-" }
-          - { context: tunnel,   scope: tunnel,   tag: tunnel, sha_prefix: "tunnel-" }
     steps:
       - uses: actions/checkout@v4
 
