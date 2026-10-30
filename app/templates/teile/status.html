@@ -13,6 +13,11 @@
     IPv6 an{% if ipv6_tunnels %} · Tunnel: {{ ipv6_tunnels | join(', ') }}{% else %} · kein Tunnel mit IPv6{% endif %}
   </span>
   {% endif %}
+  {% if settings.pi_ip_detected and settings.pi_ip_detected != settings.pi_ip %}
+  <a class="pill bad" href="/einstellungen#system" data-nav style="text-decoration:none" title="Geräte bekommen diese Adresse als Gateway/DNS">⚠ Pi-Adresse {{ settings.pi_ip }} passt nicht – Pi ist {{ settings.pi_ip_detected }}</a>
+  {% elif settings.pi_ip_source == 'erkannt' %}
+  <a class="pill warn" href="/einstellungen#system" data-nav style="text-decoration:none">PI_IP in .env falsch ({{ settings.pi_ip_env }}) – nutze {{ settings.pi_ip }}</a>
+  {% endif %}
   <span class="pill">Pi: {{ settings.pi_ip }}{% if settings.local_name %} · {{ settings.local_name }}{% endif %}</span>
   <span class="pill">Upstream: {{ settings.upstream_dns | join(', ') }}</span>
 </div>

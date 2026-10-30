@@ -1,6 +1,9 @@
 import ipaddress
 import os
+import socket
 from dataclasses import dataclass
+
+PI_IP_FILE = "pi_ip"  # im Dashboard gesetzte Pi-Adresse (hat Vorrang vor PI_IP aus .env)
 
 
 def _flag(name: str, default: str) -> bool:
@@ -11,6 +14,87 @@ def _warp_slots_from_data(data_dir: str) -> list[tuple[str, str]]:
     from . import slots
 
     return slots.as_pairs(slots.ensure(data_dir))
+
+
+def _valid_ipv4(ip: str) -> bool:
+    try:
+        return isinstance(ipaddress.ip_address(ip), ipaddress.IPv4Address)
+    except ValueError:
+        return False
+
+
+def read_pi_ip_override(data_dir: str) -> str:
+    try:
+        with open(os.path.join(data_dir, PI_IP_FILE), encoding="utf-8") as f:
+            ip = f.read().strip()
+    except OSError:
+        return ""
+    return ip if _valid_ipv4(ip) else ""
+
+
+def write_pi_ip_override(data_dir: str, ip: str) -> None:
+    """Leer = Override löschen (dann wieder .env bzw. automatische Erkennung)."""
+    path = os.path.join(data_dir, PI_IP_FILE)
+    ip = (ip or "").strip()
+    if not ip:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        return
+    if not _valid_ipv4(ip):
+        raise ValueError("Keine gültige IPv4-Adresse")
+    os.makedirs(data_dir, exist_ok=True)
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        f.write(ip + "\n")
+    os.replace(path + ".tmp", path)
+
+
+def is_local_ip(ip: str) -> bool:
+    """Gehört die Adresse wirklich zu diesem Rechner? (cloudy läuft im Host-Netz)"""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.bind((ip, 0))
+        return True
+    except OSError:
+        return False
+
+
+def detect_lan_ip(router_ip: str) -> str:
+    """Eigene Adresse, mit der der Pi die Fritzbox erreicht (es wird nichts gesendet)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect((router_ip, 9))
+            ip = sock.getsockname()[0]
+    except OSError:
+        return ""
+    return ip if _valid_ipv4(ip) and not ip.startswith("127.") else ""
+
+
+def _same_net(a: str, b: str, netmask: str) -> bool:
+    try:
+        return ipaddress.ip_address(a) in ipaddress.ip_network(f"{b}/{netmask}", strict=False)
+    except ValueError:
+        return False
+
+
+def resolve_pi_ip(
+    data_dir: str, env_ip: str, router_ip: str, check: bool, netmask: str = "255.255.255.0"
+) -> tuple[str, str, str]:
+    """(Adresse, Quelle, erkannte Adresse). Quelle: dashboard | env | erkannt.
+
+    Eine falsche Pi-Adresse ist fatal: DHCP verteilt sie als Gateway und DNS, dann geht der Verkehr am Pi
+    (und an WARP/VPN) vorbei. Darum: Passt die eingestellte Adresse nicht zum Pi, nehmen wir die erkannte.
+    """
+    override = read_pi_ip_override(data_dir)
+    detected = detect_lan_ip(router_ip) if check else ""
+    if detected and not _same_net(detected, router_ip, netmask):
+        detected = ""
+    if override:
+        return override, "dashboard", detected
+    if not check or is_local_ip(env_ip) or not detected:
+        return env_ip, "env", detected
+    return detected, "erkannt", detected
 
 
 @dataclass(frozen=True)
@@ -34,19 +118,32 @@ class Settings:
     warp_killswitch: bool
     ipv6_enabled: bool = False
     ipv6_prefix: str = ""
+    pi_ip_source: str = "env"  # dashboard | env | erkannt
+    pi_ip_env: str = ""
+    pi_ip_detected: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
+        data_dir = os.environ.get("DATA_DIR", "/data")
+        env_ip = os.environ.get("PI_IP", "192.168.178.2").strip()
+        router_ip = os.environ.get("ROUTER_IP", "192.168.178.1").strip()
+        dnsmasq_enabled = _flag("DNSMASQ_ENABLED", "1")
+        # Prüfen nur im echten Betrieb (Host-Netz); Tests und Vorschau laufen mit DNSMASQ_ENABLED=0.
+        netmask = os.environ.get("NETMASK", "255.255.255.0").strip()
+        pi_ip, source, detected = resolve_pi_ip(data_dir, env_ip, router_ip, dnsmasq_enabled, netmask)
         return cls(
-            data_dir=os.environ.get("DATA_DIR", "/data"),
+            data_dir=data_dir,
             lan_interface=os.environ.get("LAN_INTERFACE", "eth0"),
-            pi_ip=os.environ.get("PI_IP", "192.168.178.2"),
-            router_ip=os.environ.get("ROUTER_IP", "192.168.178.1"),
-            netmask=os.environ.get("NETMASK", "255.255.255.0"),
+            pi_ip=pi_ip,
+            pi_ip_source=source,
+            pi_ip_env=env_ip,
+            pi_ip_detected=detected,
+            router_ip=router_ip,
+            netmask=netmask,
             upstream_dns=[
                 s.strip() for s in os.environ.get("UPSTREAM_DNS", "172.64.36.1").split(",") if s.strip()
             ],
-            dnsmasq_enabled=_flag("DNSMASQ_ENABLED", "1"),
+            dnsmasq_enabled=dnsmasq_enabled,
             dhcp_enabled=_flag("DHCP_ENABLED", "0"),
             dhcp_start=os.environ.get("DHCP_START", "192.168.178.20"),
             dhcp_end=os.environ.get("DHCP_END", "192.168.178.200"),

@@ -21,7 +21,7 @@
   <a href="#zugriff">Zugriff &amp; Links</a>
   <a href="#lokale-domain">Eigene Domains</a>
   {% if settings.https_port %}<a href="#zertifikat">Stammzertifikat</a>{% endif %}
-  <a href="#system">System</a>
+  <a href="#system">System &amp; Pi-IP</a>
 </div>
 
 <section class="card" id="zugriff">
@@ -181,8 +181,37 @@
     </div>
     <div>
       <h2>System &amp; Netzwerk</h2>
-      <div class="muted small">Kommt aus der Konfiguration des Pi (.env) – hier nur zur Ansicht.</div>
+      <div class="muted small">Pi-Adresse hier einstellbar, der Rest kommt aus der Konfiguration des Pi (.env).</div>
     </div>
+  </div>
+  <div class="field-group" style="margin-bottom:.75rem">
+    <div class="fg-title">IP-Adresse des Pi</div>
+    <div class="fg-hint">
+      Diese Adresse bekommen alle Geräte per DHCP als <b>Gateway und DNS</b> – ist sie falsch, läuft der Verkehr am Pi
+      (und an WARP/VPN) vorbei. Nach dem Speichern startet cloudy kurz neu; danach an den Geräten WLAN aus/an.
+    </div>
+    <div class="status-row" style="margin:0">
+      <span class="pill {{ 'warn' if settings.pi_ip_source == 'erkannt' else 'on' }}">Aktiv: {{ settings.pi_ip }}</span>
+      <span class="pill">Quelle: {{ {'dashboard': 'hier festgelegt', 'env': '.env (PI_IP)', 'erkannt': 'automatisch erkannt'}[settings.pi_ip_source] }}</span>
+      {% if settings.pi_ip_detected %}<span class="pill {{ '' if settings.pi_ip_detected == settings.pi_ip else 'warn' }}">Erkannt am Netzwerk: {{ settings.pi_ip_detected }}</span>{% endif %}
+      {% if settings.pi_ip_env and settings.pi_ip_env != settings.pi_ip %}<span class="pill warn">.env sagt {{ settings.pi_ip_env }}</span>{% endif %}
+    </div>
+    {% if settings.pi_ip_source == 'erkannt' %}
+    <div class="alert small" style="margin:0">
+      <b>PI_IP={{ settings.pi_ip_env }} gehört nicht zum Pi.</b> cloudy nutzt deshalb die erkannte Adresse {{ settings.pi_ip }}.
+      Bitte hier festlegen oder in <code>~/cloudy/.env</code> korrigieren.
+    </div>
+    {% endif %}
+    <form method="post" action="/einstellungen/pi-ip" class="inline" data-ok="Gespeichert – cloudy startet neu" data-confirm="Pi-Adresse speichern und cloudy neu starten?">
+      <input name="ip" data-keep autocomplete="off" inputmode="decimal" value="{{ settings.pi_ip_detected or settings.pi_ip }}" placeholder="192.168.178.3" style="width:11rem">
+      <button type="submit">Speichern &amp; neu starten</button>
+    </form>
+    {% if settings.pi_ip_source == 'dashboard' %}
+    <form method="post" action="/einstellungen/pi-ip" class="inline" data-ok="Zurückgesetzt – cloudy startet neu">
+      <input type="hidden" name="auto" value="1">
+      <button type="submit" class="secondary">Zurück auf .env / automatisch</button>
+    </form>
+    {% endif %}
   </div>
   <div class="kv">
     <div><div class="k">Pi IP-Adresse</div><div class="val mono">{{ settings.pi_ip }}</div></div>

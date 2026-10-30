@@ -336,3 +336,42 @@ def test_tunnel_and_portal_are_gone(client):
     assert client.get("/einstellungen").status_code == 200
     assert "Fernzugriff" not in client.get("/einstellungen").text
     assert client.post("/mein/koppeln", data={"code": "123456"}).status_code in (404, 405)
+
+
+def test_pi_ip_override_and_detection(tmp_path, monkeypatch):
+    from app import settings as S
+
+    monkeypatch.setattr(S, "detect_lan_ip", lambda router: "192.168.178.3")
+    monkeypatch.setattr(S, "is_local_ip", lambda ip: ip == "192.168.178.3")
+    d = str(tmp_path)
+    # Falsche PI_IP aus .env -> erkannte Adresse
+    assert S.resolve_pi_ip(d, "192.168.178.2", "192.168.178.1", True) == ("192.168.178.3", "erkannt", "192.168.178.3")
+    # Richtige PI_IP bleibt
+    assert S.resolve_pi_ip(d, "192.168.178.3", "192.168.178.1", True)[1] == "env"
+    # Ohne Prüfung (Tests/Vorschau) unverändert
+    assert S.resolve_pi_ip(d, "192.168.178.2", "192.168.178.1", False)[0] == "192.168.178.2"
+    # Im Dashboard festgelegt hat Vorrang
+    S.write_pi_ip_override(d, "192.168.178.9")
+    assert S.resolve_pi_ip(d, "192.168.178.2", "192.168.178.1", True)[:2] == ("192.168.178.9", "dashboard")
+    S.write_pi_ip_override(d, "")
+    assert S.read_pi_ip_override(d) == ""
+    import pytest
+
+    with pytest.raises(ValueError):
+        S.write_pi_ip_override(d, "kein.ip")
+    # Erkannte Adresse aus fremdem Netz wird ignoriert
+    monkeypatch.setattr(S, "detect_lan_ip", lambda router: "10.0.0.5")
+    assert S.resolve_pi_ip(d, "192.168.178.2", "192.168.178.1", True) == ("192.168.178.2", "env", "")
+
+
+def test_pi_ip_form(client, tmp_path):
+    from app import settings as S
+
+    r = client.post("/einstellungen/pi-ip", data={"ip": "192.168.178.3"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert S.read_pi_ip_override(str(tmp_path)) == "192.168.178.3"
+    r = client.post("/einstellungen/pi-ip", data={"ip": "quatsch"}, follow_redirects=False)
+    assert "fehler=" in r.headers["location"]
+    client.post("/einstellungen/pi-ip", data={"auto": "1"})
+    assert S.read_pi_ip_override(str(tmp_path)) == ""
+    assert "IP-Adresse des Pi" in client.get("/einstellungen").text

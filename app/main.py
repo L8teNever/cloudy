@@ -22,7 +22,7 @@ from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
 from .redirects import find_rule
-from .settings import Settings
+from .settings import Settings, write_pi_ip_override
 from .traffic import DomainMap, TrafficMeter, TrafficRunner, setup_gateway
 
 BASE_DIR = Path(__file__).parent
@@ -70,6 +70,14 @@ templates.env.globals.update(fmt_bytes=fmt_bytes, fmt_count=fmt_count)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = Settings.from_env()
+    if settings.pi_ip_source == "erkannt":
+        print(
+            f"cloudy: WARNUNG PI_IP={settings.pi_ip_env} gehört nicht zum Pi – nutze erkannte Adresse {settings.pi_ip}"
+            " (in .env oder unter Einstellungen korrigieren)",
+            flush=True,
+        )
+    else:
+        print(f"cloudy: Pi-Adresse {settings.pi_ip} ({settings.pi_ip_source})", flush=True)
     db.init()
     runner = traffic_runner = warp_router = presence = None
     domain_map = DomainMap()
@@ -639,6 +647,28 @@ async def warp_loeschen(request: Request, slot: str):
         pass
     hint = _reload_warp_slots(request)
     return RedirectResponse(f"/vpn?erfolg={quote(f'{slot} gelöscht. {hint}')}", status_code=303)
+
+
+def _restart_soon(delay: float = 1.0) -> None:
+    """Sauber beenden – Docker (restart: unless-stopped) startet cloudy mit den neuen Einstellungen neu."""
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return
+    import signal
+
+    threading.Timer(delay, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
+
+
+@app.post("/einstellungen/pi-ip", dependencies=[Depends(require_password)])
+async def pi_ip_set(request: Request, ip: str = Form(""), auto: str = Form("")):
+    """Pi-Adresse festlegen (oder mit auto=1 zurück auf .env/automatisch) und cloudy neu starten."""
+    s = request.app.state.settings
+    value = "" if auto else ip.strip()
+    try:
+        await run_in_threadpool(write_pi_ip_override, s.data_dir, value)
+    except ValueError as exc:
+        return RedirectResponse(f"/einstellungen?fehler={quote(str(exc))}#system", status_code=303)
+    _restart_soon()
+    return RedirectResponse("/einstellungen#system", status_code=303)
 
 
 @app.post("/lokale-domain", dependencies=[Depends(require_password)])
