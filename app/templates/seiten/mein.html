@@ -71,6 +71,12 @@
             {% elif adblock.on %}an – auch mit WARP/VPN
             {% else %}aus für dieses Gerät{% endif %}
           </div>
+          {% if adblock.week %}
+          <div class="ad-stats">
+            <span><b>{{ adblock.today | count }}</b> heute</span>
+            <span><b>{{ adblock.week | count }}</b> in 7 Tagen blockiert</span>
+          </div>
+          {% endif %}
         </div>
       </div>
       {% if adblock.global %}

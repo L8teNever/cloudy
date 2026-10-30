@@ -490,6 +490,7 @@ async def hub_statistik(request: Request, zeitraum: str | None = None):
     targets = await run_in_threadpool(stats.top_targets, r, None, 12)
     domains = await run_in_threadpool(stats.top_domains, r, None, 12)
     bars, peak = _hub_series_bars(series)
+    blocked = await run_in_threadpool(db.blocked_stats, r.since_day, None, 12)
     ip = client_ip(request)
     return templates.TemplateResponse(
         request,
@@ -505,6 +506,7 @@ async def hub_statistik(request: Request, zeitraum: str | None = None):
             "device_hits": _hub_hits_ranks(device_hits),
             "targets": _hub_traffic_ranks(targets),
             "domains": _hub_hits_ranks(domains),
+            "blocked": {**blocked, "top_domains": _hub_hits_ranks(blocked["top_domains"])},
             "viewer_ip": ip,
             "ranges": [("heute", "Heute"), ("7t", "7 Tage"), ("30t", "30 Tage")],
         },
@@ -553,6 +555,8 @@ async def mein_geraet(request: Request, ok: int | None = None, fehler: str | Non
             "adblock": {
                 "global": await run_in_threadpool(adblock.is_enabled),
                 "on": await run_in_threadpool(adblock.device_on, mac) if mac else True,
+                "today": (await run_in_threadpool(db.blocked_stats, stats.get_range("heute").since_day, ip))["hits"] if ip else 0,
+                "week": (await run_in_threadpool(db.blocked_stats, stats.get_range("7t").since_day, ip))["hits"] if ip else 0,
             },
         },
     )

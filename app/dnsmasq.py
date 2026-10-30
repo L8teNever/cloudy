@@ -13,6 +13,10 @@ from . import db, ipv6, localdomain
 from .settings import Settings
 
 QUERY_RE = re.compile(r"query\[(?P<qtype>[A-Za-z0-9]+)\] (?P<domain>\S+) from (?P<ip>\S+)")
+# Antwort aus der Werbeliste: "<nr> 192.168.178.60/5353 /data/adblock.hosts ads.example.com is 0.0.0.0"
+BLOCKED_RE = re.compile(
+    r" (?P<ip>[0-9A-Fa-f:.]+)/\d+ \S*adblock\.hosts (?P<domain>\S+) is (?:0\.0\.0\.0|::|NODATA)"
+)
 IGNORED_SUFFIXES = (".in-addr.arpa", ".ip6.arpa", ".lan", ".local", ".home.arpa")
 IGNORED_IPS = {"127.0.0.1", "::1"}
 # Diese Log-Zeilen kommen bei jeder Anfrage und würden die Container-Logs fluten.
@@ -144,12 +148,16 @@ class Collector:
         self.domain_map = domain_map
         self.dedup_seconds = dedup_seconds
         self._pending: list[tuple[int, str, str, str]] = []
-        self._last: dict[tuple[str, str], int] = {}
+        self._last: dict[tuple, int] = {}
+        self._blocked: list[tuple[int, str, str]] = []
         self._lock = threading.Lock()
 
     def feed(self, line: str, now: int | None = None) -> bool:
         if self.domain_map:
             self.domain_map.feed(line)
+        if "adblock.hosts" in line:
+            self._feed_blocked(line, now)
+            return True
         parsed = parse_query(line)
         if parsed is None:
             return " query[" in line
@@ -170,7 +178,28 @@ class Collector:
             self._pending.append((now, ip, domain, qtype))
         return True
 
+    def _feed_blocked(self, line: str, now: int | None) -> None:
+        m = BLOCKED_RE.search(line)
+        if not m:
+            return
+        ip, domain = m.group("ip"), m.group("domain").lower().rstrip(".")
+        if ":" in ip:
+            ip = ipv6.to_ipv4(ip)
+            if ip is None:
+                return
+        now = now if now is not None else int(time.time())
+        key = ("ad", ip, domain)
+        with self._lock:
+            last = self._last.get(key)
+            if last is not None and now - last < self.dedup_seconds:
+                return  # A und AAAA derselben Seite nur einmal zählen
+            self._last[key] = now
+            self._blocked.append((now, ip, domain))
+
     def flush(self) -> None:
+        with self._lock:
+            blocked, self._blocked = self._blocked, []
+        db.add_blocked(blocked)
         with self._lock:
             rows, self._pending = self._pending, []
             if len(self._last) > 50000:

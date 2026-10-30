@@ -17,6 +17,55 @@
     Standardmäßig an. Jeder kann ihn im Hub für das eigene Gerät ausschalten. Ausnahmen (z. B. eine Seite geht nicht)
     unten bei der Whitelist eintragen – sie gelten auch hier. Die Liste wird täglich aktualisiert.
   </p>
+  {% set st = adblock.stats %}
+  <div class="kpis" style="margin:.4rem 0 1rem">
+    <div class="kpi"><div class="l">Heute blockiert</div><div class="v">{{ st.today | count }}</div></div>
+    <div class="kpi"><div class="l">7 Tage</div><div class="v">{{ st.week | count }}</div></div>
+    <div class="kpi"><div class="l">30 Tage</div><div class="v">{{ st.month | count }}</div></div>
+    <div class="kpi"><div class="l">Anteil aller Anfragen (7 Tage)</div><div class="v">{{ st.share }} %</div></div>
+  </div>
+  {% if st.month %}
+  <div class="grid" style="margin-bottom:1rem">
+    <div>
+      <h3>Verlauf (14 Tage)</h3>
+      <div class="cols">
+        <div class="cols-axis"><span>{{ st.peak | count }}</span><span>0</span></div>
+        <div class="cols-plot">
+          {% for d in st.days %}
+          <div class="col" data-tip="{{ d.label }}: {{ d.hits | count }} blockiert">
+            <div class="col-area"><div class="col-bar"><div class="seg" style="height:{{ (d.h * 1.6) | round(1) }}px;background:var(--good)"></div></div></div>
+            <div class="col-tick">{{ d.label if loop.index0 % 3 == 0 or loop.last else '' }}</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <div>
+      <h3>Meist blockiert (7 Tage)</h3>
+      <div class="hbars">
+        {% for r in st.top_domains %}
+        <div class="hb" data-tip="{{ r.domain }}: {{ r.hits | count }}">
+          <span class="hb-label mono" style="word-break:normal">{{ r.domain }}</span>
+          <div class="hb-track"><div class="hb-bar"><div class="seg" style="width:{{ r.w }}%;background:var(--good)"></div></div></div>
+          <span class="hb-value">{{ r.hits | count }}</span>
+        </div>
+        {% else %}<p class="muted small">Diese Woche noch nichts.</p>{% endfor %}
+      </div>
+    </div>
+    <div>
+      <h3>Pro Gerät (7 Tage)</h3>
+      <div class="hbars">
+        {% for r in st.top_devices %}
+        <div class="hb" data-tip="{{ r.hostname or r.ip }}: {{ r.hits | count }}">
+          <span class="hb-label">{{ r.hostname or r.ip }}</span>
+          <div class="hb-track"><div class="hb-bar"><div class="seg" style="width:{{ r.w }}%;background:var(--s1)"></div></div></div>
+          <span class="hb-value">{{ r.hits | count }}</span>
+        </div>
+        {% else %}<p class="muted small">Diese Woche noch nichts.</p>{% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
   {% if adblock.off %}
   <div class="small"><b>Ausgeschaltet bei:</b></div>
   <div class="chips" style="margin-top:.35rem">

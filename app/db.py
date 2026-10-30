@@ -121,6 +121,11 @@ def init() -> None:
                 day TEXT NOT NULL, ip TEXT NOT NULL, domain TEXT NOT NULL, hits INTEGER NOT NULL,
                 PRIMARY KEY (day, ip, domain)
             );
+            -- Vom Werbeblocker beantwortete Anfragen (pro Tag, Gerät, Domain).
+            CREATE TABLE IF NOT EXISTS ad_blocked_daily (
+                day TEXT NOT NULL, ip TEXT NOT NULL, domain TEXT NOT NULL, hits INTEGER NOT NULL,
+                PRIMARY KEY (day, ip, domain)
+            );
 
             -- Geräte (MAC), die nur ins Internet dürfen und sonst niemanden im Heimnetz sehen.
             CREATE TABLE IF NOT EXISTS device_isolated (
@@ -1026,3 +1031,58 @@ def query_sessions(rule: str, since: int, window: int = 90, max_sessions: int = 
             }
             out.append({n for n in names if n != rule and not n.endswith("." + rule)})
         return out
+
+
+# --------------------------------------------------------------------------- Werbeblocker-Statistik
+
+
+def add_blocked(rows: list[tuple[int, str, str]]) -> None:
+    """rows: (ts, ip, domain) – vom Werbeblocker blockierte Anfragen."""
+    if not rows:
+        return
+    with closing(_connect()) as conn:
+        conn.executemany(
+            """INSERT INTO ad_blocked_daily (day, ip, domain, hits) VALUES (?, ?, ?, 1)
+               ON CONFLICT (day, ip, domain) DO UPDATE SET hits = hits + 1""",
+            [(day_of(ts), ip, domain) for ts, ip, domain in rows],
+        )
+        conn.execute(
+            "DELETE FROM ad_blocked_daily WHERE day < ?", (day_of(int(time.time()) - retention_days() * 86400),)
+        )
+        conn.commit()
+
+
+def blocked_stats(since_day: str, ip: str | None = None, limit: int = 10) -> dict:
+    """Summe, Verlauf pro Tag, Top-Domains und Top-Geräte ab since_day (optional nur ein Gerät)."""
+    where, params = "day >= ?", [since_day]
+    if ip:
+        where += " AND ip = ?"
+        params.append(ip)
+    with closing(_connect()) as conn:
+        total = conn.execute(
+            f"SELECT COALESCE(SUM(hits),0) h, COUNT(DISTINCT domain) d FROM ad_blocked_daily WHERE {where}", params
+        ).fetchone()
+        all_q = conn.execute(
+            f"SELECT COALESCE(SUM(hits),0) h FROM dns_daily WHERE {where}", params
+        ).fetchone()
+        days = [dict(r) for r in conn.execute(
+            f"SELECT day, SUM(hits) hits FROM ad_blocked_daily WHERE {where} GROUP BY day ORDER BY day", params
+        )]
+        domains = [dict(r) for r in conn.execute(
+            f"SELECT domain, SUM(hits) hits FROM ad_blocked_daily WHERE {where} GROUP BY domain "
+            "ORDER BY hits DESC LIMIT ?", [*params, limit]
+        )]
+        devices = [dict(r) for r in conn.execute(
+            f"""SELECT b.ip, SUM(b.hits) hits, MAX(d.hostname) hostname FROM ad_blocked_daily b
+                LEFT JOIN devices d ON d.ip = b.ip WHERE {where.replace('day', 'b.day').replace('ip =', 'b.ip =')}
+                GROUP BY b.ip ORDER BY hits DESC LIMIT ?""", [*params, limit]
+        )]
+    hits = int(total["h"])
+    return {
+        "hits": hits,
+        "domains_count": int(total["d"]),
+        "share": round(100 * hits / int(all_q["h"]), 1) if int(all_q["h"]) else 0.0,
+        "days": days,
+        "top_domains": domains,
+        "top_devices": devices,
+    }

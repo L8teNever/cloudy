@@ -47,6 +47,11 @@
         <span class="metric-label">Aufgerufene Domains</span>
         <span class="metric-value">{{ totals.domains | count }}</span>
       </div>
+      <div class="metric-card">
+        <span class="metric-label">Werbung blockiert</span>
+        <span class="metric-value blocked">{{ blocked.hits | count }}</span>
+        {% if blocked.share %}<span class="metric-label">{{ blocked.share }} % aller Anfragen</span>{% endif %}
+      </div>
     </section>
 
     <section class="panel-card">
@@ -175,6 +180,25 @@
           </div>
           {% else %}
           <p class="empty">Keine Domain-Daten.</p>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="panel-card">
+        <div class="card-title-row">
+          <h2 class="panel-title">Meist blockierte Werbung</h2>
+        </div>
+        <div class="rank-list">
+          {% for row in blocked.top_domains %}
+          <div class="rank-row">
+            <span class="rank-name green-name" title="{{ row.domain }}">{{ row.domain }}</span>
+            <div class="bar-track">
+              <div class="bar-seg-green-h" style="width: {{ row.bar_w }}%;"></div>
+            </div>
+            <span class="rank-value">{{ row.hits | count }}</span>
+          </div>
+          {% else %}
+          <p class="empty">Noch nichts blockiert.</p>
           {% endfor %}
         </div>
       </section>

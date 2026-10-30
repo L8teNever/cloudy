@@ -263,6 +263,36 @@ def ctx_statistik(request: Request, zeitraum: str | None = None) -> dict:
     }
 
 
+def _blocked_overview() -> dict:
+    """Werbeblocker-Zahlen für „Schutz“: heute / 7 / 30 Tage, Verlauf (14 Tage), Top-Domains und -Geräte."""
+    today = stats.get_range("heute").since_day
+    week = stats.get_range("7t").since_day
+    month = db.blocked_stats(stats.get_range("30t").since_day)
+    two_weeks = time.strftime("%Y-%m-%d", time.localtime(time.time() - 13 * 86400))
+    by_day = {d["day"]: d["hits"] for d in month["days"]}
+    days = []
+    for i in range(13, -1, -1):
+        t = time.time() - i * 86400
+        day = time.strftime("%Y-%m-%d", time.localtime(t))
+        days.append({"day": day, "label": time.strftime("%d.%m.", time.localtime(t)), "hits": by_day.get(day, 0)})
+    peak = max((d["hits"] for d in days), default=0) or 1
+    for d in days:
+        d["h"] = round(100 * d["hits"] / peak, 1)
+    w = db.blocked_stats(week, limit=8)
+    top_peak = max((r["hits"] for r in w["top_domains"]), default=0) or 1
+    dev_peak = max((r["hits"] for r in w["top_devices"]), default=0) or 1
+    return {
+        "today": db.blocked_stats(today)["hits"],
+        "week": w["hits"],
+        "month": month["hits"],
+        "share": w["share"],
+        "days": [d for d in days if d["day"] >= two_weeks],
+        "peak": peak,
+        "top_domains": [{**r, "w": round(100 * r["hits"] / top_peak, 1)} for r in w["top_domains"]],
+        "top_devices": [{**r, "w": round(100 * r["hits"] / dev_peak, 1)} for r in w["top_devices"]],
+    }
+
+
 def ctx_schutz(request: Request) -> dict:
     from . import adblock
 
@@ -280,6 +310,7 @@ def ctx_schutz(request: Request) -> dict:
             "running": bool(ad and ad.running),
             "count": adblock.count(s),
             "off": sorted(((names.get(m, m), m) for m in adblock.off_macs()), key=lambda x: x[0].lower()),
+            "stats": _blocked_overview(),
         },
         "blocklist_enabled": blocklist.is_enabled(),
         "blocklist_paused_until": blocklist.paused_until(),

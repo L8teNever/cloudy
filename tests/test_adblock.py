@@ -60,3 +60,32 @@ def test_whitelist_removes_from_ad_list(client, tmp_path):
     client.post("/blocklist/whitelist/add", data={"domain": "ads.example.com"})
     assert open(adblock.hosts_path(s), encoding="utf-8").read().count("ads.example.com") == 0
     assert adblock.count(s) == 1
+
+
+def test_blocked_lines_are_counted_once_per_page():
+    import time as t
+
+    from app.dnsmasq import Collector
+
+    c = Collector()
+    now = int(t.time())
+    c.feed("dnsmasq[9]: 1000000005 192.168.178.60/5353 /data/adblock.hosts ads.example.com is 0.0.0.0", now)
+    c.feed("dnsmasq[9]: 1000000006 192.168.178.60/5353 /data/adblock.hosts ads.example.com is NODATA-IPv6", now + 1)
+    c.feed("dnsmasq[9]: 1000000007 192.168.178.61/5353 /data/adblock.hosts track.example.org is 0.0.0.0", now)
+    c.flush()
+    st = db.blocked_stats("2000-01-01")
+    assert st["hits"] == 2 and st["domains_count"] == 2
+    assert db.blocked_stats("2000-01-01", ip="192.168.178.60")["hits"] == 1
+
+
+def test_blocked_stats_on_pages(client):
+    import time as t
+
+    db.upsert_devices([("testclient", MAC, "handy")])
+    now = int(t.time())
+    db.add_blocked([(now, "testclient", "ads.example.com"), (now, "testclient", "x.example.com")])
+    assert "in 7 Tagen blockiert" in client.get("/mein").text
+    page = client.get("/schutz").text
+    assert "Heute blockiert" in page and "ads.example.com" in page
+    hub = client.get("/hub/statistik").text
+    assert "Werbung blockiert" in hub and "ads.example.com" in hub
