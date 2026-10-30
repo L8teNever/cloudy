@@ -81,6 +81,12 @@ def init() -> None:
                 slot TEXT NOT NULL
             );
 
+            -- Einzelne Seiten (inkl. Subdomains), die für ALLE Geräte immer durch ein bestimmtes WARP-/VPN-Profil laufen.
+            CREATE TABLE IF NOT EXISTS site_routes (
+                domain TEXT PRIMARY KEY,
+                slot TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -404,6 +410,27 @@ def device_warp() -> dict[str, str]:
     """MAC -> WARP-Slot"""
     with closing(_connect()) as conn:
         return {r["mac"]: r["slot"] for r in conn.execute("SELECT mac, slot FROM device_warp")}
+
+
+def site_routes() -> dict[str, str]:
+    """Domain -> Slot (Seiten, die immer durch ein bestimmtes Profil laufen)"""
+    with closing(_connect()) as conn:
+        return {r["domain"]: r["slot"] for r in conn.execute("SELECT domain, slot FROM site_routes ORDER BY domain")}
+
+
+def set_site_route(domain: str, slot: str) -> None:
+    with closing(_connect()) as conn:
+        conn.execute(
+            "INSERT INTO site_routes (domain, slot) VALUES (?, ?) ON CONFLICT (domain) DO UPDATE SET slot = excluded.slot",
+            (domain, slot),
+        )
+        conn.commit()
+
+
+def remove_site_route(domain: str) -> None:
+    with closing(_connect()) as conn:
+        conn.execute("DELETE FROM site_routes WHERE domain = ?", (domain.strip().lower(),))
+        conn.commit()
 
 
 def set_device_warp(mac: str, slot: str | None) -> None:

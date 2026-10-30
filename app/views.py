@@ -243,6 +243,15 @@ def ctx_weiterleitungen(request: Request) -> dict:
     }
 
 
+def ctx_seitenrouten(request: Request) -> dict:
+    s: Settings = request.app.state.settings
+    return {
+        "site_routes": db.site_routes(),
+        "site_profiles": warp_profiles(s),
+        "site_gateway": s.gateway_enabled,
+    }
+
+
 def ctx_vpn(request: Request) -> dict:
     return {"settings": request.app.state.settings, **_warp_ctx(request)}
 
@@ -274,6 +283,7 @@ PARTS = {
     "schutz": ctx_schutz,
     "weiterleitungen": ctx_weiterleitungen,
     "vpn": ctx_vpn,
+    "seitenrouten": ctx_seitenrouten,
     "fritzbox": ctx_fritzbox,
     "leistung": ctx_leistung,
 }
@@ -328,8 +338,8 @@ async def schutz(request: Request):
 
 
 @router.get("/vpn", response_class=HTMLResponse, dependencies=[Depends(require_password)])
-async def vpn(request: Request):
-    return await page(request, "seiten/vpn.html", "VPN", "/vpn", ["vpn"])
+async def vpn(request: Request, fehler: str | None = None):
+    return await page(request, "seiten/vpn.html", "VPN", "/vpn", ["vpn", "seitenrouten"], fehler=fehler)
 
 
 @router.get("/leistung", response_class=HTMLResponse, dependencies=[Depends(require_password)])

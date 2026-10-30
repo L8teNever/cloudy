@@ -473,6 +473,28 @@ async def device_set_isolate(request: Request, mac: str = Form(...), isolated: i
     return RedirectResponse(f"/geraete/{quote(ip)}" if ip else "/geraete", status_code=303)
 
 
+@app.post("/seiten-routen/add", dependencies=[Depends(require_password)])
+async def site_route_add(request: Request, domain: str = Form(...), slot: str = Form(...)):
+    """Eine Seite (inkl. Subdomains) für alle Geräte immer durch ein bestimmtes WARP-/VPN-Profil schicken."""
+    from .redirects import normalize_source
+
+    _check_slot(request, slot)
+    try:
+        domain = normalize_source(domain)
+    except ValueError as exc:
+        return RedirectResponse(f"/vpn?fehler={quote(str(exc))}#seitenrouten", status_code=303)
+    await run_in_threadpool(db.set_site_route, domain, slot)
+    await run_in_threadpool(_apply_redirects, request)
+    return RedirectResponse("/vpn#seitenrouten", status_code=303)
+
+
+@app.post("/seiten-routen/remove", dependencies=[Depends(require_password)])
+async def site_route_remove(request: Request, domain: str = Form(...)):
+    await run_in_threadpool(db.remove_site_route, domain)
+    await run_in_threadpool(_apply_redirects, request)
+    return RedirectResponse("/vpn#seitenrouten", status_code=303)
+
+
 @app.post("/warp/default", dependencies=[Depends(require_password)])
 async def warp_set_default(request: Request, slot: str = Form("")):
     """Wohin alle Geräte gehen, die keine eigene Einstellung haben ("" = normal über die Fritzbox)."""

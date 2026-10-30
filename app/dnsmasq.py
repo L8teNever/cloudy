@@ -1,5 +1,6 @@
 """Startet dnsmasq (DNS + optional DHCP), liest dessen Log mit und schreibt die Anfragen in die Datenbank."""
 
+import functools
 import os
 import re
 import signal
@@ -281,6 +282,31 @@ class DnsmasqRunner:
         self._flush_once()
 
 
+@functools.lru_cache(maxsize=1)
+def ipset_supported() -> bool:
+    """Kann das installierte dnsmasq IPs in ipsets eintragen? (Sonst würde die Konfiguration es ganz abbrechen lassen.)"""
+    try:
+        out = subprocess.run(["dnsmasq", "--version"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "ipset" in out.split("\n", 1)[0].replace("no-ipset", "")
+
+
+def site_route_lines(s: Settings, routes: dict[str, str]) -> list[str]:
+    """dnsmasq trägt die IPs dieser Domains (inkl. Subdomains) in das ipset des jeweiligen Profils ein."""
+    if not (s.gateway_enabled and routes):
+        return []
+    from . import warp
+
+    index_of = {slot: i for i, (slot, _) in enumerate(s.warp_slots, start=1)}
+    lines = []
+    for domain, slot in sorted(routes.items()):
+        if slot in index_of:
+            sets = [warp.site_set(index_of[slot])] + ([warp.site_set(index_of[slot], True)] if s.ipv6_enabled else [])
+            lines.append(f"ipset=/{domain}/{','.join(sets)}")
+    return lines
+
+
 def sync_redirects_hosts(s: Settings) -> None:
     """Schreibt die Weiterleitungen als dnsmasq-Konfiguration (wird mit conf-file= eingebunden)."""
     from .redirects import dnsmasq_lines
@@ -288,6 +314,8 @@ def sync_redirects_hosts(s: Settings) -> None:
     lines = ["# cloudy: Domain-Weiterleitungen (automatisch erzeugt, nicht von Hand ändern)"]
     lines += dnsmasq_lines([r["source"] for r in db.redirects()], s.pi_ip)
     lines += localdomain.dnsmasq_lines(localdomain.domains(), s.pi_ip)
+    if ipset_supported():
+        lines += site_route_lines(s, db.site_routes())
     os.makedirs(s.data_dir, exist_ok=True)
     tmp = s.redirects_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:

@@ -7,6 +7,10 @@ WARP Connector an und schreibt seinen Zustand nach data/warp/<slot>/status.
 Hier auf dem Pi (Gateway-Modus): Pakete zugeordneter Geräte (nach MAC-Adresse) bekommen eine Markierung, jede
 Markierung hat eine eigene Routing-Tabelle, deren Standardroute auf den WARP-Container zeigt. Ist der Tunnel weg,
 zeigt sie auf die Fritzbox (oder, mit WARP_KILLSWITCH=1, ins Leere).
+
+Seiten-Regeln: Einzelne Domains laufen für alle Geräte durch ein festes Profil, egal was beim Gerät eingestellt ist.
+dnsmasq trägt die IPs dieser Domains beim Auflösen in ein ipset pro Profil ein, die Markierung kommt dann vor
+den Geräte-Regeln (und beendet die Kette).
 """
 
 import json
@@ -35,6 +39,11 @@ MAC_RE = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
 
 def mark(index: int) -> str:
     return hex(MARK_BASE + index)
+
+
+def site_set(index: int, v6: bool = False) -> str:
+    """Name des ipset, in das dnsmasq die IPs der Seiten für dieses Profil einträgt."""
+    return f"cloudy_s{index}" + ("_6" if v6 else "")
 
 
 def slot_dir(s: Settings, slot: str) -> str:
@@ -144,10 +153,18 @@ class Plan:
 
 
 def _mark_rules(
-    s: Settings, assignments: dict[str, str], default_slot: str, index_of: dict[str, int], local_net: str
+    s: Settings, assignments: dict[str, str], default_slot: str, index_of: dict[str, int], local_net: str,
+    site_routes: dict[str, str] | None = None, v6: bool = False,
 ) -> tuple[tuple[str, ...], ...]:
     """Markierungen nach MAC. local_net: Ziele im eigenen Heimnetz (IPv4 oder IPv6) werden nie getunnelt."""
     rules = []
+    # Seiten-Regeln zuerst und mit RETURN beenden: sie gelten für alle Geräte (auch für „direkt“).
+    for slot in sorted({sl for sl in (site_routes or {}).values() if sl in index_of}, key=index_of.get):
+        rules.append((
+            "-i", s.lan_interface, "-m", "set", "--match-set", site_set(index_of[slot], v6), "dst",
+            "!", "-d", local_net, "-j", "MARK", "--set-mark", mark(index_of[slot]),
+        ))
+        rules.append(("-i", s.lan_interface, "-m", "mark", "--mark", mark(index_of[slot]), "-j", "RETURN"))
     for mac in sorted(m for m in assignments if MAC_RE.match(m)):
         slot = assignments[mac]
         if slot == DIRECT:
@@ -173,11 +190,12 @@ def build_plan(
     connected: dict[str, bool],
     default_slot: str = "",
     ipv6_ok: dict[str, bool] | None = None,
+    site_routes: dict[str, str] | None = None,
 ) -> Plan:
     """assignments: MAC -> Slot (oder "direct"). connected: Slot -> Tunnel verbunden? default_slot: für alle anderen.
     ipv6_ok: Slot -> Tunnel kann IPv6 (nur mit IPV6_ENABLED)."""
     index_of = {slot: i for i, (slot, _) in enumerate(s.warp_slots, start=1)}
-    rules = _mark_rules(s, assignments, default_slot, index_of, str(s.lan_network))
+    rules = _mark_rules(s, assignments, default_slot, index_of, str(s.lan_network), site_routes)
     routes = []
     for index, (slot, ip) in enumerate(s.warp_slots, start=1):
         table = str(TABLE_BASE + index)
@@ -189,7 +207,7 @@ def build_plan(
             routes.append(("default", "via", s.router_ip, "dev", s.lan_interface, "table", table))
     if not s.ipv6_enabled:
         return Plan(rules, tuple(routes))
-    rules6 = _mark_rules(s, assignments, default_slot, index_of, str(ipv6.prefix(s)))
+    rules6 = _mark_rules(s, assignments, default_slot, index_of, str(ipv6.prefix(s)), site_routes, v6=True)
     routes6 = []
     for index, (slot, ip) in enumerate(s.warp_slots, start=1):
         table = str(TABLE_BASE + index)
@@ -212,6 +230,14 @@ def cleanup() -> None:
     """Gateway aus: alte Markierungen aus einem früheren Lauf entfernen (die Regeln liegen im Host-Netz)."""
     _run(["iptables", "-t", "mangle", "-F", MANGLE_CHAIN])
     _cleanup_ipv6(9)
+
+
+def create_site_sets(s: Settings) -> None:
+    """ipsets für die Seiten-Regeln anlegen (gibt es sie schon, bleibt der Inhalt). Einträge laufen nach 24 h ab."""
+    for index, _ in enumerate(s.warp_slots, start=1):
+        _run(["ipset", "create", "-exist", site_set(index), "hash:ip", "timeout", "86400"])
+        if s.ipv6_enabled:
+            _run(["ipset", "create", "-exist", site_set(index, True), "hash:ip", "family", "inet6", "timeout", "86400"])
 
 
 def _cleanup_ipv6(slots: int) -> None:
@@ -264,6 +290,7 @@ class WarpRouter:
                 pass
             ok &= _run(["ip", "rule", "add", "fwmark", mark(index), "table", table, "priority", prio])
 
+        create_site_sets(self.s)
         # Alte Regeln aus einem früheren Lauf entfernen; mit IPV6_ENABLED werden sie gleich neu aufgebaut.
         _cleanup_ipv6(len(self.s.warp_slots))
         if self.s.ipv6_enabled:
@@ -330,7 +357,7 @@ class WarpRouter:
             self._ticks += 1
             if self._ticks % 12 == 1:
                 ipv6.ensure_lan(self.s)
-        self.apply(build_plan(self.s, db.device_warp(), connected, db.get_setting(DEFAULT_KEY), ipv6_ok))
+        self.apply(build_plan(self.s, db.device_warp(), connected, db.get_setting(DEFAULT_KEY), ipv6_ok, db.site_routes()))
 
     def start(self) -> None:
         try:

@@ -199,3 +199,43 @@ def test_dashboard_default_and_direct(client):
 
     client.post("/warp/default", data={"slot": ""})
     assert db.get_setting(warp.DEFAULT_KEY) == ""
+
+
+def test_site_routes_mark_before_device_rules_and_end_the_chain():
+    s = Settings.from_env()
+    plan = warp.build_plan(s, {MAC: "direct"}, {"vpn1": True}, "", None, {"netflix.com": "vpn1", "x.de": "vpn1"})
+    assert plan.mangle_rules[0] == (
+        "-i", "eth0", "-m", "set", "--match-set", "cloudy_s3", "dst", "!", "-d", "192.168.178.0/24",
+        "-j", "MARK", "--set-mark", "0x103",
+    )
+    assert plan.mangle_rules[1] == ("-i", "eth0", "-m", "mark", "--mark", "0x103", "-j", "RETURN")
+    assert len(plan.mangle_rules) == 3  # + RETURN für das „direkt“-Gerät
+    assert warp.build_plan(s, {}, {}).mangle_rules == ()
+    assert warp.build_plan(s, {}, {}, "", None, {"a.de": "weg"}).mangle_rules == ()
+
+
+def test_site_routes_in_ipv6_use_own_set(monkeypatch):
+    monkeypatch.setenv("IPV6_ENABLED", "1")
+    monkeypatch.setenv("IPV6_PREFIX", "fd12:3456:789a:1::/64")
+    plan = warp.build_plan(Settings.from_env(), {}, {"warp1": True}, "", {"warp1": True}, {"a.de": "warp1"})
+    assert "cloudy_s1_6" in plan.mangle_rules6[0] and "cloudy_s1" in plan.mangle_rules[0]
+
+
+def test_site_route_dnsmasq_lines(monkeypatch):
+    from app import dnsmasq
+
+    monkeypatch.setenv("GATEWAY_ENABLED", "1")
+    s = Settings.from_env()
+    assert dnsmasq.site_route_lines(s, {"netflix.com": "vpn1", "b.de": "unbekannt"}) == ["ipset=/netflix.com/cloudy_s3"]
+    monkeypatch.delenv("GATEWAY_ENABLED")
+    assert dnsmasq.site_route_lines(Settings.from_env(), {"netflix.com": "vpn1"}) == []
+
+
+def test_site_route_pages(client):
+    r = client.post("/seiten-routen/add", data={"domain": "https://www.Netflix.com/x", "slot": "vpn1"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert db.site_routes() == {"netflix.com": "vpn1"}
+    assert "netflix.com" in client.get("/vpn").text
+    assert client.post("/seiten-routen/add", data={"domain": "x.de", "slot": "nope"}).status_code == 404
+    client.post("/seiten-routen/remove", data={"domain": "netflix.com"})
+    assert db.site_routes() == {}
