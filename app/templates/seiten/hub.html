@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>cloudy – Hub</title>
+  {% include "teile/icons.html" %}
+  {% include "teile/hub_stil.html" %}
+</head>
+<body>
+  <main class="app-container">
+    <header class="app-header">
+      <a class="brand" href="/hub">
+        <img class="brand-logo" src="/static/cloudy.png" width="40" height="40" alt="" aria-hidden="true">
+        <span class="brand-title">cloudy</span>
+      </a>
+    </header>
+
+    <section class="panel">
+      <div class="ha-status-card">
+        <div class="ha-top-row">
+          <div class="ha-identity">
+            <div class="ha-icon-wrap" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.167L3.5 10.25V20.5a.5.5 0 0 0 .5.5h16a.5.5 0 0 0 .5-.5V10.25L12 3.167zm0 2.22l6.5 5.417V19.5H15v-4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v4H5v-8.696L12 5.387zM11 16.5h2v3h-2v-3z"/></svg>
+            </div>
+            <div>
+              <div class="ha-name">Home Assistant</div>
+            </div>
+          </div>
+          <a class="badge-pill green" id="haBadge" href="{{ ha_url }}" style="display:flex;align-items:center;gap:.35rem;padding:.25rem .55rem;text-decoration:none">
+            <span class="status-dot-wrap">
+              <span class="status-dot-ping" id="haPing"></span>
+              <span class="status-dot-solid" id="haSolid"></span>
+            </span>
+            <span id="haStatusText">Prüfen…</span>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2 class="panel-title">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>
+            </svg>
+            Bereiche &amp; Geräte
+          </h2>
+          <span class="panel-subtitle">Wähle eine Ansicht zum Konfigurieren</span>
+        </div>
+      </div>
+
+      <nav class="nav-list" aria-label="Hauptnavigation">
+        <a href="{{ mein_href }}" class="nav-item highlight">
+          <div class="nav-icon" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/>
+            </svg>
+          </div>
+          <div class="nav-texts">
+            <div class="nav-title-row">
+              <span class="nav-title">Mein Gerät ({{ device_label }})</span>
+              <span class="badge-pill blue">Aktuell</span>
+            </div>
+            <span class="nav-desc">Internet-Routing &amp; WARP / VPN Optionen festlegen</span>
+          </div>
+          <div class="nav-arrow" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </div>
+        </a>
+
+        <a href="{{ geraete_href }}" class="nav-item">
+          <div class="nav-icon" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>
+            </svg>
+          </div>
+          <div class="nav-texts">
+            <div class="nav-title-row">
+              <span class="nav-title">Alle Netzwerkgeräte</span>
+              <span class="badge-pill gray">{{ online_count }} Online</span>
+            </div>
+            <span class="nav-desc">Fritzbox-Geräte, Handys und PCs verwalten</span>
+          </div>
+          <div class="nav-arrow" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </div>
+        </a>
+
+        <a href="{{ vpn_href }}" class="nav-item">
+          <div class="nav-icon" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+          </div>
+          <div class="nav-texts">
+            <div class="nav-title-row"><span class="nav-title">Tunnel &amp; Profile</span></div>
+            <span class="nav-desc">Cloudflare WARP, WireGuard &amp; Fritzbox Tunnel</span>
+          </div>
+          <div class="nav-arrow" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </div>
+        </a>
+
+        <a href="{{ statistik_href }}" class="nav-item">
+          <div class="nav-icon" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 3v18h18"/><path d="M7 16V9"/><path d="M12 16v-5"/><path d="M17 16V7"/>
+            </svg>
+          </div>
+          <div class="nav-texts">
+            <div class="nav-title-row">
+              <span class="nav-title">Netzwerk-Statistiken</span>
+              <span class="badge-pill gray">Nur Anzeige</span>
+            </div>
+            <span class="nav-desc">Download, Upload, Top-Geräte und Domains ansehen</span>
+          </div>
+          <div class="nav-arrow" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </div>
+        </a>
+
+        <a href="{{ status_href }}" class="nav-item">
+          <div class="nav-icon" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+            </svg>
+          </div>
+          <div class="nav-texts">
+            <div class="nav-title-row"><span class="nav-title">Status &amp; Diagnose</span></div>
+            <span class="nav-desc">Übersicht, DNS und Fehlersuche im Dashboard</span>
+          </div>
+          <div class="nav-arrow" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </div>
+        </a>
+      </nav>
+    </section>
+
+    <footer class="app-footer">
+      <span>cloudy</span>
+      <span class="footer-dot"></span>
+      <span>Lokal vernetzt</span>
+    </footer>
+  </main>
+
+  <script>
+  (function () {
+    var haUrl = {{ ha_url | tojson }};
+    function updateHAStatus(online) {
+      var badge = document.getElementById("haBadge");
+      var text = document.getElementById("haStatusText");
+      var ping = document.getElementById("haPing");
+      var solid = document.getElementById("haSolid");
+      if (!badge || !text) return;
+      if (online) {
+        badge.className = "badge-pill green";
+        text.textContent = "Läuft";
+        if (ping) ping.style.display = "block";
+        if (solid) solid.style.background = "var(--color-online)";
+      } else {
+        badge.className = "badge-pill gray";
+        text.textContent = "Offline";
+        if (ping) ping.style.display = "none";
+        if (solid) solid.style.background = "#ef4444";
+      }
+    }
+    function checkHomeAssistant() {
+      var start = performance.now();
+      var img = new Image();
+      img.onload = function () { updateHAStatus(true); };
+      img.onerror = function () {
+        updateHAStatus(Math.round(performance.now() - start) < 1500);
+      };
+      img.src = haUrl.replace(/\/$/, "") + "/static/icons/favicon.ico?" + Date.now();
+    }
+    setTimeout(checkHomeAssistant, 400);
+  })();
+  </script>
+</body>
+</html>

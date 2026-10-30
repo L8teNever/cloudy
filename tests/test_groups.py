@@ -99,3 +99,52 @@ def test_warp_tick_uses_group_assignments(monkeypatch):
     s = Settings.from_env()
     plan = build_plan(s, pol.assignments(), {"warp1": True}, "", None, {})
     assert any(MAC_TV in rule and "RETURN" in rule for rule in plan.mangle_rules)
+
+
+def test_group_site_routes_only_for_members():
+    from app.settings import Settings
+    from app.warp import build_plan
+
+    gid = db.create_group("TV", slot="", locked=False)
+    db.set_group_members(gid, [MAC_TV])
+    db.set_group_site_route(gid, "netflix.com", "vpn1")
+    db.set_group_site_route(gid, "bank.de", "direct")
+    assert db.group_site_routes(gid) == {"bank.de": "direct", "netflix.com": "vpn1"}
+    assert db.group_site_mac_slots() == [(MAC_TV, "direct"), (MAC_TV, "vpn1")]
+
+    s = Settings.from_env()
+    plan = build_plan(s, {}, {"vpn1": True}, "", None, {}, db.group_site_mac_slots())
+    assert plan.mangle_rules[0] == (
+        "-i", "eth0", "-m", "mac", "--mac-source", MAC_TV,
+        "-m", "set", "--match-set", "cloudy_sd", "dst", "-j", "RETURN",
+    )
+    assert MAC_TV in plan.mangle_rules[1] and "cloudy_s3" in plan.mangle_rules[1]
+    # Ohne Gruppenregeln: keine Markierung
+    assert build_plan(s, {}, {}, "", None, {}, []).mangle_rules == ()
+
+
+def test_group_site_route_pages(client):
+    gid = db.create_group("TV")
+    r = client.post(
+        f"/gruppen/{gid}/seiten/add",
+        data={"domain": "https://www.Netflix.com/x", "slot": "vpn1"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert db.group_site_routes(gid) == {"netflix.com": "vpn1"}
+    page = client.get(f"/gruppen/{gid}").text
+    assert "netflix.com" in page and "Seiten nur für diese Gruppe" in page
+    assert "Globale Seiten-Regeln" in page
+
+    client.post(
+        "/seiten-routen/add",
+        data={"domain": "bank.de", "slot": "direct", "next": f"/gruppen/{gid}#seitenrouten"},
+        follow_redirects=False,
+    )
+    assert db.site_routes() == {"bank.de": "direct"}
+    assert "bank.de" in client.get(f"/gruppen/{gid}").text
+
+    client.post(f"/gruppen/{gid}/seiten/remove", data={"domain": "netflix.com"})
+    assert db.group_site_routes(gid) == {}
+    client.post(f"/gruppen/{gid}/loeschen")
+    assert db.group_site_routes(gid) == {}

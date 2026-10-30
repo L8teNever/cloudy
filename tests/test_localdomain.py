@@ -58,6 +58,29 @@ def test_same_name_for_both_is_rejected(client, monkeypatch):
     assert r.status_code == 400
 
 
+def test_hub_domain_shows_hub(client):
+    s = Settings.from_env()
+    db.set_setting(localdomain.HUB_KEY, "home.kulbarts.com")
+    sync_redirects_hosts(s)
+    assert f"address=/home.kulbarts.com/{s.pi_ip}" in open(s.redirects_path, encoding="utf-8").read()
+    h = {"host": "home.kulbarts.com"}
+    assert client.get("/", headers=h, follow_redirects=False).headers["location"] == "/hub"
+    assert client.get("/hub", headers=h).status_code == 200
+    assert client.get("/hub/statistik", headers=h).status_code == 200
+    page = client.get("/hub/statistik", headers=h).text
+    assert "Nur Anzeige" in page
+    assert "/geraete/" not in page
+    assert client.get("/mein", headers=h).status_code == 200
+    assert client.get("/einstellungen", headers=h).status_code == 404
+    assert client.get("/geraete", headers=h).status_code == 404
+
+
+def test_same_name_hub_rejected(client, monkeypatch):
+    monkeypatch.setattr(localdomain, "start_in_background", lambda s: None)
+    r = client.post("/lokale-domain", data={"hub": "a.kulbarts.com", "dashboard": "a.kulbarts.com"})
+    assert r.status_code == 400
+
+
 def test_multiple_mein_and_dashboard_domains(client, monkeypatch):
     from urllib.parse import urlencode
 
@@ -65,8 +88,10 @@ def test_multiple_mein_and_dashboard_domains(client, monkeypatch):
     body = urlencode([
         ("dashboard", "cloudy.kulbarts.com"),
         ("dashboard", "dash.kulbarts.com"),
+        ("hub", "home.kulbarts.com/hub"),
         ("name", "main.kulbarts.com/mein"),
         ("name", "handy.kulbarts.com"),
+        ("ha_url", "http://ha.lan:8123"),
         ("cf_token", "tok"),
     ])
     r = client.post(
@@ -77,7 +102,9 @@ def test_multiple_mein_and_dashboard_domains(client, monkeypatch):
     )
     assert r.status_code == 303
     assert localdomain.dashboard_domains() == ["cloudy.kulbarts.com", "dash.kulbarts.com"]
+    assert localdomain.hub_domains() == ["home.kulbarts.com"]
     assert localdomain.mein_domains() == ["main.kulbarts.com", "handy.kulbarts.com"]
+    assert localdomain.ha_url() == "http://ha.lan:8123"
     page = client.get("/einstellungen").text
     assert "handy.kulbarts.com" in page and "/mein" in page
     assert client.get("/", headers={"host": "handy.kulbarts.com"}, follow_redirects=False).headers["location"] == "/mein"

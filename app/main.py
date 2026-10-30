@@ -17,7 +17,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import blocklist, certs, db, fritz, localdomain, policy, slots, views, warp
+from . import blocklist, certs, db, fritz, localdomain, policy, slots, stats, views, warp
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -32,11 +32,16 @@ basic = HTTPBasic(auto_error=False)
 
 
 def fmt_bytes(n: int) -> str:
+    n = n or 0
     for unit in ("B", "KB", "MB", "GB"):
         if n < 1024:
             return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}".replace(".", ",")
         n /= 1024
     return f"{n:.1f} TB".replace(".", ",")
+
+
+def fmt_count(n: int) -> str:
+    return f"{int(n or 0):,}".replace(",", ".")
 
 
 def fmt_ago(ts: int | None, now: float | None = None) -> str:
@@ -57,7 +62,9 @@ def fmt_ago(ts: int | None, now: float | None = None) -> str:
 
 
 templates.env.filters["bytes"] = fmt_bytes
+templates.env.filters["count"] = fmt_count
 templates.env.filters["ago"] = fmt_ago
+templates.env.globals.update(fmt_bytes=fmt_bytes, fmt_count=fmt_count)
 
 
 @asynccontextmanager
@@ -161,6 +168,7 @@ async def redirect_middleware(request: Request, call_next):
     settings = getattr(request.app.state, "settings", None)
     mein_hosts = await run_in_threadpool(localdomain.mein_domains)
     dash_hosts = await run_in_threadpool(localdomain.dashboard_domains)
+    hub_hosts = await run_in_threadpool(localdomain.hub_domains)
     if raw_host in dash_hosts and request.url.scheme == "http":
         # Dashboard unter der eigenen Domain: Passwort und Daten nur verschlüsselt, sobald das Zertifikat da ist.
         if settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
@@ -170,6 +178,21 @@ async def redirect_middleware(request: Request, call_next):
                 + (f"?{request.url.query}" if request.url.query else ""),
                 status_code=302,
             )
+    if raw_host in hub_hosts:
+        # Hub-Domain: Startseite mit Links – Aufruf ohne Pfad landet auf /hub.
+        path = request.url.path
+        if request.url.scheme == "http" and settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
+            port = "" if settings.https_port == 443 else f":{settings.https_port}"
+            return RedirectResponse(f"https://{raw_host}{port}/hub", status_code=302)
+        if path == "/":
+            return RedirectResponse("/hub", status_code=302)
+        if (
+            path not in ("/healthz", "/favicon.ico", "/hub", "/hub/statistik", "/mein")
+            and not path.startswith("/mein/")
+            and not path.startswith("/static/")
+        ):
+            return Response("Nicht gefunden.", status_code=404)
+        return await call_next(request)
     if raw_host in mein_hosts:
         # Eigene Domain nur im Heimnetz: nur „Mein Gerät“ – Aufruf ohne Pfad landet auf /mein.
         path = request.url.path
@@ -188,6 +211,7 @@ async def redirect_middleware(request: Request, call_next):
     own_hosts = {"localhost", "127.0.0.1"}
     own_hosts.update(mein_hosts)
     own_hosts.update(dash_hosts)
+    own_hosts.update(hub_hosts)
     if settings:
         own_hosts.add(settings.pi_ip.lower())
         if settings.local_name:
@@ -303,6 +327,126 @@ def client_ip(request: Request) -> str:
 
 
 app.include_router(views.router)
+
+
+def _local_base(host: str, settings) -> str:
+    """Absolute Basis-URL für eine lokale Domain (https wenn Zertifikat da)."""
+    if not host:
+        return ""
+    if settings and settings.https_port and localdomain.sni_pair(settings, host):
+        port = "" if settings.https_port == 443 else f":{settings.https_port}"
+        return f"https://{host}{port}"
+    return f"http://{host}"
+
+
+@app.get("/hub", response_class=HTMLResponse)
+async def hub_page(request: Request):
+    """Lokaler Hub: Einstieg mit Links zu Mein Gerät, Dashboard und Home Assistant."""
+    settings = request.app.state.settings
+    ip = client_ip(request)
+    device = await run_in_threadpool(db.device, ip) if ip else None
+    online = online_ips(request)
+    dash = await run_in_threadpool(localdomain.dashboard_domains)
+    mein = await run_in_threadpool(localdomain.mein_domains)
+    ha = await run_in_threadpool(localdomain.ha_url)
+    dash_base = await run_in_threadpool(_local_base, (dash or [""])[0], settings) if dash else ""
+    mein_href = "/mein"
+    if mein:
+        mein_base = await run_in_threadpool(_local_base, mein[0], settings)
+        if mein_base:
+            mein_href = f"{mein_base}/mein"
+    name = ((device or {}).get("hostname") or (device or {}).get("fritz_name") or "").strip() or "dieses Gerät"
+    return templates.TemplateResponse(
+        request,
+        "seiten/hub.html",
+        {
+            "title": "Hub",
+            "settings": settings,
+            "device": device,
+            "device_label": name,
+            "online_count": len(online),
+            "mein_href": mein_href,
+            "geraete_href": f"{dash_base}/geraete" if dash_base else "/geraete",
+            "vpn_href": f"{dash_base}/vpn" if dash_base else "/vpn",
+            "status_href": f"{dash_base}/" if dash_base else "/",
+            "statistik_href": "/hub/statistik",
+            "ha_url": ha,
+        },
+    )
+
+
+def _hub_series_bars(series: list[dict]) -> tuple[list[dict], int]:
+    """Säulenhöhen für den Hub-Verlauf (nur Anzeige, keine Links)."""
+    peak = max((int(b.get("bytes_down") or 0) + int(b.get("bytes_up") or 0) for b in series), default=0) or 1
+    out = []
+    for b in series:
+        down = int(b.get("bytes_down") or 0)
+        up = int(b.get("bytes_up") or 0)
+        total = down + up
+        out.append({
+            **b,
+            "bar_h": round(100 * total / peak, 2) if total else 0,
+            "dl_pct": round(100 * down / total, 1) if total else 0,
+            "ul_pct": round(100 * up / total, 1) if total else 0,
+        })
+    return out, peak
+
+
+def _hub_traffic_ranks(rows: list[dict]) -> list[dict]:
+    peak = max((int(r.get("bytes_down") or 0) + int(r.get("bytes_up") or 0) for r in rows), default=0) or 1
+    out = []
+    for r in rows:
+        down = int(r.get("bytes_down") or 0)
+        up = int(r.get("bytes_up") or 0)
+        total = down + up
+        out.append({
+            **r,
+            "total": total,
+            "dl_w": round(100 * down / peak, 2) if peak else 0,
+            "ul_w": round(100 * up / peak, 2) if peak else 0,
+        })
+    return out
+
+
+def _hub_hits_ranks(rows: list[dict], key: str = "hits") -> list[dict]:
+    peak = max((int(r.get(key) or 0) for r in rows), default=0) or 1
+    out = []
+    for r in rows:
+        hits = int(r.get(key) or 0)
+        out.append({**r, "bar_w": round(100 * hits / peak, 2) if peak else 0})
+    return out
+
+
+@app.get("/hub/statistik", response_class=HTMLResponse)
+async def hub_statistik(request: Request, zeitraum: str | None = None):
+    """Öffentliche Hub-Statistik: nur anschauen, ohne Drilldown auf Geräte/Domains."""
+    r = await run_in_threadpool(stats.get_range, zeitraum)
+    totals = await run_in_threadpool(stats.totals, r)
+    series = await run_in_threadpool(stats.timeseries, r)
+    usage = await run_in_threadpool(stats.device_usage, r, 12)
+    device_hits = await run_in_threadpool(stats.device_hits, r, 12)
+    targets = await run_in_threadpool(stats.top_targets, r, None, 12)
+    domains = await run_in_threadpool(stats.top_domains, r, None, 12)
+    bars, peak = _hub_series_bars(series)
+    ip = client_ip(request)
+    return templates.TemplateResponse(
+        request,
+        "seiten/hub_statistik.html",
+        {
+            "title": "Statistik",
+            "settings": request.app.state.settings,
+            "range": r,
+            "totals": totals,
+            "series": bars,
+            "series_peak": peak,
+            "usage": _hub_traffic_ranks(usage),
+            "device_hits": _hub_hits_ranks(device_hits),
+            "targets": _hub_traffic_ranks(targets),
+            "domains": _hub_hits_ranks(domains),
+            "viewer_ip": ip,
+            "ranges": [("heute", "Heute"), ("7t", "7 Tage"), ("30t", "30 Tage")],
+        },
+    )
 
 
 @app.get("/mein", response_class=HTMLResponse)
@@ -434,6 +578,9 @@ def _purge_slot_references(slot: str) -> None:
     for g in db.groups():
         if g["slot"] == slot:
             db.update_group(g["id"], g["name"], g["color"], "", False)
+        for domain, assigned in list(db.group_site_routes(g["id"]).items()):
+            if assigned == slot:
+                db.remove_group_site_route(g["id"], domain)
     if db.get_setting(warp.DEFAULT_KEY) == slot:
         db.set_setting(warp.DEFAULT_KEY, "")
 
@@ -499,22 +646,26 @@ async def lokale_domain_set(
     request: Request,
     name: list[str] = Form(default=[]),
     dashboard: list[str] = Form(default=[]),
+    hub: list[str] = Form(default=[]),
+    ha_url: str = Form(""),
     cf_token: str = Form(""),
     email: str = Form(""),
 ):
-    """Eigene Domains nur im Heimnetz einrichten (Dashboard und/oder „Mein Gerät“) und das Let's-Encrypt-Zertifikat holen."""
+    """Eigene Domains nur im Heimnetz einrichten (Dashboard, Hub, „Mein Gerät“) und das Let's-Encrypt-Zertifikat holen."""
     try:
         mein = [localdomain.normalize_domain(n) for n in name if n.strip()]
         dash = [localdomain.normalize_domain(n) for n in dashboard if n.strip()]
+        hubs = [localdomain.normalize_domain(n) for n in hub if n.strip()]
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     mein = list(dict.fromkeys(mein))
     dash = list(dict.fromkeys(dash))
-    overlap = set(mein) & set(dash)
+    hubs = list(dict.fromkeys(hubs))
+    overlap = (set(mein) & set(dash)) | (set(mein) & set(hubs)) | (set(dash) & set(hubs))
     if overlap:
         raise HTTPException(
             status_code=400,
-            detail=f"Dashboard und „Mein Gerät“ brauchen verschiedene Namen ({', '.join(sorted(overlap))})",
+            detail=f"Dashboard, Hub und „Mein Gerät“ brauchen verschiedene Namen ({', '.join(sorted(overlap))})",
         )
     cf_token = cf_token.strip()
     if cf_token and (len(cf_token) > 512 or any(ch.isspace() for ch in cf_token)):
@@ -522,8 +673,13 @@ async def lokale_domain_set(
     email = email.strip()
     if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         raise HTTPException(status_code=400, detail="Ungültige E-Mail-Adresse")
+    ha = ha_url.strip()
+    if ha and not re.match(r"^https?://[^\s]+$", ha, re.I):
+        raise HTTPException(status_code=400, detail="Home-Assistant-URL muss mit http:// oder https:// beginnen")
     await run_in_threadpool(localdomain.set_mein_domains, mein)
     await run_in_threadpool(localdomain.set_dashboard_domains, dash)
+    await run_in_threadpool(localdomain.set_hub_domains, hubs)
+    await run_in_threadpool(db.set_setting, localdomain.HA_URL_KEY, ha)
     await run_in_threadpool(db.set_setting, localdomain.EMAIL_KEY, email)
     if cf_token:
         # Der Token bleibt gespeichert, bis er ausdrücklich gelöscht wird (auch wenn die Domains leer sind).
@@ -641,27 +797,69 @@ async def mein_auswahl(request: Request, choice: list[str] = Form(default=[])):
     return RedirectResponse("/vpn#mein-auswahl", status_code=303)
 
 
+def _site_route_back(next_url: str, fallback: str) -> str:
+    """Nur relative Pfade im eigenen UI als Zurück-Ziel erlauben."""
+    next_url = (next_url or "").strip()
+    if next_url.startswith("/") and not next_url.startswith("//"):
+        return next_url
+    return fallback
+
+
 @app.post("/seiten-routen/add", dependencies=[Depends(require_password)])
-async def site_route_add(request: Request, domain: str = Form(...), slot: str = Form(...)):
+async def site_route_add(
+    request: Request, domain: str = Form(...), slot: str = Form(...), next: str = Form("")
+):
     """Eine Seite (inkl. Subdomains) für alle Geräte immer durch ein bestimmtes WARP-/VPN-Profil schicken."""
     from .redirects import normalize_source
 
+    back = _site_route_back(next, "/vpn#seitenrouten")
     if slot != warp.DIRECT:
         _check_slot(request, slot)
     try:
         domain = normalize_source(domain)
     except ValueError as exc:
-        return RedirectResponse(f"/vpn?fehler={quote(str(exc))}#seitenrouten", status_code=303)
+        sep = "&" if "?" in back else "?"
+        return RedirectResponse(f"{back.split('#')[0]}{sep}fehler={quote(str(exc))}#seitenrouten", status_code=303)
     await run_in_threadpool(db.set_site_route, domain, slot)
     await run_in_threadpool(_apply_redirects, request)
-    return RedirectResponse("/vpn#seitenrouten", status_code=303)
+    return RedirectResponse(back, status_code=303)
 
 
 @app.post("/seiten-routen/remove", dependencies=[Depends(require_password)])
-async def site_route_remove(request: Request, domain: str = Form(...)):
+async def site_route_remove(request: Request, domain: str = Form(...), next: str = Form("")):
+    back = _site_route_back(next, "/vpn#seitenrouten")
     await run_in_threadpool(db.remove_site_route, domain)
     await run_in_threadpool(_apply_redirects, request)
-    return RedirectResponse("/vpn#seitenrouten", status_code=303)
+    return RedirectResponse(back, status_code=303)
+
+
+@app.post("/gruppen/{group_id}/seiten/add", dependencies=[Depends(require_password)])
+async def group_site_route_add(
+    request: Request, group_id: int, domain: str = Form(...), slot: str = Form(...)
+):
+    """Seiten-Regel nur für Mitglieder dieser Gruppe (anderes Profil oder immer normal)."""
+    from .redirects import normalize_source
+
+    if not await run_in_threadpool(db.group, group_id):
+        raise HTTPException(status_code=404, detail="Gruppe nicht gefunden")
+    if slot != warp.DIRECT:
+        _check_slot(request, slot)
+    try:
+        domain = normalize_source(domain)
+    except ValueError as exc:
+        return RedirectResponse(f"/gruppen/{group_id}?fehler={quote(str(exc))}#gruppenseiten", status_code=303)
+    await run_in_threadpool(db.set_group_site_route, group_id, domain, slot)
+    await run_in_threadpool(_apply_redirects, request)
+    return RedirectResponse(f"/gruppen/{group_id}#gruppenseiten", status_code=303)
+
+
+@app.post("/gruppen/{group_id}/seiten/remove", dependencies=[Depends(require_password)])
+async def group_site_route_remove(request: Request, group_id: int, domain: str = Form(...)):
+    if not await run_in_threadpool(db.group, group_id):
+        raise HTTPException(status_code=404, detail="Gruppe nicht gefunden")
+    await run_in_threadpool(db.remove_group_site_route, group_id, domain)
+    await run_in_threadpool(_apply_redirects, request)
+    return RedirectResponse(f"/gruppen/{group_id}#gruppenseiten", status_code=303)
 
 
 @app.post("/warp/default", dependencies=[Depends(require_password)])

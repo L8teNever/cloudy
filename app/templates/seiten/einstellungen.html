@@ -1,134 +1,200 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="card">
-  <h2>📱 Zugriff vom Handy &amp; Zertifikate für alle Geräte</h2>
-  <p class="small">
-    <strong>Am Handy öffnen:</strong> Tippe einfach <a href="http://{{ settings.pi_ip }}" style="font-weight:600">http://{{ settings.pi_ip }}</a> 
-    (ohne Portangabe) in Safari oder Chrome ein. Sobald dein Handy den Pi als DNS-Server nutzt oder DHCP aktiv ist, 
-    funktioniert auch <a href="http://{{ settings.local_name or 'cloudy.lan' }}" style="font-weight:600">http://{{ settings.local_name or 'cloudy.lan' }}</a>.
-  </p>
-  <p class="small" style="margin-top:.75rem">
-    <strong>Self-Service für jedes Gerät:</strong>
-    <a href="/mein" style="font-weight:600">http://{{ settings.local_name or 'cloudy.lan' }}/mein</a>
-    – ohne Passwort, erkennt automatisch wer aufruft, und zeigt nur die VPN/WARP-Einstellung für dieses eine Gerät.
-  </p>
+{% set ld = params.lokal %}
+{% set local = settings.local_name or 'cloudy.lan' %}
+{% set any_domain = ld.domains or ld.dashboards or ld.hubs %}
 
-  {% if settings.https_port %}
-  <div style="margin-top:1.25rem">
-    <h3>HTTPS-Stammzertifikat (1-Klick Installation für Geräte)</h3>
-    <p class="muted small">
-      Ermöglicht das Aufrufen von <code>https://cloudy.lan</code> sowie sichere Domain-Weiterleitungen ohne Browser-Sicherheitswarnungen.
-    </p>
-    <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin:1rem 0">
-      <a href="/ca.mobileconfig" class="chip" style="font-weight:600;text-decoration:none">
-        🍏 iPhone / iPad (1-Klick Konfigurationsprofil)
-      </a>
-      <a href="/install-ca.bat" class="chip" style="font-weight:600;text-decoration:none">
-        🪟 Windows (1-Klick Installer .bat)
-      </a>
-      <a href="/ca.crt" class="chip" style="font-weight:600;text-decoration:none">
-        🤖 Android / Linux (.crt Zertifikat)
-      </a>
-    </div>
-
-    <div class="info small" style="margin-top:.75rem">
-      <b>Anleitung iPhone / iPad:</b><br>
-      1. Auf <i>iPhone / iPad</i> tippen und Profil laden erlauben.<br>
-      2. In die iOS <i>Einstellungen → Profil geladen → Installieren</i> wählen.<br>
-      3. Unter <i>Einstellungen → Allgemein → Info → Zertifikatsvertrauenseinstellungen</i> den Schalter für „cloudy Local Root CA“ aktivieren.
-    </div>
+<div class="page-head">
+  <div>
+    <h1>Einstellungen</h1>
+    <div class="muted small">Zugriff, Zertifikate, eigene Domains und die feste Pi-Konfiguration</div>
   </div>
-  {% endif %}
-</div>
-
-<div class="card">
-  <h2>⚙️ System &amp; Netzwerk-Konfiguration</h2>
-  <div class="table-wrap">
-    <table>
-      <tbody>
-        <tr><td><strong>Pi IP-Adresse</strong></td><td class="mono">{{ settings.pi_ip }}</td></tr>
-        <tr><td><strong>Lokaler Name</strong></td><td class="mono">{{ settings.local_name or 'cloudy.lan' }}</td></tr>
-        <tr><td><strong>Fritzbox / Router IP</strong></td><td class="mono">{{ settings.router_ip }}</td></tr>
-        <tr><td><strong>LAN-Schnittstelle</strong></td><td class="mono">{{ settings.lan_interface }}</td></tr>
-        <tr><td><strong>Subnetz</strong></td><td class="mono">{{ settings.lan_network }}</td></tr>
-        <tr><td><strong>Upstream-DNS</strong></td><td class="mono">{{ settings.upstream_dns | join(', ') }}</td></tr>
-        <tr><td><strong>DHCP-Server</strong></td><td>{{ 'Aktiv (' ~ settings.dhcp_start ~ ' - ' ~ settings.dhcp_end ~ ')' if settings.dhcp_enabled else 'Deaktiviert (Fritzbox verteilt IPs)' }}</td></tr>
-        <tr><td><strong>Gateway-Modus</strong></td><td>{{ 'Aktiv (Verkehr & NAT läuft über Pi)' if settings.gateway_enabled else 'Deaktiviert (Nur DNS)' }}</td></tr>
-        <tr><td><strong>Webserver-Port</strong></td><td class="mono">{{ settings.dashboard_port }} (Standard-Port 80 ebenfalls aktiv)</td></tr>
-        <tr><td><strong>HTTPS-Port</strong></td><td class="mono">{{ settings.https_port if settings.https_port else 'Aus' }}</td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
-<div class="card" id="lokale-domain">
-  {% set ld = params.lokal %}
-  <h2>🔐 Eigene Domains nur im Heimnetz &amp; Cloudflare-Token (z. B. cloudy.kulbarts.com)</h2>
-  <p class="small">
-    Der Pi beantwortet die Domains im Heimnetz selbst. Du kannst <b>mehrere</b> eintragen: welche fürs ganze Dashboard,
-    welche nur für „Mein Gerät“ (VPN an/aus). Bei „Mein Gerät“ reicht die Domain – <code>/mein</code> kommt automatisch dazu.
-    Das Zertifikat holt er sich bei Let's Encrypt per DNS-Challenge – auf den Geräten muss nichts installiert werden.
-    Von außen ist die Seite nicht erreichbar. Der Token wird nur hier in der Datenbank gespeichert (nicht im Repo) und bleibt, bis du ihn löschst.
-    Dasselbe Zertifikat bekommen auch Domain-Weiterleitungen, deren Quelle in deiner Cloudflare-Zone liegt.
-  </p>
-  <div class="status-row" style="margin:.5rem 0 1rem">
-    <span class="pill {{ 'on' if ld.cert else ('warn' if (ld.domains or ld.dashboards) else '') }}">
-      Zertifikat: {{ ('gültig bis ' ~ ld.cert.expires.strftime('%d.%m.%Y')) if ld.cert else ('noch keins' if (ld.domains or ld.dashboards) else 'nicht eingerichtet') }}
+  <div class="status-row" style="margin:0">
+    <span class="pill {{ 'on' if ld.cert else ('warn' if any_domain else '') }}">
+      Zertifikat: {{ ('gültig bis ' ~ ld.cert.expires.strftime('%d.%m.%Y')) if ld.cert else ('noch keins' if any_domain else 'nicht eingerichtet') }}
     </span>
+    <span class="pill {{ 'on' if ld.has_token else '' }}">Cloudflare-Token {{ 'gespeichert' if ld.has_token else 'fehlt' }}</span>
+  </div>
+</div>
+
+<div class="jump" role="navigation" aria-label="Abschnitte">
+  <a href="#zugriff">Zugriff &amp; Links</a>
+  <a href="#lokale-domain">Eigene Domains</a>
+  {% if settings.https_port %}<a href="#zertifikat">Stammzertifikat</a>{% endif %}
+  <a href="#system">System</a>
+</div>
+
+<section class="card" id="zugriff">
+  <div class="card-head">
+    <div class="card-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="20" x="5" y="2" rx="2"/><path d="M12 18h.01"/></svg>
+    </div>
+    <div>
+      <h2>Zugriff &amp; Links</h2>
+      <div class="muted small">Funktioniert, sobald das Gerät den Pi als DNS nutzt (oder DHCP vom Pi kommt).</div>
+    </div>
+  </div>
+  <div class="link-list">
+    <a class="link-tile" href="/hub">
+      <b>Hub</b>
+      <span class="mono">{{ local }}/hub{% if ld.hubs %} · {{ ld.hubs[0] }}/hub{% endif %}</span>
+      <span class="hint">Startseite für alle im Heimnetz – ohne Passwort</span>
+    </a>
+    <a class="link-tile" href="/mein">
+      <b>Mein Gerät</b>
+      <span class="mono">{{ local }}/mein{% if ld.domains %} · {{ ld.domains[0] }}/mein{% endif %}</span>
+      <span class="hint">Erkennt das aufrufende Gerät und zeigt nur dessen VPN/WARP-Wahl</span>
+    </a>
+    <a class="link-tile" href="http://{{ local }}">
+      <b>Dashboard</b>
+      <span class="mono">{{ local }}{% if ld.dashboards %} · {{ ld.dashboards[0] }}{% endif %}</span>
+      <span class="hint">Diese Verwaltung – notfalls direkt über http://{{ settings.pi_ip }}</span>
+    </a>
+  </div>
+</section>
+
+<section class="card" id="lokale-domain">
+  <div class="card-head">
+    <div class="card-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+    </div>
+    <div>
+      <h2>Eigene Domains im Heimnetz</h2>
+      <div class="muted small">
+        Der Pi beantwortet diese Domains im Heimnetz selbst und holt per Cloudflare-DNS ein echtes Let's-Encrypt-Zertifikat –
+        auf den Geräten muss nichts installiert werden. Von außen ist nichts erreichbar.
+      </div>
+    </div>
+  </div>
+
+  <div class="status-row" style="margin:0 0 1rem">
     {% if ld.status.state %}<span class="pill {{ 'warn' if ld.status.state == 'fehler' else '' }}">{{ ld.status.text }}</span>{% endif %}
     {% if ld.redirect_certs %}<span class="pill on">Auch für Weiterleitungen: {{ ld.redirect_certs | join(', ') }}</span>{% endif %}
   </div>
-  <form method="post" action="/lokale-domain" style="display:grid;gap:.75rem;max-width:38rem">
-    <div>
-      <div class="small" style="margin-bottom:.35rem">Domains fürs ganze Dashboard (wie <code>cloudy.lan</code>)</div>
-      <div id="dash-domains" style="display:grid;gap:.35rem">
-        {% for d in ld.dashboards or [''] %}
-        <input name="dashboard" autocomplete="off" style="width:100%" value="{{ d }}" placeholder="cloudy.kulbarts.com">
-        {% endfor %}
-      </div>
-      <button type="button" class="secondary" style="margin-top:.35rem;padding:.25rem .55rem;font-size:.8rem"
-              onclick="document.getElementById('dash-domains').insertAdjacentHTML('beforeend','<input name=dashboard autocomplete=off style=width:100% placeholder=cloudy.kulbarts.com>')">
-        + weitere Dashboard-Domain
-      </button>
-    </div>
-    <div>
-      <div class="small" style="margin-bottom:.35rem">
-        Domains nur für „Mein Gerät“ – nur die Domain eintragen, <code>/mein</code> wird angehängt
-        (z.&nbsp;B. <code>main.kulbarts.com</code> → <code>main.kulbarts.com/mein</code>)
-      </div>
-      <div id="mein-domains" style="display:grid;gap:.35rem">
-        {% for d in ld.domains or [''] %}
-        <div style="display:flex;align-items:center;gap:.35rem">
-          <input name="name" autocomplete="off" style="flex:1" value="{{ d }}" placeholder="main.kulbarts.com">
-          <span class="muted small mono">/mein</span>
+
+  <form method="post" action="/lokale-domain" style="display:grid;gap:.75rem">
+    <div class="grid" style="margin:0;gap:.75rem;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))">
+      <div class="field-group">
+        <div class="fg-title">Hub</div>
+        <div class="fg-hint">Nur die Domain – <code>/hub</code> kommt automatisch dazu.</div>
+        <div id="hub-domains" style="display:grid;gap:.35rem">
+          {% for d in ld.hubs or [''] %}
+          <div class="field-row"><input name="hub" data-keep autocomplete="off" value="{{ d }}" placeholder="home.kulbarts.com"><span class="suffix">/hub</span></div>
+          {% endfor %}
         </div>
-        {% endfor %}
+        <button type="button" class="secondary add-btn" onclick="document.getElementById('hub-domains').append(document.getElementById('tpl-hub').content.cloneNode(true))">+ weitere</button>
+        <template id="tpl-hub"><div class="field-row"><input name="hub" data-keep autocomplete="off" placeholder="home.kulbarts.com"><span class="suffix">/hub</span></div></template>
       </div>
-      <button type="button" class="secondary" style="margin-top:.35rem;padding:.25rem .55rem;font-size:.8rem"
-              onclick="document.getElementById('mein-domains').insertAdjacentHTML('beforeend','<div style=&quot;display:flex;align-items:center;gap:.35rem&quot;><input name=name autocomplete=off style=flex:1 placeholder=main.kulbarts.com><span class=&quot;muted small mono&quot;>/mein</span></div>')">
-        + weitere Mein-Gerät-Domain
-      </button>
+
+      <div class="field-group">
+        <div class="fg-title">Mein Gerät</div>
+        <div class="fg-hint">Nur die Domain – <code>/mein</code> kommt automatisch dazu.</div>
+        <div id="mein-domains" style="display:grid;gap:.35rem">
+          {% for d in ld.domains or [''] %}
+          <div class="field-row"><input name="name" data-keep autocomplete="off" value="{{ d }}" placeholder="main.kulbarts.com"><span class="suffix">/mein</span></div>
+          {% endfor %}
+        </div>
+        <button type="button" class="secondary add-btn" onclick="document.getElementById('mein-domains').append(document.getElementById('tpl-mein').content.cloneNode(true))">+ weitere</button>
+        <template id="tpl-mein"><div class="field-row"><input name="name" data-keep autocomplete="off" placeholder="main.kulbarts.com"><span class="suffix">/mein</span></div></template>
+      </div>
+
+      <div class="field-group">
+        <div class="fg-title">Ganzes Dashboard</div>
+        <div class="fg-hint">Wie <code>{{ local }}</code> – mit Passwort, alle Seiten.</div>
+        <div id="dash-domains" style="display:grid;gap:.35rem">
+          {% for d in ld.dashboards or [''] %}
+          <div class="field-row"><input name="dashboard" data-keep autocomplete="off" value="{{ d }}" placeholder="cloudy.kulbarts.com"></div>
+          {% endfor %}
+        </div>
+        <button type="button" class="secondary add-btn" onclick="document.getElementById('dash-domains').append(document.getElementById('tpl-dash').content.cloneNode(true))">+ weitere</button>
+        <template id="tpl-dash"><div class="field-row"><input name="dashboard" data-keep autocomplete="off" placeholder="cloudy.kulbarts.com"></div></template>
+      </div>
     </div>
-    <label class="small">Cloudflare-API-Token (Rechte: Zone → Zone → Lesen UND Zone → DNS → Bearbeiten, nur für diese Zone)
-      <input name="cf_token" type="password" autocomplete="off" style="width:100%"
-             placeholder="{{ 'Neuer Token (leer = behalten)' if ld.has_token else 'Token aus dash.cloudflare.com → Mein Profil → API-Tokens' }}">
-    </label>
-    <label class="small">E-Mail für Let's Encrypt (optional)
-      <input name="email" type="email" autocomplete="off" style="width:100%" value="{{ ld.email }}">
-    </label>
-    <div><button type="submit">Speichern &amp; Zertifikat holen</button></div>
+
+    <div class="field-group">
+      <div class="fg-title">Zertifikat &amp; Hub-Status</div>
+      <label class="small">Cloudflare-API-Token
+        <input name="cf_token" type="password" autocomplete="off" style="width:100%;margin-top:.25rem"
+               placeholder="{{ 'Neuer Token (leer = behalten)' if ld.has_token else 'dash.cloudflare.com → Mein Profil → API-Tokens' }}">
+        <span class="fg-hint">Rechte: Zone → Zone → Lesen <b>und</b> Zone → DNS → Bearbeiten, nur für diese Zone. Bleibt nur hier in der Datenbank.</span>
+      </label>
+      <div class="grid" style="margin:0;gap:.75rem;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">
+        <label class="small">E-Mail für Let's Encrypt (optional)
+          <input name="email" type="email" data-keep autocomplete="off" style="width:100%;margin-top:.25rem" value="{{ ld.email }}">
+        </label>
+        <label class="small">Home Assistant URL (Status im Hub)
+          <input name="ha_url" data-keep autocomplete="off" style="width:100%;margin-top:.25rem" value="{{ ld.ha_url }}" placeholder="http://homeassistant.local:8123">
+        </label>
+      </div>
+    </div>
+
+    <div class="actions"><button type="submit">Speichern &amp; Zertifikat holen</button></div>
   </form>
+
   {% if ld.has_token %}
-  <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.5rem">
-    <form method="post" action="/lokale-domain/neu"><button type="submit">Zertifikat jetzt neu holen</button></form>
-    <form method="post" action="/lokale-domain/token-loeschen" onsubmit="return confirm('Gespeicherten Cloudflare-Token löschen?')">
-      <button type="submit" class="secondary">Token löschen</button>
+  <div class="actions" style="margin-top:.6rem">
+    <form method="post" action="/lokale-domain/neu" data-ok="Zertifikat wird neu geholt"><button type="submit" class="secondary">Zertifikat jetzt neu holen</button></form>
+    <form method="post" action="/lokale-domain/token-loeschen" data-confirm="Gespeicherten Cloudflare-Token löschen?" data-ok="Token gelöscht">
+      <button type="submit" class="danger">Token löschen</button>
     </form>
   </div>
   {% endif %}
-  <div class="info small" style="margin-top:1rem">
-    <b>Wichtig:</b> Bei Cloudflare darf es für diese Domains keinen öffentlichen DNS-Eintrag auf deine Zuhause-Adresse geben –
-    sie sollen nur im Heimnetz auflösen. Geräte mit dem echten WARP-Client (Cloudflare One) fragen Cloudflare statt des Pi –
-    dort wird die Domain nicht aufgelöst; Geräte, die der Pi per VPN/WARP-Container leitet, funktionieren.
+
+  <div class="info small" style="margin:1rem 0 0">
+    <b>Wichtig:</b> Bei Cloudflare darf es für diese Domains keinen öffentlichen DNS-Eintrag auf deine Zuhause-Adresse geben.
+    Geräte mit dem echten WARP-Client (Cloudflare One) fragen Cloudflare statt des Pi und lösen die Domains deshalb nicht auf –
+    Geräte, die der Pi per VPN/WARP-Container leitet, funktionieren.
   </div>
-</div>
+</section>
+
+{% if settings.https_port %}
+<section class="card" id="zertifikat">
+  <div class="card-head">
+    <div class="card-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+    </div>
+    <div>
+      <h2>Stammzertifikat für <code>{{ local }}</code></h2>
+      <div class="muted small">Nur nötig für <code>https://{{ local }}</code> und Weiterleitungen ohne eigene Domain. Mit eigenen Domains (oben) braucht es das nicht.</div>
+    </div>
+  </div>
+  <div class="link-list">
+    <a class="link-tile" href="/ca.mobileconfig"><b>iPhone / iPad</b><span class="hint">Konfigurationsprofil – 1 Klick</span></a>
+    <a class="link-tile" href="/install-ca.bat"><b>Windows</b><span class="hint">Installer (.bat) – 1 Klick</span></a>
+    <a class="link-tile" href="/ca.crt"><b>Android / Linux / Mac</b><span class="hint">Zertifikat (.crt) zum Importieren</span></a>
+  </div>
+  <div class="info small" style="margin:1rem 0 0">
+    <b>iPhone / iPad:</b>
+    <ol class="steps">
+      <li>„iPhone / iPad“ antippen und das Laden des Profils erlauben.</li>
+      <li><i>Einstellungen → Profil geladen → Installieren</i>.</li>
+      <li><i>Einstellungen → Allgemein → Info → Zertifikatsvertrauenseinstellungen</i>: „cloudy Local Root CA“ einschalten.</li>
+    </ol>
+  </div>
+</section>
+{% endif %}
+
+<section class="card" id="system">
+  <div class="card-head">
+    <div class="card-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01"/><path d="M6 18h.01"/></svg>
+    </div>
+    <div>
+      <h2>System &amp; Netzwerk</h2>
+      <div class="muted small">Kommt aus der Konfiguration des Pi (.env) – hier nur zur Ansicht.</div>
+    </div>
+  </div>
+  <div class="kv">
+    <div><div class="k">Pi IP-Adresse</div><div class="val mono">{{ settings.pi_ip }}</div></div>
+    <div><div class="k">Lokaler Name</div><div class="val mono">{{ local }}</div></div>
+    <div><div class="k">FRITZ!Box / Router</div><div class="val mono">{{ settings.router_ip }}</div></div>
+    <div><div class="k">LAN-Schnittstelle</div><div class="val mono">{{ settings.lan_interface }}</div></div>
+    <div><div class="k">Subnetz</div><div class="val mono">{{ settings.lan_network }}</div></div>
+    <div><div class="k">Upstream-DNS</div><div class="val mono">{{ settings.upstream_dns | join(', ') }}</div></div>
+    <div><div class="k">DHCP-Server</div><div class="val">{{ ('An · ' ~ settings.dhcp_start ~ ' – ' ~ settings.dhcp_end) if settings.dhcp_enabled else 'Aus (FRITZ!Box verteilt IPs)' }}</div></div>
+    <div><div class="k">Gateway-Modus</div><div class="val">{{ 'An (Verkehr & NAT über den Pi)' if settings.gateway_enabled else 'Aus (nur DNS)' }}</div></div>
+    <div><div class="k">HTTP</div><div class="val mono">:80</div></div>
+    <div><div class="k">HTTPS</div><div class="val mono">{{ (':' ~ settings.https_port) if settings.https_port else 'Aus' }}</div></div>
+  </div>
+</section>
 {% endblock %}

@@ -159,6 +159,14 @@ def init() -> None:
                 mac TEXT NOT NULL,
                 PRIMARY KEY (group_id, mac)
             );
+
+            -- Seiten-Regeln nur für Mitglieder einer Gruppe (wie site_routes, aber MAC-bezogen).
+            CREATE TABLE IF NOT EXISTS group_site_routes (
+                group_id INTEGER NOT NULL,
+                domain TEXT NOT NULL,
+                slot TEXT NOT NULL,
+                PRIMARY KEY (group_id, domain)
+            );
             """
         )
         # Alte DB: gleiches Gerät unter mehreren IPs (MAC doppelt) → zusammenführen.
@@ -446,6 +454,69 @@ def remove_site_route(domain: str) -> None:
     with closing(_connect()) as conn:
         conn.execute("DELETE FROM site_routes WHERE domain = ?", (domain.strip().lower(),))
         conn.commit()
+
+
+def group_site_routes(group_id: int) -> dict[str, str]:
+    """Domain → Slot für eine Gruppe."""
+    with closing(_connect()) as conn:
+        return {
+            r["domain"]: r["slot"]
+            for r in conn.execute(
+                "SELECT domain, slot FROM group_site_routes WHERE group_id = ? ORDER BY domain",
+                (group_id,),
+            )
+        }
+
+
+def set_group_site_route(group_id: int, domain: str, slot: str) -> None:
+    domain = domain.strip().lower()
+    slot = slot.strip().lower()
+    with closing(_connect()) as conn:
+        conn.execute(
+            """INSERT INTO group_site_routes (group_id, domain, slot) VALUES (?, ?, ?)
+               ON CONFLICT (group_id, domain) DO UPDATE SET slot = excluded.slot""",
+            (group_id, domain, slot),
+        )
+        conn.commit()
+
+
+def remove_group_site_route(group_id: int, domain: str) -> None:
+    with closing(_connect()) as conn:
+        conn.execute(
+            "DELETE FROM group_site_routes WHERE group_id = ? AND domain = ?",
+            (group_id, domain.strip().lower()),
+        )
+        conn.commit()
+
+
+def all_group_site_domains() -> dict[str, set[str]]:
+    """Domain → alle Slots aus Gruppen-Seitenregeln (für dnsmasq-ipsets)."""
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT domain, slot FROM group_site_routes").fetchall()
+    out: dict[str, set[str]] = {}
+    for r in rows:
+        out.setdefault(r["domain"], set()).add(r["slot"])
+    return out
+
+
+def group_site_mac_slots() -> list[tuple[str, str]]:
+    """(MAC, Slot)-Paare für Gruppen-Seitenregeln, höhere Gruppe zuerst (ohne Doppelte)."""
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            """SELECT m.mac, r.slot
+               FROM group_site_routes r
+               JOIN group_members m ON m.group_id = r.group_id
+               JOIN groups g ON g.id = r.group_id
+               ORDER BY g.rank ASC, g.id ASC, m.mac ASC, r.slot ASC"""
+        ).fetchall()
+    seen: set[tuple[str, str]] = set()
+    out: list[tuple[str, str]] = []
+    for r in rows:
+        pair = (r["mac"], r["slot"])
+        if pair not in seen:
+            seen.add(pair)
+            out.append(pair)
+    return out
 
 
 def set_device_warp(mac: str, slot: str | None) -> None:
@@ -885,6 +956,7 @@ def update_group(group_id: int, name: str, color: str = "", slot: str = "", lock
 
 def delete_group(group_id: int) -> None:
     with closing(_connect()) as conn:
+        conn.execute("DELETE FROM group_site_routes WHERE group_id = ?", (group_id,))
         conn.execute("DELETE FROM group_members WHERE group_id = ?", (group_id,))
         conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
         conn.commit()

@@ -294,17 +294,29 @@ def ipset_supported() -> bool:
 
 def site_route_lines(s: Settings, routes: dict[str, str]) -> list[str]:
     """dnsmasq trägt die IPs dieser Domains (inkl. Subdomains) in das ipset des jeweiligen Profils ein."""
+    multi = {domain: {slot} for domain, slot in routes.items()}
+    return site_route_lines_multi(s, multi)
+
+
+def site_route_lines_multi(s: Settings, routes: dict[str, set[str]]) -> list[str]:
+    """Wie site_route_lines, aber eine Domain darf in mehreren Profil-ipsets landen (Gruppen + global)."""
     if not (s.gateway_enabled and routes):
         return []
     from . import warp
 
     index_of = {slot: i for i, (slot, _) in enumerate(s.warp_slots, start=1)}
     lines = []
-    for domain, slot in sorted(routes.items()):
-        key = slot if slot == warp.DIRECT else index_of.get(slot)
-        if key is not None:
-            sets = [warp.site_set(key)] + ([warp.site_set(key, True)] if s.ipv6_enabled else [])
-            lines.append(f"ipset=/{domain}/{','.join(sets)}")
+    for domain, slots in sorted(routes.items()):
+        set_names: list[str] = []
+        for slot in sorted(slots):
+            key = slot if slot == warp.DIRECT else index_of.get(slot)
+            if key is None:
+                continue
+            set_names.append(warp.site_set(key))
+            if s.ipv6_enabled:
+                set_names.append(warp.site_set(key, True))
+        if set_names:
+            lines.append(f"ipset=/{domain}/{','.join(dict.fromkeys(set_names))}")
     return lines
 
 
@@ -316,7 +328,10 @@ def sync_redirects_hosts(s: Settings) -> None:
     lines += dnsmasq_lines([r["source"] for r in db.redirects()], s.pi_ip)
     lines += localdomain.dnsmasq_lines(localdomain.domains(), s.pi_ip)
     if ipset_supported():
-        lines += site_route_lines(s, db.site_routes())
+        merged: dict[str, set[str]] = {d: {sl} for d, sl in db.site_routes().items()}
+        for domain, slots in db.all_group_site_domains().items():
+            merged.setdefault(domain, set()).update(slots)
+        lines += site_route_lines_multi(s, merged)
     os.makedirs(s.data_dir, exist_ok=True)
     tmp = s.redirects_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:

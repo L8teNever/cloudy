@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>cloudy – Netzwerk-Statistiken</title>
+  {% include "teile/icons.html" %}
+  {% include "teile/hub_statistik_stil.html" %}
+</head>
+<body>
+  <main class="dashboard-layout">
+    <header class="dashboard-header">
+      <a class="brand-group" href="/hub">
+        <img class="brand-logo" src="/static/cloudy.png" width="40" height="40" alt="" aria-hidden="true">
+        <div>
+          <div class="brand-title">cloudy</div>
+          <div class="brand-subtitle">Netzwerk-Statistiken · nur Anzeige</div>
+        </div>
+      </a>
+      <div class="header-actions">
+        <div class="time-pill-group" role="navigation" aria-label="Zeitraum">
+          {% for key, lbl in ranges %}
+          <a class="time-pill {{ 'active' if range.key == key }}" href="/hub/statistik?zeitraum={{ key }}">{{ lbl }}</a>
+          {% endfor %}
+        </div>
+      </div>
+    </header>
+
+    <section class="metrics-grid">
+      <div class="metric-card">
+        <span class="metric-label">Download gesamt</span>
+        <span class="metric-value download">{{ totals.bytes_down | bytes }}</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-label">Upload gesamt</span>
+        <span class="metric-value upload">{{ totals.bytes_up | bytes }}</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-label">Aufrufe gesamt</span>
+        <span class="metric-value">{{ totals.hits | count }}</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-label">Aktive Geräte</span>
+        <span class="metric-value">{{ totals.devices | count }}</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-label">Aufgerufene Domains</span>
+        <span class="metric-value">{{ totals.domains | count }}</span>
+      </div>
+    </section>
+
+    <section class="panel-card">
+      <div class="card-title-row">
+        <h2 class="panel-title">Verlauf Datenverkehr ({{ range.label }})</h2>
+        <div class="legend-group">
+          <div class="legend-item"><div class="legend-box download"></div><span>Download</span></div>
+          <div class="legend-item"><div class="legend-box upload"></div><span>Upload</span></div>
+        </div>
+      </div>
+      {% if series %}
+      {% set n = series|length %}
+      {% set every = 1 if n <= 8 else (3 if n <= 24 else (n // 7 or 1)) %}
+      <div class="chart-container">
+        <div class="chart-y-axis">
+          <span>{{ series_peak | bytes }}</span>
+          <span>{{ (series_peak // 2) | bytes }}</span>
+          <span>0</span>
+        </div>
+        <div class="chart-grid-line" style="top: 24px;"></div>
+        <div class="chart-grid-line" style="top: calc(50% + 2px);"></div>
+        <div class="chart-grid-line" style="bottom: 24px;"></div>
+        <div class="chart-bars-wrap">
+          {% for b in series %}
+          <div class="chart-col" title="{{ b.label }} · DL {{ b.bytes_down | bytes }}, UL {{ b.bytes_up | bytes }}">
+            {% if b.bar_h %}
+            <div class="stacked-bar-col" style="height: {{ b.bar_h }}%;">
+              {% if b.dl_pct %}<div class="bar-seg-dl" style="height: {{ b.dl_pct }}%;"></div>{% endif %}
+              {% if b.ul_pct %}<div class="bar-seg-ul" style="height: {{ b.ul_pct }}%;"></div>{% endif %}
+            </div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        <div class="chart-x-labels">
+          {% for b in series %}
+            {% if loop.index0 % every == 0 or loop.last %}<span>{{ b.label }}</span>{% endif %}
+          {% endfor %}
+        </div>
+      </div>
+      {% else %}
+      <p class="empty">Noch keine Verkehrsdaten für diesen Zeitraum.</p>
+      {% endif %}
+    </section>
+
+    <div class="lists-grid">
+      <section class="panel-card">
+        <div class="card-title-row">
+          <h2 class="panel-title">Top Geräte nach Datenmenge</h2>
+          <div class="legend-group">
+            <div class="legend-item"><div class="legend-box download"></div><span>DL</span></div>
+            <div class="legend-item"><div class="legend-box upload"></div><span>UL</span></div>
+          </div>
+        </div>
+        <div class="rank-list">
+          {% for row in usage %}
+          <div class="rank-row">
+            <span class="rank-name {{ 'me' if row.ip == viewer_ip }}" title="{{ row.hostname or row.ip }}">{{ row.hostname or row.ip or 'unbekannt' }}</span>
+            <div class="bar-track">
+              {% if row.dl_w %}<div class="bar-seg-dl-h" style="width: {{ row.dl_w }}%;"></div>{% endif %}
+              {% if row.ul_w %}<div class="bar-seg-ul-h" style="width: {{ row.ul_w }}%;"></div>{% endif %}
+            </div>
+            <span class="rank-value">{{ row.total | bytes }}</span>
+          </div>
+          {% else %}
+          <p class="empty">Keine Geräte-Daten.</p>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="panel-card">
+        <div class="card-title-row">
+          <h2 class="panel-title">Top Geräte nach Aufrufen</h2>
+        </div>
+        <div class="rank-list">
+          {% for row in device_hits %}
+          <div class="rank-row">
+            <span class="rank-name {{ 'me' if row.ip == viewer_ip }}" title="{{ row.hostname or row.ip }}">{{ row.hostname or row.ip or 'unbekannt' }}</span>
+            <div class="bar-track">
+              <div class="bar-seg-purple-h" style="width: {{ row.bar_w }}%;"></div>
+            </div>
+            <span class="rank-value">{{ row.hits | count }}</span>
+          </div>
+          {% else %}
+          <p class="empty">Keine Aufruf-Daten.</p>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="panel-card">
+        <div class="card-title-row">
+          <h2 class="panel-title">Top Ziele (Datenverkehr)</h2>
+          <div class="legend-group">
+            <div class="legend-item"><div class="legend-box download"></div><span>DL</span></div>
+            <div class="legend-item"><div class="legend-box upload"></div><span>UL</span></div>
+          </div>
+        </div>
+        <div class="rank-list">
+          {% for row in targets %}
+          <div class="rank-row">
+            <span class="rank-name" title="{{ row.target }}">{{ row.target }}</span>
+            <div class="bar-track">
+              {% if row.dl_w %}<div class="bar-seg-dl-h" style="width: {{ row.dl_w }}%;"></div>{% endif %}
+              {% if row.ul_w %}<div class="bar-seg-ul-h" style="width: {{ row.ul_w }}%;"></div>{% endif %}
+            </div>
+            <span class="rank-value">{{ row.total | bytes }}</span>
+          </div>
+          {% else %}
+          <p class="empty">Keine Ziel-Daten.</p>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="panel-card">
+        <div class="card-title-row">
+          <h2 class="panel-title">Meistbesuchte Domains</h2>
+        </div>
+        <div class="rank-list">
+          {% for row in domains %}
+          <div class="rank-row">
+            <span class="rank-name purple-name" title="{{ row.domain }}">{{ row.domain }}</span>
+            <div class="bar-track">
+              <div class="bar-seg-purple-h" style="width: {{ row.bar_w }}%;"></div>
+            </div>
+            <span class="rank-value">{{ row.hits | count }}</span>
+          </div>
+          {% else %}
+          <p class="empty">Keine Domain-Daten.</p>
+          {% endfor %}
+        </div>
+      </section>
+    </div>
+
+    <footer class="dashboard-footer">
+      <span class="live-indicator"><span class="live-dot"></span> Nur Anzeige · kein Drilldown</span>
+      <a href="/hub" style="color:#64748b;text-decoration:none">← zurück zum Hub</a>
+    </footer>
+  </main>
+</body>
+</html>

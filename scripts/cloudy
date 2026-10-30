@@ -27,6 +27,28 @@ set_env() {
   fi
 }
 
+# Frühere Versionen von "cloudy update" haben die Zeilen aus .env.example bei jedem Update erneut angehängt.
+# Die späteren Kopien (Standardwerte) gewinnen dann -> nur die erste Zeile je Einstellung behalten.
+dedupe_env() {
+  [ -f .env ] || return 0
+  awk '/^[A-Za-z_][A-Za-z0-9_]*=/ { k = $0; sub(/=.*/, "", k); if (seen[k]++) next } { print }' .env > .env.tmp
+  if ! cmp -s .env .env.tmp; then
+    cp .env .env.bak
+    cat .env.tmp > .env
+    echo "Doppelte Einträge in .env entfernt (Sicherung: .env.bak)."
+  fi
+  rm -f .env.tmp
+}
+
+# Profil-Datei der WARP-/VPN-Container sicherstellen (schreibt die App beim Start; sonst einmal kurz erzeugen).
+ensure_slots() {
+  mkdir -p data
+  [ -f data/docker-compose.slots.yml ] && return 0
+  $DOCKER compose run --rm --no-deps -e DNSMASQ_ENABLED=0 -e HTTPS_PORT=0 cloudy \
+    python -c "import os; from app import slots; slots.ensure(os.environ.get('DATA_DIR','/data'))"
+  [ -f data/docker-compose.slots.yml ]
+}
+
 ask() {
   local answer
   read -r -p "$1 (j/n) " answer </dev/tty
@@ -51,12 +73,26 @@ EOF
 
 case "${1:-}" in
   update)
+    # Zuerst diesen Befehl selbst erneuern – ältere Versionen kennen die WARP-/VPN-Profile (Overlay) nicht
+    # und löschen die Container beim Update als "orphans".
+    if [ -z "${CLOUDY_SELF_UPDATED:-}" ] && curl -fsSL "$RAW/scripts/cloudy" -o /tmp/cloudy-cli.new; then
+      sed "s|__CLOUDY_DIR__|$DIR|" /tmp/cloudy-cli.new > /tmp/cloudy-cli
+      self="$(command -v cloudy || echo /usr/local/bin/cloudy)"
+      if ! cmp -s /tmp/cloudy-cli "$self"; then
+        install -m 755 /tmp/cloudy-cli "$self" 2>/dev/null || sudo install -m 755 /tmp/cloudy-cli "$self"
+        rm -f /tmp/cloudy-cli /tmp/cloudy-cli.new
+        echo "Befehl cloudy aktualisiert."
+        CLOUDY_SELF_UPDATED=1 exec "$self" update
+      fi
+      rm -f /tmp/cloudy-cli /tmp/cloudy-cli.new
+    fi
     curl -fsSL "$RAW/docker-compose.yml" -o docker-compose.yml.new && mv docker-compose.yml.new docker-compose.yml
+    dedupe_env
     # Neue Einstellungen aus .env.example ergänzen (vorhandene bleiben).
     if curl -fsSL "$RAW/.env.example" -o .env.example; then
       while IFS= read -r line; do
         case "$line" in ''|\#*) continue ;; esac
-        grep -q "^${line%%=* clock}=" .env || echo "$line" >> .env
+        grep -q "^${line%%=*}=" .env || echo "$line" >> .env
       done < .env.example
     fi
     # Frühere Standardeinstellung 8080 -> 80, damit http://cloudy.lan ohne Port geht.
@@ -65,26 +101,24 @@ case "${1:-}" in
       echo "Dashboard-Port auf 80 gestellt (http://cloudy.lan)."
     fi
     $DOCKER compose pull
-    # Fehlt die Slot-Datei (frisches Update), Defaults erzeugen und mitstarten.
-    if [ ! -f data/docker-compose.slots.yml ]; then
-      mkdir -p data
-      $DOCKER compose run --rm --no-deps -e DNSMASQ_ENABLED=0 -e HTTPS_PORT=0 cloudy \
-        python -c "import os; from app import slots; slots.ensure(os.environ.get('DATA_DIR','/data'))" 2>/dev/null \
-        || true
+    ensure_slots || true
+    if [ -f data/docker-compose.slots.yml ]; then
+      compose pull
+      compose up -d --remove-orphans
+    else
+      # Ohne Profil-Datei würde --remove-orphans die WARP-/VPN-Container löschen.
+      echo "WARNUNG: data/docker-compose.slots.yml fehlt – WARP-/VPN-Container bleiben unverändert. Danach: cloudy slots"
+      compose up -d
     fi
-    compose up -d --remove-orphans
     $DOCKER image prune -f >/dev/null
     echo "cloudy ist aktuell. Dashboard: http://$(grep '^LOCAL_NAME=' .env | cut -d= -f2)"
     ;;
   slots)
-    mkdir -p data
-    if [ ! -f data/docker-compose.slots.yml ]; then
-      $DOCKER compose run --rm --no-deps -e DNSMASQ_ENABLED=0 -e HTTPS_PORT=0 cloudy \
-        python -c "import os; from app import slots; slots.ensure(os.environ.get('DATA_DIR','/data'))" \
-        || { echo "Konnte Slot-Datei nicht erzeugen. Dashboard einmal öffnen oder später erneut versuchen."; exit 1; }
-    fi
+    ensure_slots || { echo "Konnte data/docker-compose.slots.yml nicht erzeugen (cloudy logs cloudy)."; exit 1; }
+    compose pull
     compose up -d --remove-orphans
-    echo "WARP-/VPN-Container sind an die Profile im Dashboard angepasst."
+    compose ps
+    echo "WARP-/VPN-Container sind an die Profile im Dashboard angepasst. Zustand: cloudy status"
     ;;
   dhcp)
     case "${2:-}" in
@@ -149,7 +183,12 @@ case "${1:-}" in
     esac
     ;;
   status)
-    compose ps
+    compose ps -a
+    if [ -f data/docker-compose.slots.yml ]; then
+      echo "Profile (data/docker-compose.slots.yml): $(grep -oE '^  (warp|vpn)[0-9]+' data/docker-compose.slots.yml | tr -d ' ' | tr '\n' ' ')"
+    else
+      echo "Profile: data/docker-compose.slots.yml FEHLT -> cloudy slots"
+    fi
     grep -E "^(PI_IP|DHCP_ENABLED|GATEWAY_ENABLED|IPV6_ENABLED|UPSTREAM_DNS|WARP_KILLSWITCH)=" .env
     for f in data/warp/*/status; do
       [ -f "$f" ] && echo "WARP $(basename "$(dirname "$f")"): $(cat "$f")"

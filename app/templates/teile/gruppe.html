@@ -57,4 +57,79 @@
     </div>
     <button type="submit">Mitglieder speichern</button>
   </form>
+
+  <h3 id="gruppenseiten" style="margin:1.75rem 0 .5rem;font-size:1rem">Seiten nur für diese Gruppe</h3>
+  <p class="muted small">
+    Diese Seiten (inkl. Subdomains) laufen <b>nur für Mitglieder</b> über das gewählte Profil – oder mit
+    <b>Normal</b> immer direkt über die Fritzbox. Andere Geräte bleiben unberührt. Ohne Einträge ändert sich nichts.
+    Funktioniert wie die globalen Seiten-Regeln unter VPN (Gateway an, Pi als DNS).
+  </p>
+  {% if not site_gateway %}<div class="info small">Gateway-Modus ist aus – die Regeln greifen erst mit <code>cloudy gateway an</code>.</div>{% endif %}
+
+  <form method="post" action="/gruppen/{{ group.id }}/seiten/add" class="inline" style="margin:.75rem 0 1rem;gap:.5rem">
+    <input name="domain" placeholder="Seite (z. B. netflix.com)" size="26" required>
+    <select name="slot" aria-label="Profil">
+      <option value="direct">Normal – direkt über die Fritzbox</option>
+      {% for w in site_profiles %}<option value="{{ w.slot }}">{{ w.label }}{{ '' if w.has_token else ' (nicht eingerichtet)' }}</option>{% endfor %}
+    </select>
+    <button>Regel speichern</button>
+  </form>
+
+  {% if group_site_routes %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Seite</th><th>Läuft über</th><th>Aktion</th></tr></thead>
+    <tbody>
+    {% for domain, slot in group_site_routes.items() %}
+      <tr>
+        <td class="mono" style="font-weight:600;color:var(--brand)">{{ domain }}</td>
+        <td>{% if slot == 'direct' %}Normal (Fritzbox){% else %}{% for w in site_profiles if w.slot == slot %}{{ w.label }}{% else %}{{ slot }}{% endfor %}{% endif %}</td>
+        <td>
+          <form method="post" action="/gruppen/{{ group.id }}/seiten/remove" class="inline">
+            <input type="hidden" name="domain" value="{{ domain }}">
+            <button class="secondary" style="padding:.2rem .45rem;font-size:.78rem">Löschen</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="muted small">Noch keine Gruppen-Seitenregeln.</p>
+  {% endif %}
+
+  <h3 id="seitenrouten" style="margin:1.75rem 0 .5rem;font-size:1rem">Globale Seiten-Regeln (alle Geräte)</h3>
+  <p class="muted small">
+    Gilt fürs ganze Heimnetz – hier bearbeiten oder unter <a href="/vpn#seitenrouten" data-nav>VPN → Seiten</a>.
+  </p>
+  <form method="post" action="/seiten-routen/add" class="inline" style="margin:.75rem 0 1rem;gap:.5rem">
+    <input type="hidden" name="next" value="/gruppen/{{ group.id }}#seitenrouten">
+    <input name="domain" placeholder="Seite (z. B. bank.de)" size="26" required>
+    <select name="slot" aria-label="Profil">
+      <option value="direct">Normal – direkt über die Fritzbox</option>
+      {% for w in site_profiles %}<option value="{{ w.slot }}">{{ w.label }}{{ '' if w.has_token else ' (nicht eingerichtet)' }}</option>{% endfor %}
+    </select>
+    <button>Global speichern</button>
+  </form>
+  {% if site_routes %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Seite</th><th>Läuft über</th><th>Aktion</th></tr></thead>
+    <tbody>
+    {% for domain, slot in site_routes.items() %}
+      <tr>
+        <td class="mono" style="font-weight:600;color:var(--brand)">{{ domain }}</td>
+        <td>{% if slot == 'direct' %}Normal (Fritzbox){% else %}{% for w in site_profiles if w.slot == slot %}{{ w.label }}{% else %}{{ slot }}{% endfor %}{% endif %}</td>
+        <td>
+          <form method="post" action="/seiten-routen/remove" class="inline">
+            <input type="hidden" name="domain" value="{{ domain }}">
+            <input type="hidden" name="next" value="/gruppen/{{ group.id }}#seitenrouten">
+            <button class="secondary" style="padding:.2rem .45rem;font-size:.78rem">Löschen</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="muted small">Keine globalen Regeln.</p>
+  {% endif %}
 </div>

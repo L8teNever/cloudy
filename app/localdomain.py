@@ -1,7 +1,7 @@
 """Eigene echte Domains nur im Heimnetz mit Let's-Encrypt-Zertifikat.
 
-Zwei Namen sind einstellbar: einer für das ganze Dashboard (statt cloudy.lan, z. B. cloudy.kulbarts.com) und einer
-nur für „Mein Gerät“ (/mein, z. B. main.kulbarts.com). Beide bekommen zusammen ein Zertifikat.
+Drei Arten von Namen sind einstellbar: Dashboard (statt cloudy.lan, z. B. cloudy.kulbarts.com),
+„Mein Gerät“ (/mein, z. B. main.kulbarts.com) und Hub (/hub, Startseite mit Links). Alle bekommen zusammen ein Zertifikat.
 Auch Domain-Weiterleitungen, deren Quelle in einer Cloudflare-Zone des Tokens liegt (z. B. pimmel.kulbarts.com),
 landen im selben Zertifikat und laufen so ohne Warnung und ohne lokale CA auf dem Gerät. Alle anderen Quellen
 (tiktok.com …) bleiben bei der lokalen cloudy-CA.
@@ -37,6 +37,8 @@ from .settings import Settings
 
 DOMAIN_KEY = "local_domain"  # nur „Mein Gerät“ (/mein)
 DASH_KEY = "local_domain_dashboard"  # das ganze Dashboard (wie cloudy.lan)
+HUB_KEY = "local_domain_hub"  # Hub-Startseite (/hub)
+HA_URL_KEY = "hub_ha_url"  # Home-Assistant-URL für den Hub-Status
 TOKEN_KEY = "local_domain_cf_token"
 EMAIL_KEY = "local_domain_email"
 STATUS_KEY = "local_domain_status"
@@ -96,6 +98,11 @@ def dashboard_domains() -> list[str]:
     return _setting_hosts(DASH_KEY)
 
 
+def hub_domains() -> list[str]:
+    """Domains nur für den Hub (/hub) – Aufruf der Domain landet auf /hub."""
+    return _setting_hosts(HUB_KEY)
+
+
 def domain() -> str:
     """Erste Mein-Gerät-Domain (Kompatibilität)."""
     return (mein_domains() or [""])[0]
@@ -106,6 +113,11 @@ def dashboard_domain() -> str:
     return (dashboard_domains() or [""])[0]
 
 
+def hub_domain() -> str:
+    """Erste Hub-Domain (Kompatibilität)."""
+    return (hub_domains() or [""])[0]
+
+
 def set_mein_domains(hosts: list[str]) -> None:
     _save_hosts(DOMAIN_KEY, hosts)
 
@@ -114,9 +126,18 @@ def set_dashboard_domains(hosts: list[str]) -> None:
     _save_hosts(DASH_KEY, hosts)
 
 
+def set_hub_domains(hosts: list[str]) -> None:
+    _save_hosts(HUB_KEY, hosts)
+
+
+def ha_url() -> str:
+    """Home-Assistant-Basis-URL für den Hub (leer = Standard)."""
+    return (db.get_setting(HA_URL_KEY) or "").strip() or "http://homeassistant.local:8123"
+
+
 def domains() -> list[str]:
     """Alle eingestellten Domains (ohne Doppelte). Sie bekommen zusammen ein Zertifikat."""
-    return list(dict.fromkeys(dashboard_domains() + mein_domains()))
+    return list(dict.fromkeys(dashboard_domains() + mein_domains() + hub_domains()))
 
 
 def skipped() -> set[str]:

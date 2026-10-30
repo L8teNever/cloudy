@@ -178,10 +178,30 @@ class Plan:
 def _mark_rules(
     s: Settings, assignments: dict[str, str], default_slot: str, index_of: dict[str, int], local_net: str,
     site_routes: dict[str, str] | None = None, v6: bool = False,
+    group_mac_slots: list[tuple[str, str]] | None = None,
 ) -> tuple[tuple[str, ...], ...]:
     """Markierungen nach MAC. local_net: Ziele im eigenen Heimnetz (IPv4 oder IPv6) werden nie getunnelt."""
     rules = []
-    # Seiten-Regeln zuerst und mit RETURN beenden: sie gelten für alle Geräte (auch für „direkt“).
+    # Gruppen-Seiten zuerst (nur Mitglieder): eigene Listen vor den globalen Regeln.
+    for mac, slot in group_mac_slots or ():
+        if not MAC_RE.match(mac):
+            continue
+        if slot == DIRECT:
+            rules.append((
+                "-i", s.lan_interface, "-m", "mac", "--mac-source", mac,
+                "-m", "set", "--match-set", site_set(DIRECT, v6), "dst", "-j", "RETURN",
+            ))
+        elif slot in index_of:
+            rules.append((
+                "-i", s.lan_interface, "-m", "mac", "--mac-source", mac,
+                "-m", "set", "--match-set", site_set(index_of[slot], v6), "dst",
+                "!", "-d", local_net, "-j", "MARK", "--set-mark", mark(index_of[slot]),
+            ))
+            rules.append((
+                "-i", s.lan_interface, "-m", "mac", "--mac-source", mac,
+                "-m", "mark", "--mark", mark(index_of[slot]), "-j", "RETURN",
+            ))
+    # Globale Seiten-Regeln: gelten für alle Geräte (auch für „direkt“).
     if DIRECT in (site_routes or {}).values():
         # Seiten, die immer normal (über die Fritzbox) rausgehen sollen: nie markieren, egal was beim Gerät steht.
         rules.append(("-i", s.lan_interface, "-m", "set", "--match-set", site_set(DIRECT, v6), "dst", "-j", "RETURN"))
@@ -217,11 +237,15 @@ def build_plan(
     default_slot: str = "",
     ipv6_ok: dict[str, bool] | None = None,
     site_routes: dict[str, str] | None = None,
+    group_mac_slots: list[tuple[str, str]] | None = None,
 ) -> Plan:
     """assignments: MAC -> Slot (oder "direct"). connected: Slot -> Tunnel verbunden? default_slot: für alle anderen.
-    ipv6_ok: Slot -> Tunnel kann IPv6 (nur mit IPV6_ENABLED)."""
+    ipv6_ok: Slot -> Tunnel kann IPv6 (nur mit IPV6_ENABLED).
+    group_mac_slots: (MAC, Slot) aus Gruppen-Seitenlisten – greifen nur für diese Geräte."""
     index_of = {slot: i for i, (slot, _) in enumerate(s.warp_slots, start=1)}
-    rules = _mark_rules(s, assignments, default_slot, index_of, str(s.lan_network), site_routes)
+    rules = _mark_rules(
+        s, assignments, default_slot, index_of, str(s.lan_network), site_routes, False, group_mac_slots
+    )
     routes = []
     for index, (slot, ip) in enumerate(s.warp_slots, start=1):
         table = str(TABLE_BASE + index)
@@ -233,7 +257,9 @@ def build_plan(
             routes.append(("default", "via", s.router_ip, "dev", s.lan_interface, "table", table))
     if not s.ipv6_enabled:
         return Plan(rules, tuple(routes))
-    rules6 = _mark_rules(s, assignments, default_slot, index_of, str(ipv6.prefix(s)), site_routes, v6=True)
+    rules6 = _mark_rules(
+        s, assignments, default_slot, index_of, str(ipv6.prefix(s)), site_routes, True, group_mac_slots
+    )
     routes6 = []
     for index, (slot, ip) in enumerate(s.warp_slots, start=1):
         table = str(TABLE_BASE + index)
@@ -383,7 +409,10 @@ class WarpRouter:
             self._ticks += 1
             if self._ticks % 12 == 1:
                 ipv6.ensure_lan(self.s)
-        self.apply(build_plan(self.s, policy.assignments(), connected, db.get_setting(DEFAULT_KEY), ipv6_ok, db.site_routes()))
+        self.apply(build_plan(
+            self.s, policy.assignments(), connected, db.get_setting(DEFAULT_KEY), ipv6_ok,
+            db.site_routes(), db.group_site_mac_slots(),
+        ))
 
     def start(self) -> None:
         try:

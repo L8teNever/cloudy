@@ -223,11 +223,16 @@ def ctx_gruppe(request: Request, group_id: int) -> dict:
     g = db.group(group_id)
     if not g:
         raise HTTPException(status_code=404, detail="Gruppe nicht gefunden")
+    s: Settings = request.app.state.settings
     return {
         "group": g,
         "members": db.group_members(group_id),
         "devices": db.devices(),
         "group_colors": db.GROUP_COLORS,
+        "group_site_routes": db.group_site_routes(group_id),
+        "site_routes": db.site_routes(),
+        "site_profiles": warp_profiles(s),
+        "site_gateway": s.gateway_enabled,
         **_warp_ctx(request),
     }
 
@@ -409,11 +414,15 @@ def localdomain_ctx(request: Request) -> dict:
     info = localdomain.cert_info(s)
     mein = localdomain.mein_domains()
     dash = localdomain.dashboard_domains()
+    hubs = localdomain.hub_domains()
     return {
         "domains": mein,
         "dashboards": dash,
+        "hubs": hubs,
         "domain": (mein or [""])[0],
         "dashboard": (dash or [""])[0],
+        "hub": (hubs or [""])[0],
+        "ha_url": db.get_setting(localdomain.HA_URL_KEY) or "",
         "email": db.get_setting(localdomain.EMAIL_KEY),
         "has_token": bool(db.get_setting(localdomain.TOKEN_KEY)),
         "cert": info,
