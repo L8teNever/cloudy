@@ -5,8 +5,11 @@
     Hinweis: Geräte werden erst über das VPN geleitet, wenn der Gateway-Modus aktiv ist (<code>cloudy gateway an</code>).
   </p>
   {% endif %}
-
-  <div style="margin-bottom:1rem">
+  <p class="muted small">
+    Beliebig viele Profile: unten anlegen, Token/.conf speichern, danach auf dem Pi <code>cloudy slots</code>
+    (legt die Container an bzw. entfernt gelöschte).
+  </p>
+  <div style="margin-bottom:1rem;display:flex;flex-wrap:wrap;gap:.75rem;align-items:center">
     <form method="post" action="/warp/default" class="inline">
       <label class="small"><b>Standard-Verbindung für alle nicht zugewiesenen Geräte:</b>
         <select name="slot" data-autosubmit style="margin-left:.5rem">
@@ -19,6 +22,14 @@
         </select>
       </label>
     </form>
+    <form method="post" action="/warp/neu" class="inline">
+      <input type="hidden" name="kind" value="warp">
+      <button type="submit" class="secondary" style="padding:.3rem .6rem;font-size:.85rem">+ WARP-Profil</button>
+    </form>
+    <form method="post" action="/warp/neu" class="inline">
+      <input type="hidden" name="kind" value="vpn">
+      <button type="submit" class="secondary" style="padding:.3rem .6rem;font-size:.85rem">+ VPN-Profil</button>
+    </form>
   </div>
 
   <div class="table-wrap">
@@ -29,6 +40,7 @@
           <th>Status</th>
           <th>Geräte</th>
           <th>Konfiguration / Anmelden</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -36,7 +48,7 @@
         <tr>
           <td>
             <strong>{{ w.label }}</strong><br>
-            <span class="muted small">{{ 'WireGuard' if w.kind == 'vpn' else 'Cloudflare Zero Trust' }}</span>
+            <span class="muted small">{{ w.slot }} · {{ 'WireGuard' if w.kind == 'vpn' else 'Cloudflare Zero Trust' }}</span>
           </td>
           <td>
             {% if w.has_token %}
@@ -63,6 +75,13 @@
             {% if w.has_token %}
             <form method="post" action="/warp/{{ w.slot }}/logout" class="inline" style="margin-left:.35rem">
               <button class="secondary" style="padding:.25rem .5rem;font-size:.82rem">Abmelden</button>
+            </form>
+            {% endif %}
+          </td>
+          <td>
+            {% if warp | length > 1 %}
+            <form method="post" action="/warp/{{ w.slot }}/loeschen" onsubmit="return confirm('Profil {{ w.slot }} wirklich löschen?');">
+              <button type="submit" class="danger" style="padding:.25rem .5rem;font-size:.78rem">Löschen</button>
             </form>
             {% endif %}
           </td>

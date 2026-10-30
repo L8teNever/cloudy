@@ -64,25 +64,50 @@
   {% set ld = params.lokal %}
   <h2>🔐 Eigene Domains nur im Heimnetz &amp; Cloudflare-Token (z. B. cloudy.kulbarts.com)</h2>
   <p class="small">
-    Der Pi beantwortet die Domains im Heimnetz selbst: eine zeigt das ganze Dashboard, die andere nur <code>/mein</code> („Mein Gerät“: VPN an/aus).
+    Der Pi beantwortet die Domains im Heimnetz selbst. Du kannst <b>mehrere</b> eintragen: welche fürs ganze Dashboard,
+    welche nur für „Mein Gerät“ (VPN an/aus). Bei „Mein Gerät“ reicht die Domain – <code>/mein</code> kommt automatisch dazu.
     Das Zertifikat holt er sich bei Let's Encrypt per DNS-Challenge – auf den Geräten muss nichts installiert werden.
     Von außen ist die Seite nicht erreichbar. Der Token wird nur hier in der Datenbank gespeichert (nicht im Repo) und bleibt, bis du ihn löschst.
     Dasselbe Zertifikat bekommen auch Domain-Weiterleitungen, deren Quelle in deiner Cloudflare-Zone liegt.
   </p>
   <div class="status-row" style="margin:.5rem 0 1rem">
-    <span class="pill {{ 'on' if ld.cert else ('warn' if (ld.domain or ld.dashboard) else '') }}">
-      Zertifikat: {{ ('gültig bis ' ~ ld.cert.expires.strftime('%d.%m.%Y')) if ld.cert else ('noch keins' if (ld.domain or ld.dashboard) else 'nicht eingerichtet') }}
+    <span class="pill {{ 'on' if ld.cert else ('warn' if (ld.domains or ld.dashboards) else '') }}">
+      Zertifikat: {{ ('gültig bis ' ~ ld.cert.expires.strftime('%d.%m.%Y')) if ld.cert else ('noch keins' if (ld.domains or ld.dashboards) else 'nicht eingerichtet') }}
     </span>
     {% if ld.status.state %}<span class="pill {{ 'warn' if ld.status.state == 'fehler' else '' }}">{{ ld.status.text }}</span>{% endif %}
     {% if ld.redirect_certs %}<span class="pill on">Auch für Weiterleitungen: {{ ld.redirect_certs | join(', ') }}</span>{% endif %}
   </div>
-  <form method="post" action="/lokale-domain" style="display:grid;gap:.5rem;max-width:38rem">
-    <label class="small">Domain fürs ganze Dashboard (wie <code>cloudy.lan</code>)
-      <input name="dashboard" autocomplete="off" style="width:100%" value="{{ ld.dashboard }}" placeholder="cloudy.kulbarts.com (leer = aus)">
-    </label>
-    <label class="small">Domain nur für „Mein Gerät“ (VPN umstellen, nur <code>/mein</code>)
-      <input name="name" autocomplete="off" style="width:100%" value="{{ ld.domain }}" placeholder="main.kulbarts.com (leer = aus)">
-    </label>
+  <form method="post" action="/lokale-domain" style="display:grid;gap:.75rem;max-width:38rem">
+    <div>
+      <div class="small" style="margin-bottom:.35rem">Domains fürs ganze Dashboard (wie <code>cloudy.lan</code>)</div>
+      <div id="dash-domains" style="display:grid;gap:.35rem">
+        {% for d in ld.dashboards or [''] %}
+        <input name="dashboard" autocomplete="off" style="width:100%" value="{{ d }}" placeholder="cloudy.kulbarts.com">
+        {% endfor %}
+      </div>
+      <button type="button" class="secondary" style="margin-top:.35rem;padding:.25rem .55rem;font-size:.8rem"
+              onclick="document.getElementById('dash-domains').insertAdjacentHTML('beforeend','<input name=dashboard autocomplete=off style=width:100% placeholder=cloudy.kulbarts.com>')">
+        + weitere Dashboard-Domain
+      </button>
+    </div>
+    <div>
+      <div class="small" style="margin-bottom:.35rem">
+        Domains nur für „Mein Gerät“ – nur die Domain eintragen, <code>/mein</code> wird angehängt
+        (z.&nbsp;B. <code>main.kulbarts.com</code> → <code>main.kulbarts.com/mein</code>)
+      </div>
+      <div id="mein-domains" style="display:grid;gap:.35rem">
+        {% for d in ld.domains or [''] %}
+        <div style="display:flex;align-items:center;gap:.35rem">
+          <input name="name" autocomplete="off" style="flex:1" value="{{ d }}" placeholder="main.kulbarts.com">
+          <span class="muted small mono">/mein</span>
+        </div>
+        {% endfor %}
+      </div>
+      <button type="button" class="secondary" style="margin-top:.35rem;padding:.25rem .55rem;font-size:.8rem"
+              onclick="document.getElementById('mein-domains').insertAdjacentHTML('beforeend','<div style=&quot;display:flex;align-items:center;gap:.35rem&quot;><input name=name autocomplete=off style=flex:1 placeholder=main.kulbarts.com><span class=&quot;muted small mono&quot;>/mein</span></div>')">
+        + weitere Mein-Gerät-Domain
+      </button>
+    </div>
     <label class="small">Cloudflare-API-Token (Rechte: Zone → Zone → Lesen UND Zone → DNS → Bearbeiten, nur für diese Zone)
       <input name="cf_token" type="password" autocomplete="off" style="width:100%"
              placeholder="{{ 'Neuer Token (leer = behalten)' if ld.has_token else 'Token aus dash.cloudflare.com → Mein Profil → API-Tokens' }}">

@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }} · cloudy</title>
+  {% include "teile/icons.html" %}
   <style>
     :root {
       color-scheme: light;
@@ -26,7 +27,8 @@
     a { color: var(--brand-ink); }
     header { background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10; }
     .bar { max-width: 1200px; margin: 0 auto; padding: .6rem 1rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
-    .logo { font-weight: 700; font-size: 1.25rem; color: var(--brand); text-decoration: none; }
+    .logo { font-weight: 700; font-size: 1.25rem; color: var(--brand); text-decoration: none; display: inline-flex; align-items: center; gap: .45rem; }
+    .logo-icon { width: 28px; height: 28px; object-fit: contain; display: block; flex-shrink: 0; }
     nav { display: flex; gap: .25rem; flex-wrap: wrap; }
     nav a { text-decoration: none; color: var(--ink2); padding: .35rem .7rem; border-radius: 8px; font-size: .92rem; }
     nav a:hover { background: var(--brand-soft); }
@@ -102,7 +104,7 @@
 <body>
   <header>
     <div class="bar">
-      <a class="logo" href="/" data-nav>cloudy</a>
+      <a class="logo" href="/" data-nav><img class="logo-icon" src="/static/cloudy.png" width="28" height="28" alt="">cloudy</a>
       <nav>
         {% for href, name in [("/", "Übersicht"), ("/geraete", "Geräte"), ("/gruppen", "Gruppen"), ("/statistik", "Statistik"), ("/schutz", "Schutz"), ("/vpn", "VPN"), ("/fritzbox", "FRITZ!Box"), ("/leistung", "Leistung"), ("/einstellungen", "Einstellungen")] %}
         <a href="{{ href }}" data-nav class="{{ 'active' if active == href }}">{{ name }}</a>

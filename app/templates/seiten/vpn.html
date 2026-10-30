@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
+{% if params.fehler or params.erfolg %}
+<div class="card" style="margin-bottom:.75rem">
+  {% if params.fehler %}<div class="info small">{{ params.fehler }}</div>{% endif %}
+  {% if params.erfolg %}<div class="ok small">{{ params.erfolg }}</div>{% endif %}
+</div>
+{% endif %}
 <div data-live="/teil/vpn" data-every="10">
   {% include "teile/vpn.html" %}
 </div>

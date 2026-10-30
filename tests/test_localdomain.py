@@ -11,6 +11,7 @@ from app.settings import Settings
 
 def test_normalize_domain():
     assert localdomain.normalize_domain("https://Main.Kulbarts.com/") == "main.kulbarts.com"
+    assert localdomain.normalize_domain("main.kulbarts.com/mein") == "main.kulbarts.com"
     for bad in ("cloudy.lan", "foo", "a b.com", ""):
         with pytest.raises(ValueError):
             localdomain.normalize_domain(bad)
@@ -55,6 +56,37 @@ def test_same_name_for_both_is_rejected(client, monkeypatch):
     monkeypatch.setattr(localdomain, "start_in_background", lambda s: None)
     r = client.post("/lokale-domain", data={"name": "a.kulbarts.com", "dashboard": "a.kulbarts.com"})
     assert r.status_code == 400
+
+
+def test_multiple_mein_and_dashboard_domains(client, monkeypatch):
+    from urllib.parse import urlencode
+
+    monkeypatch.setattr(localdomain, "start_in_background", lambda s: None)
+    body = urlencode([
+        ("dashboard", "cloudy.kulbarts.com"),
+        ("dashboard", "dash.kulbarts.com"),
+        ("name", "main.kulbarts.com/mein"),
+        ("name", "handy.kulbarts.com"),
+        ("cf_token", "tok"),
+    ])
+    r = client.post(
+        "/lokale-domain",
+        content=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert localdomain.dashboard_domains() == ["cloudy.kulbarts.com", "dash.kulbarts.com"]
+    assert localdomain.mein_domains() == ["main.kulbarts.com", "handy.kulbarts.com"]
+    page = client.get("/einstellungen").text
+    assert "handy.kulbarts.com" in page and "/mein" in page
+    assert client.get("/", headers={"host": "handy.kulbarts.com"}, follow_redirects=False).headers["location"] == "/mein"
+    assert client.get("/einstellungen", headers={"host": "dash.kulbarts.com"}).status_code == 200
+    s = Settings.from_env()
+    sync_redirects_hosts(s)
+    conf = open(s.redirects_path, encoding="utf-8").read()
+    assert f"address=/handy.kulbarts.com/{s.pi_ip}" in conf
+    assert f"address=/dash.kulbarts.com/{s.pi_ip}" in conf
 
 
 def test_cert_covers_both_names(client):

@@ -1,0 +1,16 @@
+{# Minimaler Vollbild-Lader + CloudyLoader-API #}
+<div class="cloudy-overlay" id="cloudyGlobalOverlay" aria-live="polite" hidden>
+  <div class="cloudy-overlay-card">
+    <img class="cloudy-mascot anim-cloudy-float" src="/static/cloudy.png" width="72" height="72" alt="" aria-hidden="true">
+    <div class="cloudy-progress"></div>
+    <span class="cloudy-overlay-text" id="cloudyGlobalText">Wird geladen…</span>
+  </div>
+</div>
+<script>
+window.CloudyLoader={
+  show:function(t){var o=document.getElementById("cloudyGlobalOverlay"),l=document.getElementById("cloudyGlobalText");if(l)l.textContent=t||"Wird geladen…";if(o){o.hidden=false;o.classList.add("visible")}},
+  hide:function(){var o=document.getElementById("cloudyGlobalOverlay");if(o){o.classList.remove("visible");o.hidden=true}},
+  button:function(b,t){if(!b)return;if(!b.dataset.cloudyLabel)b.dataset.cloudyLabel=b.innerHTML;b.classList.add("loading");b.disabled=true;b.innerHTML='<span class="btn-spinner"></span><span>'+(t||"Wird angewendet…")+"</span>"},
+  buttonReset:function(b){if(!b)return;b.classList.remove("loading");b.disabled=false;if(b.dataset.cloudyLabel)b.innerHTML=b.dataset.cloudyLabel}
+};
+</script>

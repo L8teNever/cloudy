@@ -387,8 +387,10 @@ async def schutz(request: Request):
 
 
 @router.get("/vpn", response_class=HTMLResponse, dependencies=[Depends(require_password)])
-async def vpn(request: Request, fehler: str | None = None):
-    return await page(request, "seiten/vpn.html", "VPN", "/vpn", ["vpn", "seitenrouten"], fehler=fehler)
+async def vpn(request: Request, fehler: str | None = None, erfolg: str | None = None):
+    return await page(
+        request, "seiten/vpn.html", "VPN", "/vpn", ["vpn", "seitenrouten"], fehler=fehler, erfolg=erfolg
+    )
 
 
 @router.get("/leistung", response_class=HTMLResponse, dependencies=[Depends(require_password)])
@@ -405,9 +407,13 @@ def localdomain_ctx(request: Request) -> dict:
     """Eigene Domain nur im Heimnetz (Let's Encrypt per DNS-Challenge) für die Einstellungsseite."""
     s: Settings = request.app.state.settings
     info = localdomain.cert_info(s)
+    mein = localdomain.mein_domains()
+    dash = localdomain.dashboard_domains()
     return {
-        "domain": localdomain.domain(),
-        "dashboard": localdomain.dashboard_domain(),
+        "domains": mein,
+        "dashboards": dash,
+        "domain": (mein or [""])[0],
+        "dashboard": (dash or [""])[0],
         "email": db.get_setting(localdomain.EMAIL_KEY),
         "has_token": bool(db.get_setting(localdomain.TOKEN_KEY)),
         "cert": info,

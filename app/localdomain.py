@@ -62,26 +62,61 @@ class NoZone(AcmeError):
 
 
 def normalize_domain(text: str) -> str:
-    """'https://Main.Kulbarts.com/' -> 'main.kulbarts.com'; ValueError, wenn das keine echte Domain ist."""
+    """'https://Main.Kulbarts.com/mein' -> 'main.kulbarts.com'; ValueError, wenn das keine echte Domain ist."""
     host = text.strip().lower().removeprefix("https://").removeprefix("http://").split("/")[0].rstrip(".")
     if not HOST_RE.match(host) or host.endswith((".lan", ".local", ".home.arpa")):
         raise ValueError("Bitte eine echte Domain eintragen, die dir gehört (z. B. main.kulbarts.com)")
     return host
 
 
+def _setting_hosts(key: str) -> list[str]:
+    """Gespeicherte Hosts (eine Domain pro Zeile; alte Einzelwerte bleiben gültig)."""
+    raw = db.get_setting(key)
+    if not raw:
+        return []
+    out: list[str] = []
+    for line in raw.replace(",", "\n").splitlines():
+        host = line.strip().lower().split("/")[0].rstrip(".")
+        if host and host not in out:
+            out.append(host)
+    return out
+
+
+def _save_hosts(key: str, hosts: list[str]) -> None:
+    db.set_setting(key, "\n".join(hosts))
+
+
+def mein_domains() -> list[str]:
+    """Domains nur für „Mein Gerät“ (/mein) – Aufruf der Domain landet auf /mein."""
+    return _setting_hosts(DOMAIN_KEY)
+
+
+def dashboard_domains() -> list[str]:
+    """Domains für das ganze Dashboard (wie cloudy.lan)."""
+    return _setting_hosts(DASH_KEY)
+
+
 def domain() -> str:
-    """Domain nur für „Mein Gerät“ (/mein)."""
-    return db.get_setting(DOMAIN_KEY)
+    """Erste Mein-Gerät-Domain (Kompatibilität)."""
+    return (mein_domains() or [""])[0]
 
 
 def dashboard_domain() -> str:
-    """Domain für das ganze Dashboard."""
-    return db.get_setting(DASH_KEY)
+    """Erste Dashboard-Domain (Kompatibilität)."""
+    return (dashboard_domains() or [""])[0]
+
+
+def set_mein_domains(hosts: list[str]) -> None:
+    _save_hosts(DOMAIN_KEY, hosts)
+
+
+def set_dashboard_domains(hosts: list[str]) -> None:
+    _save_hosts(DASH_KEY, hosts)
 
 
 def domains() -> list[str]:
     """Alle eingestellten Domains (ohne Doppelte). Sie bekommen zusammen ein Zertifikat."""
-    return list(dict.fromkeys(d for d in (dashboard_domain(), domain()) if d))
+    return list(dict.fromkeys(dashboard_domains() + mein_domains()))
 
 
 def skipped() -> set[str]:

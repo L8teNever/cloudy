@@ -52,8 +52,16 @@ rm -f /tmp/cloudy-cli
 
 # --- 4. Starten ---
 $DOCKER compose pull
+# WARP-/VPN-Profile (Overlay); Defaults erzeugen, falls noch keine Datei da ist.
+mkdir -p data
+if [ ! -f data/docker-compose.slots.yml ]; then
+  $DOCKER compose run --rm --no-deps -e DNSMASQ_ENABLED=0 -e HTTPS_PORT=0 cloudy \
+    python -c "import os; from app import slots; slots.ensure(os.environ.get('DATA_DIR','/data'))" 2>/dev/null || true
+fi
+COMPOSE_FILES=(-f docker-compose.yml)
+[ -f data/docker-compose.slots.yml ] && COMPOSE_FILES+=(-f data/docker-compose.slots.yml)
 # --remove-orphans: entfernt z. B. den Watchtower aus der allerersten Version.
-$DOCKER compose up -d --remove-orphans
+$DOCKER compose "${COMPOSE_FILES[@]}" up -d --remove-orphans
 
 # --- 5. Feste IP für den Pi ---
 CURRENT_IP="$(ip -4 -o addr show "$IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)"

@@ -14,9 +14,10 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import blocklist, certs, db, fritz, localdomain, policy, views, warp
+from . import blocklist, certs, db, fritz, localdomain, policy, slots, views, warp
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -25,6 +26,7 @@ from .settings import Settings
 from .traffic import DomainMap, TrafficMeter, TrafficRunner, setup_gateway
 
 BASE_DIR = Path(__file__).parent
+STATIC_DIR = BASE_DIR / "static"
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 basic = HTTPBasic(auto_error=False)
 
@@ -81,6 +83,7 @@ async def lifespan(app: FastAPI):
         except OSError:
             pass
     app.state.settings = settings
+    app.state.warp_router = warp_router
     if settings.dnsmasq_enabled:
         presence = PresenceMonitor(settings)
         presence.start()
@@ -149,32 +152,42 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="cloudy", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.middleware("http")
 async def redirect_middleware(request: Request, call_next):
     raw_host = request.headers.get("host", "").split(":")[0].strip().lower()
     settings = getattr(request.app.state, "settings", None)
-    own_domain = await run_in_threadpool(localdomain.domain)
-    dash_domain = await run_in_threadpool(localdomain.dashboard_domain)
-    if dash_domain and raw_host == dash_domain and request.url.scheme == "http":
+    mein_hosts = await run_in_threadpool(localdomain.mein_domains)
+    dash_hosts = await run_in_threadpool(localdomain.dashboard_domains)
+    if raw_host in dash_hosts and request.url.scheme == "http":
         # Dashboard unter der eigenen Domain: Passwort und Daten nur verschlüsselt, sobald das Zertifikat da ist.
         if settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
             port = "" if settings.https_port == 443 else f":{settings.https_port}"
-            return RedirectResponse(f"https://{dash_domain}{port}{request.url.path}" + (f"?{request.url.query}" if request.url.query else ""), status_code=302)
-    if own_domain and raw_host == own_domain:
-        # Eigene Domain nur im Heimnetz (z. B. main.kulbarts.com): zeigt ausschließlich „Mein Gerät“.
+            return RedirectResponse(
+                f"https://{raw_host}{port}{request.url.path}"
+                + (f"?{request.url.query}" if request.url.query else ""),
+                status_code=302,
+            )
+    if raw_host in mein_hosts:
+        # Eigene Domain nur im Heimnetz: nur „Mein Gerät“ – Aufruf ohne Pfad landet auf /mein.
         path = request.url.path
         if request.url.scheme == "http" and settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
             port = "" if settings.https_port == 443 else f":{settings.https_port}"
-            return RedirectResponse(f"https://{own_domain}{port}/mein", status_code=302)
+            return RedirectResponse(f"https://{raw_host}{port}/mein", status_code=302)
         if path == "/":
             return RedirectResponse("/mein", status_code=302)
-        if path not in ("/healthz", "/favicon.ico", "/mein") and not path.startswith("/mein/"):
+        if (
+            path not in ("/healthz", "/favicon.ico", "/mein")
+            and not path.startswith("/mein/")
+            and not path.startswith("/static/")
+        ):
             return Response("Nicht gefunden.", status_code=404)
         return await call_next(request)
     own_hosts = {"localhost", "127.0.0.1"}
-    own_hosts.update(d for d in (own_domain, dash_domain) if d)
+    own_hosts.update(mein_hosts)
+    own_hosts.update(dash_hosts)
     if settings:
         own_hosts.add(settings.pi_ip.lower())
         if settings.local_name:
@@ -213,7 +226,10 @@ async def healthz():
 
 @app.get("/favicon.ico")
 async def favicon():
-    return Response(status_code=204)
+    path = STATIC_DIR / "favicon.png"
+    if not path.exists():
+        return Response(status_code=204)
+    return FileResponse(path, media_type="image/png")
 
 
 @app.get("/ca.crt")
@@ -396,6 +412,32 @@ def _check_slot(request: Request, slot: str) -> Settings:
     return settings
 
 
+def _reload_warp_slots(request: Request) -> str:
+    """Settings + WarpRouter an neue Profile anpassen. Rückgabe: Hinweis für die UI."""
+    s: Settings = request.app.state.settings
+    pairs = slots.as_pairs(slots.load(s.data_dir))
+    new_s = replace(s, warp_slots=pairs)
+    request.app.state.settings = new_s
+    router = getattr(request.app.state, "warp_router", None)
+    if router is not None:
+        router.s = new_s
+    return slots.try_apply(s.data_dir)
+
+
+def _purge_slot_references(slot: str) -> None:
+    for mac, assigned in list(db.device_warp().items()):
+        if assigned == slot:
+            db.set_device_warp(mac, None)
+    for domain, assigned in list(db.site_routes().items()):
+        if assigned == slot:
+            db.remove_site_route(domain)
+    for g in db.groups():
+        if g["slot"] == slot:
+            db.update_group(g["id"], g["name"], g["color"], "", False)
+    if db.get_setting(warp.DEFAULT_KEY) == slot:
+        db.set_setting(warp.DEFAULT_KEY, "")
+
+
 @app.post("/warp/{slot}/login", dependencies=[Depends(require_password)])
 async def warp_login(
     request: Request, slot: str, token: str = Form(""), config: str = Form(""), label: str = Form("")
@@ -415,36 +457,73 @@ async def warp_login(
         if len(token) > 8192 or any(ch.isspace() for ch in token):
             raise HTTPException(status_code=400, detail="Ungültiger Token")
         await run_in_threadpool(warp.save_token, settings, slot, token)
-    return RedirectResponse("/#warp", status_code=303)
+    return RedirectResponse("/vpn", status_code=303)
 
 
 @app.post("/warp/{slot}/logout", dependencies=[Depends(require_password)])
 async def warp_logout(request: Request, slot: str):
     settings = _check_slot(request, slot)
     await run_in_threadpool(warp.remove_token, settings, slot)
-    return RedirectResponse("/#warp", status_code=303)
+    return RedirectResponse("/vpn", status_code=303)
+
+
+@app.post("/warp/neu", dependencies=[Depends(require_password)])
+async def warp_neu(request: Request, kind: str = Form("warp")):
+    """Neues WARP- oder VPN-Profil anlegen (Container per cloudy slots auf dem Pi)."""
+    try:
+        slot = await run_in_threadpool(slots.add, request.app.state.settings.data_dir, kind)
+    except ValueError as exc:
+        return RedirectResponse(f"/vpn?fehler={quote(str(exc))}", status_code=303)
+    hint = _reload_warp_slots(request)
+    return RedirectResponse(f"/vpn?erfolg={quote(f'{slot.name} angelegt. {hint}')}", status_code=303)
+
+
+@app.post("/warp/{slot}/loeschen", dependencies=[Depends(require_password)])
+async def warp_loeschen(request: Request, slot: str):
+    settings = _check_slot(request, slot)
+    try:
+        await run_in_threadpool(slots.remove, settings.data_dir, slot)
+    except ValueError as exc:
+        return RedirectResponse(f"/vpn?fehler={quote(str(exc))}", status_code=303)
+    await run_in_threadpool(_purge_slot_references, slot)
+    try:
+        await run_in_threadpool(warp.remove_token, settings, slot)
+    except OSError:
+        pass
+    hint = _reload_warp_slots(request)
+    return RedirectResponse(f"/vpn?erfolg={quote(f'{slot} gelöscht. {hint}')}", status_code=303)
 
 
 @app.post("/lokale-domain", dependencies=[Depends(require_password)])
 async def lokale_domain_set(
-    request: Request, name: str = Form(""), dashboard: str = Form(""), cf_token: str = Form(""), email: str = Form("")
+    request: Request,
+    name: list[str] = Form(default=[]),
+    dashboard: list[str] = Form(default=[]),
+    cf_token: str = Form(""),
+    email: str = Form(""),
 ):
     """Eigene Domains nur im Heimnetz einrichten (Dashboard und/oder „Mein Gerät“) und das Let's-Encrypt-Zertifikat holen."""
     try:
-        name = localdomain.normalize_domain(name) if name.strip() else ""
-        dashboard = localdomain.normalize_domain(dashboard) if dashboard.strip() else ""
+        mein = [localdomain.normalize_domain(n) for n in name if n.strip()]
+        dash = [localdomain.normalize_domain(n) for n in dashboard if n.strip()]
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if name and name == dashboard:
-        raise HTTPException(status_code=400, detail="Dashboard und „Mein Gerät“ brauchen verschiedene Namen")
+    mein = list(dict.fromkeys(mein))
+    dash = list(dict.fromkeys(dash))
+    overlap = set(mein) & set(dash)
+    if overlap:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dashboard und „Mein Gerät“ brauchen verschiedene Namen ({', '.join(sorted(overlap))})",
+        )
     cf_token = cf_token.strip()
     if cf_token and (len(cf_token) > 512 or any(ch.isspace() for ch in cf_token)):
         raise HTTPException(status_code=400, detail="Ungültiger API-Token")
     email = email.strip()
     if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         raise HTTPException(status_code=400, detail="Ungültige E-Mail-Adresse")
-    await run_in_threadpool(db.set_setting, localdomain.DOMAIN_KEY, name)
-    await run_in_threadpool(db.set_setting, localdomain.DASH_KEY, dashboard)
+    await run_in_threadpool(localdomain.set_mein_domains, mein)
+    await run_in_threadpool(localdomain.set_dashboard_domains, dash)
     await run_in_threadpool(db.set_setting, localdomain.EMAIL_KEY, email)
     if cf_token:
         # Der Token bleibt gespeichert, bis er ausdrücklich gelöscht wird (auch wenn die Domains leer sind).

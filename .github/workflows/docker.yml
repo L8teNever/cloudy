@@ -7,10 +7,10 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # Schnelle Unit-Tests (~30 s). Schwere E2E/DHCP/WARP/VPN-Jobs blockieren den
-  # Image-Push nicht mehr – die Images sollen möglichst schnell auf ghcr liegen.
+  # Läuft parallel zum Build – blockiert den Image-Push nicht.
   unit:
     runs-on: ubuntu-latest
     steps:
@@ -23,12 +23,12 @@ jobs:
 
       - name: Tests
         run: |
-          pip install -r requirements.txt pytest httpx
-          python -m pytest -q
+          pip install -q -r requirements.txt pytest httpx
+          python -m pytest -q --tb=line
 
+  # Pro Image + Architektur ein nativer Runner (kein QEMU → deutlich schneller).
   build:
-    needs: [unit]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
@@ -36,13 +36,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { context: ".",      scope: buildkit, tag: latest, sha_prefix: "sha-" }
-          - { context: vpn,      scope: vpn,      tag: vpn,    sha_prefix: "vpn-" }
-          - { context: warp,     scope: warp,     tag: warp,   sha_prefix: "warp-" }
+          - { context: ".",  tag: latest, scope: buildkit, platform: linux/amd64, runner: ubuntu-latest }
+          - { context: ".",  tag: latest, scope: buildkit, platform: linux/arm64, runner: ubuntu-24.04-arm }
+          - { context: vpn,  tag: vpn,    scope: vpn,      platform: linux/amd64, runner: ubuntu-latest }
+          - { context: vpn,  tag: vpn,    scope: vpn,      platform: linux/arm64, runner: ubuntu-24.04-arm }
+          - { context: warp, tag: warp,   scope: warp,     platform: linux/amd64, runner: ubuntu-latest }
+          - { context: warp, tag: warp,   scope: warp,     platform: linux/arm64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v4
-
-      - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
 
@@ -52,20 +53,68 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}
-          tags: |
-            type=raw,value=${{ matrix.tag }}
-            type=sha,prefix=${{ matrix.sha_prefix }}
+      - name: Platform-Paar
+        id: prep
+        run: |
+          platform=${{ matrix.platform }}
+          echo "pair=${platform//\//-}" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
-          platforms: linux/arm64,linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.scope }}
-          cache-to: type=gha,scope=${{ matrix.scope }},mode=max
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.scope }}-${{ steps.prep.outputs.pair }}
+          cache-to: type=gha,scope=${{ matrix.scope }}-${{ steps.prep.outputs.pair }},mode=max
+
+      - name: Digest ablegen
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.tag }}-${{ steps.prep.outputs.pair }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Digests zu Multi-Arch-Tags zusammenführen (latest / vpn / warp).
+  merge:
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { tag: latest, sha_prefix: "sha-" }
+          - { tag: vpn,    sha_prefix: "vpn-" }
+          - { tag: warp,   sha_prefix: "warp-" }
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digests-${{ matrix.tag }}-*
+          path: /tmp/digests
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Manifest erstellen
+        working-directory: /tmp/digests
+        run: |
+          short="${GITHUB_SHA:0:7}"
+          docker buildx imagetools create \
+            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.tag }}" \
+            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.sha_prefix }}${short}" \
+            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)

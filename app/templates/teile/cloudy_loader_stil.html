@@ -1,0 +1,15 @@
+<style>
+@keyframes cFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+@keyframes cBar{0%{left:-35%;right:100%}60%,100%{left:100%;right:-90%}}
+@keyframes cSpin{to{transform:rotate(360deg)}}
+.anim-cloudy-float{animation:cFloat 2.4s ease-in-out infinite}
+.cloudy-mascot{width:72px;height:72px;object-fit:contain;display:block}
+.cloudy-progress{width:96px;height:3px;background:rgba(255,255,255,.1);border-radius:99px;position:relative;overflow:hidden}
+.cloudy-progress:before{content:"";position:absolute;inset:0 auto;background:#38bdf8;border-radius:99px;animation:cBar 1.4s cubic-bezier(.65,.815,.735,.395) infinite}
+.cloudy-overlay{position:fixed;inset:0;z-index:9999;background:rgba(14,16,23,.88);display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .12s ease}
+.cloudy-overlay.visible{opacity:1;pointer-events:auto}
+.cloudy-overlay-card{background:#171924;border:1px solid rgba(255,255,255,.08);padding:18px 20px;border-radius:20px;display:flex;flex-direction:column;align-items:center;gap:10px;min-width:160px}
+.cloudy-overlay-text{font-size:.8rem;font-weight:700;color:#bae6fd}
+.btn-spinner{width:14px;height:14px;border:2px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:cSpin .7s linear infinite;flex-shrink:0}
+.btn-save.loading,.btn.loading{opacity:.75;cursor:not-allowed;pointer-events:none}
+</style>

@@ -173,7 +173,8 @@ Geräten, die sonst komplett durch ein VPN laufen (z. B. für Banking oder Seite
 ## 6. Einzelne Geräte durch ein normales WireGuard-VPN schicken (z. B. Proton VPN)
 
 Wie bei WARP, aber mit einer beliebigen WireGuard-Konfigurationsdatei (z. B. von Proton VPN, Mullvad,
-NordVPN …). Zwei VPN-Plätze stehen bereit (`vpn1`, `vpn2`).
+NordVPN …). Beliebig viele VPN-/WARP-Profile im Dashboard unter **VPN** anlegen (`+ WARP-Profil` / `+ VPN-Profil`);
+danach auf dem Pi `cloudy slots`, damit die Container starten. Löschen geht dort ebenfalls.
 
 1. Beim VPN-Anbieter eine WireGuard-Konfiguration herunterladen (`.conf`).
 2. Im Dashboard unter **„VPN“** bei **VPN 1** (oder VPN 2) auf **„Konfiguration bearbeiten“** klicken,
@@ -249,7 +250,7 @@ ohne dass die Seite von außen erreichbar ist.
 
 1. Bei Cloudflare darf es für die Domain **keinen öffentlichen DNS-Eintrag** auf deine Zuhause-Adresse geben – sie soll nur im Heimnetz auflösen.
 2. Bei Cloudflare einen **API-Token** anlegen (zwei Berechtigungen: Zone → Zone → Lesen und Zone → DNS → Bearbeiten, nur für diese Zone).
-3. Dashboard → **Einstellungen → Eigene Domain**: Token und mindestens eine Domain eintragen – eine fürs **ganze Dashboard** (wie `cloudy.lan`), eine nur für **„Mein Gerät“** (`/mein`). Beide bekommen zusammen ein Zertifikat. Es müssen Unternamen einer Domain sein, die dir gehört. Der Token liegt nur in der Datenbank (`data/`), nie im Repo.
+3. Dashboard → **Einstellungen → Eigene Domain**: Token und Domains eintragen – beliebig viele fürs **ganze Dashboard** (wie `cloudy.lan`) und beliebig viele nur für **„Mein Gerät“** (nur die Domain eintragen, `/mein` kommt automatisch dazu). Alle bekommen zusammen ein Zertifikat. Es müssen Unternamen einer Domain sein, die dir gehört. Der Token liegt nur in der Datenbank (`data/`), nie im Repo.
 
 Der Pi beantwortet die Domain im Heimnetz mit seiner IP, holt das Zertifikat bei Let's Encrypt per DNS-Challenge
 (kein offener Port nötig) und erneuert es automatisch. Unter der „Mein Gerät“-Domain ist nur `/mein` erreichbar.

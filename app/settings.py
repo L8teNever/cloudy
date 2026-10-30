@@ -7,6 +7,12 @@ def _flag(name: str, default: str) -> bool:
     return os.environ.get(name, default).strip().lower() in ("1", "true", "yes", "ja", "an", "on")
 
 
+def _warp_slots_from_data(data_dir: str) -> list[tuple[str, str]]:
+    from . import slots
+
+    return slots.as_pairs(slots.ensure(data_dir))
+
+
 @dataclass(frozen=True)
 class Settings:
     data_dir: str
@@ -49,15 +55,8 @@ class Settings:
             traffic_poll_seconds=float(os.environ.get("TRAFFIC_POLL_SECONDS", "10")),
             local_name=os.environ.get("LOCAL_NAME", "cloudy.lan").strip().lower().rstrip("."),
             https_port=int(os.environ.get("HTTPS_PORT", "443").strip() or 0),
-            # WARP-/VPN-Container aus docker-compose.yml (warpN = Cloudflare WARP, vpnN = WireGuard): Name=IP im Netz "cloudy-warp".
-            warp_slots=[
-                (name.strip(), ip.strip())
-                for name, _, ip in (
-                    s.partition("=")
-                    for s in os.environ.get("WARP_SLOTS", "warp1=172.29.86.11,warp2=172.29.86.12,vpn1=172.29.86.21,vpn2=172.29.86.22").split(",")
-                )
-                if name.strip() and ip.strip()
-            ],
+            # WARP-/VPN-Profile: data/warp_slots.json (Dashboard kann anlegen/löschen), sonst WARP_SLOTS-Default.
+            warp_slots=_warp_slots_from_data(os.environ.get("DATA_DIR", "/data")),
             warp_killswitch=_flag("WARP_KILLSWITCH", "0"),
             ipv6_enabled=_flag("IPV6_ENABLED", "0"),
             ipv6_prefix=os.environ.get("IPV6_PREFIX", "").strip(),
