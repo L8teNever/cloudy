@@ -8,7 +8,7 @@ landen im selben Zertifikat und laufen so ohne Warnung und ohne lokale CA auf de
 
 So funktioniert es:
 1. DNS: dnsmasq beantwortet die Domains im Heimnetz mit der IP des Pi. Von außen führt nichts hierher
-   (der Tunnel-Hostname und der öffentliche DNS-Eintrag bei Cloudflare müssen dafür gelöscht sein).
+   (bei Cloudflare darf es für die Domain keinen öffentlichen DNS-Eintrag zur Heimadresse geben).
 2. Zertifikat: Let's Encrypt per DNS-Challenge (ACME DNS-01). Dafür legt cloudy kurz einen TXT-Eintrag
    `_acme-challenge.<domain>` über die Cloudflare-API an. Port 80/443 müssen nicht aus dem Internet erreichbar sein.
 3. Der Cloudflare-API-Token steht nur in der Datenbank (Dashboard → Einstellungen), nie im Repo oder in .env.

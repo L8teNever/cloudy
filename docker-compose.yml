@@ -86,10 +86,6 @@ services:
         ipv6_address: fd29:86::22
 
 networks:
-      cloudy-tunnel:
-        ipv4_address: 172.29.88.10
-
-networks:
   cloudy-warp:
     name: cloudy-warp
     driver_opts:
