@@ -239,3 +239,23 @@ def test_site_route_pages(client):
     assert client.post("/seiten-routen/add", data={"domain": "x.de", "slot": "nope"}).status_code == 404
     client.post("/seiten-routen/remove", data={"domain": "netflix.com"})
     assert db.site_routes() == {}
+
+
+def test_mein_choices_are_limited_by_admin(client):
+    db.upsert_devices([("testclient", MAC, "handy")])
+    assert warp.mein_allowed() is None
+    client.post("/mein-auswahl", data={"choice": ["vpn1", "warp1"]})
+    assert warp.mein_allowed() == {"vpn1", "warp1"}
+    page = client.get("/mein").text
+    assert 'value="vpn1"' in page and 'value="warp1"' in page
+    assert 'value="warp2"' not in page and 'value="direct"' not in page
+    assert client.post("/mein/warp", data={"slot": "warp2"}, follow_redirects=False).headers["location"].startswith("/mein?fehler=")
+    assert db.device_warp() == {}
+    assert client.post("/mein/warp", data={"slot": "vpn1"}, follow_redirects=False).headers["location"] == "/mein?ok=1"
+    assert db.device_warp() == {MAC: "vpn1"}
+    # Alles angehakt = wieder keine Einschränkung; nichts angehakt = nichts auswählbar außer dem aktuellen.
+    client.post("/mein-auswahl", data={"choice": ["standard", "direct", "warp1", "warp2", "vpn1", "vpn2"]})
+    assert warp.mein_allowed() is None
+    client.post("/mein-auswahl", data={})
+    assert warp.mein_allowed() == set()
+    assert client.post("/mein/warp", data={"slot": "direct"}, follow_redirects=False).headers["location"].startswith("/mein?fehler=")

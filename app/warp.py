@@ -41,6 +41,29 @@ def mark(index: int) -> str:
     return hex(MARK_BASE + index)
 
 
+MEIN_KEY = "mein_choices"
+STANDARD = "standard"  # Auswahl „Standard“ (kein eigenes Profil für das Gerät)
+
+
+def mein_allowed() -> set[str] | None:
+    """Was andere Nutzer auf „Mein Gerät“ auswählen dürfen: None = alles, sonst Menge aus "standard", "direct" und Slots."""
+    value = db.get_setting(MEIN_KEY).strip()
+    if value in ("", "all"):
+        return None
+    return {v for v in value.split(",") if v and v != "none"}
+
+
+def save_mein_allowed(choices: list[str], valid: set[str]) -> None:
+    picked = sorted(set(choices) & valid)
+    db.set_setting(MEIN_KEY, "all" if picked and set(picked) == valid else (",".join(picked) or "none"))
+
+
+def mein_choice_ok(slot: str, current: str) -> bool:
+    """Darf der Nutzer diese Auswahl treffen? Die aktuell gesetzte bleibt immer erlaubt (sonst wäre „Übernehmen“ gesperrt)."""
+    allowed = mein_allowed()
+    return allowed is None or (slot or STANDARD) in allowed or slot == current
+
+
 def site_set(index: int, v6: bool = False) -> str:
     """Name des ipset, in das dnsmasq die IPs der Seiten für dieses Profil einträgt."""
     return f"cloudy_s{index}" + ("_6" if v6 else "")

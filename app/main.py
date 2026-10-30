@@ -298,6 +298,10 @@ async def mein_geraet(request: Request, ok: int | None = None, fehler: str | Non
     profiles = await run_in_threadpool(warp_profiles, settings)
     warp_by_mac = await run_in_threadpool(db.device_warp)
     warp_default = await run_in_threadpool(db.get_setting, warp.DEFAULT_KEY)
+    allowed = await run_in_threadpool(warp.mein_allowed)
+    current = warp_by_mac.get((device or {}).get("mac") or "", "")
+    if allowed is not None:
+        profiles = [w for w in profiles if w["slot"] in allowed or w["slot"] == current]
     labels = {w["slot"]: w["label"] for w in profiles}
     online = online_ips(request)
     return templates.TemplateResponse(
@@ -312,6 +316,8 @@ async def mein_geraet(request: Request, ok: int | None = None, fehler: str | Non
             "warp_names": labels,
             "warp_by_mac": warp_by_mac,
             "warp_default": warp_default,
+            "show_standard": allowed is None or warp.STANDARD in allowed or not current,
+            "show_direct": allowed is None or warp.DIRECT in allowed or current == warp.DIRECT,
             "settings": settings,
             "ok": bool(ok),
             "fehler": fehler,
@@ -333,6 +339,9 @@ async def mein_set_warp(request: Request, slot: str = Form("")):
         )
     if slot and slot != warp.DIRECT:
         _check_slot(request, slot)
+    current = (await run_in_threadpool(db.device_warp)).get(mac, "")
+    if not await run_in_threadpool(warp.mein_choice_ok, slot, current):
+        return RedirectResponse(f"/mein?fehler={quote('Diese Auswahl ist nicht freigegeben.')}", status_code=303)
     await run_in_threadpool(db.set_device_warp, mac, slot or None)
     return RedirectResponse("/mein?ok=1", status_code=303)
 
@@ -471,6 +480,14 @@ async def device_set_isolate(request: Request, mac: str = Form(...), isolated: i
         from . import traffic
         await run_in_threadpool(traffic.apply_isolation, settings)
     return RedirectResponse(f"/geraete/{quote(ip)}" if ip else "/geraete", status_code=303)
+
+
+@app.post("/mein-auswahl", dependencies=[Depends(require_password)])
+async def mein_auswahl(request: Request, choice: list[str] = Form(default=[])):
+    """Admin: Was darf jeder auf „Mein Gerät“ auswählen (Standard, Normal, einzelne Profile)?"""
+    valid = {warp.STANDARD, warp.DIRECT} | {name for name, _ in request.app.state.settings.warp_slots}
+    await run_in_threadpool(warp.save_mein_allowed, choice, valid)
+    return RedirectResponse("/vpn#mein-auswahl", status_code=303)
 
 
 @app.post("/seiten-routen/add", dependencies=[Depends(require_password)])

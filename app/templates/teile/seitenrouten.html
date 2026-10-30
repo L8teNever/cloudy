@@ -39,3 +39,22 @@
   <p class="muted small">Noch keine Regeln.</p>
   {% endif %}
 </div>
+
+<div class="card" id="mein-auswahl">
+  <h2>Was andere auf „Mein Gerät“ auswählen dürfen</h2>
+  <p class="muted small">
+    Jeder im Heimnetz kann unter <code>{{ settings.local_name or 'cloudy.lan' }}/mein</code> (bzw. deiner „Mein Gerät“-Domain) das
+    Internet für sein eigenes Gerät umstellen. Hier legst du fest, welche Möglichkeiten er dort sieht. Eine bereits gesetzte Auswahl
+    bleibt für das Gerät sichtbar. Als Admin kannst du weiterhin alles im Dashboard einstellen.
+  </p>
+  <form method="post" action="/mein-auswahl">
+    <div class="choices" style="display:grid;gap:.4rem;margin:.75rem 0">
+      <label><input type="checkbox" name="choice" value="standard" {{ 'checked' if mein_allowed is none or 'standard' in mein_allowed }}> Standard (wie bei allen anderen eingestellt)</label>
+      <label><input type="checkbox" name="choice" value="direct" {{ 'checked' if mein_allowed is none or 'direct' in mein_allowed }}> Normal – direkt über die Fritzbox</label>
+      {% for w in site_profiles %}
+      <label><input type="checkbox" name="choice" value="{{ w.slot }}" {{ 'checked' if mein_allowed is none or w.slot in mein_allowed }}> {{ w.label }}{{ '' if w.has_token else ' (nicht eingerichtet)' }}</label>
+      {% endfor %}
+    </div>
+    <button>Speichern</button>
+  </form>
+</div>

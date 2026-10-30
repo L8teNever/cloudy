@@ -249,6 +249,7 @@ def ctx_seitenrouten(request: Request) -> dict:
         "site_routes": db.site_routes(),
         "site_profiles": warp_profiles(s),
         "site_gateway": s.gateway_enabled,
+        "mein_allowed": warp.mein_allowed(),
     }
 
 

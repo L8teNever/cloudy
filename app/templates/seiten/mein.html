@@ -51,12 +51,13 @@
     </div>
     {% endif %}
 
-    {% if warp %}
+    {% if warp or show_direct or show_standard %}
     {% set current = warp_by_mac.get(device.mac, '') %}
     <div class="card">
       <form method="post" action="/mein/warp">
         <label>Internet für dieses Gerät</label>
         <div class="choices">
+          {% if show_standard %}
           <label class="choice">
             <input type="radio" name="slot" value="" {{ 'checked' if not current }}>
             <div>
@@ -64,6 +65,8 @@
               <span>{{ warp_names.get(warp_default, 'normal über Fritzbox') if warp_default else 'normal über Fritzbox' }}</span>
             </div>
           </label>
+          {% endif %}
+          {% if show_direct %}
           <label class="choice">
             <input type="radio" name="slot" value="direct" {{ 'checked' if current == 'direct' }}>
             <div>
@@ -71,6 +74,7 @@
               <span>Direkt über die Fritzbox, ohne VPN/WARP</span>
             </div>
           </label>
+          {% endif %}
           {% for w in warp %}
           <label class="choice">
             <input type="radio" name="slot" value="{{ w.slot }}" {{ 'checked' if current == w.slot }}>
