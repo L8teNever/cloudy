@@ -221,3 +221,10 @@ def test_fritz_web_routes(client):
     assert len(routers) == 2
     assert routers[0]["name"] == "Haupt-Fritzbox"
     assert routers[1]["name"] == "Repeater-Box"
+
+
+def test_leistung_seite(client):
+    r = client.get("/leistung")
+    assert r.status_code == 200
+    assert "Systemleistung" in r.text
+    assert client.get("/teil/leistung").status_code == 200

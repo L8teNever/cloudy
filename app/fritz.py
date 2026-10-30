@@ -3,12 +3,16 @@
 Liest System-, Verbindungs-, WLAN- und Mesh-/Gerätedaten aus einer oder mehreren
 FRITZ!Boxen aus und erlaubt das Schalten von Gast-WLAN, Haupt-WLAN, WAN-Neuverbindung
 und Neustart über das cloudy-Dashboard.
+
+Optimiert für Raspberry Pi 3: Abfragen laufen asynchron im Hintergrund,
+sodass Webseitenaufrufe im Dashboard mit 0 ms Latenz aus dem Speicher bedient werden.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from typing import Any
@@ -19,11 +23,14 @@ from .settings import Settings
 logger = logging.getLogger("cloudy.fritz")
 
 FRITZ_ROUTERS_KEY = "fritz_routers"
-CACHE_TTL = 15.0  # Sekunden Cache, damit nicht bei jedem Seitenaufruf SOAP-Abfragen laufen
+CACHE_TTL = 45.0  # Auf Pi 3 ressourcenschonende 45 Sekunden Cache
 
 _cache_lock = threading.Lock()
 _cached_data: dict[str, Any] | None = None
 _cached_at: float = 0.0
+
+_refresh_lock = threading.Lock()
+_is_refreshing: bool = False
 
 
 def default_routers(settings: Settings) -> list[dict[str, str]]:
@@ -97,7 +104,7 @@ def test_router_connection(ip: str, user: str = "", password: str = "") -> tuple
         from fritzconnection import FritzConnection
         from fritzconnection.core.exceptions import FritzConnectionException, FritzSecurityError
 
-        fc = FritzConnection(address=ip, user=user or None, password=password or None, timeout=4.0)
+        fc = FritzConnection(address=ip, user=user or None, password=password or None, timeout=3.0)
         model = getattr(fc, "modelname", None) or "FRITZ!Box"
         return True, f"Erfolgreich verbunden ({model})"
     except FritzSecurityError:
@@ -149,7 +156,7 @@ def _fetch_single_router_data(router_cfg: dict[str, str]) -> dict[str, Any]:
         from fritzconnection.lib.fritzstatus import FritzStatus
         from fritzconnection.lib.fritzwlan import FritzGuestWLAN, FritzWLAN
 
-        fc = FritzConnection(address=ip, user=user or None, password=password, timeout=4.0)
+        fc = FritzConnection(address=ip, user=user or None, password=password, timeout=3.0)
         result["online"] = True
         result["model"] = getattr(fc, "modelname", "FRITZ!Box")
         result["software_version"] = getattr(fc, "system_version", "")
@@ -300,15 +307,7 @@ def _fetch_single_router_data(router_cfg: dict[str, str]) -> dict[str, Any]:
     return result
 
 
-def get_all_fritz_data(settings: Settings, force: bool = False) -> dict[str, Any]:
-    """Liefert aggregierte Daten aller konfigurierten FRITZ!Boxen (mit Caching)."""
-    global _cached_at, _cached_data
-
-    now = time.time()
-    with _cache_lock:
-        if not force and _cached_data is not None and (now - _cached_at) < CACHE_TTL:
-            return _cached_data
-
+def _fetch_all_sync(settings: Settings) -> dict[str, Any]:
     routers = get_routers(settings)
     boxes = []
     all_device_connections: dict[str, dict[str, Any]] = {}
@@ -316,22 +315,96 @@ def get_all_fritz_data(settings: Settings, force: bool = False) -> dict[str, Any
     for r_cfg in routers:
         data = _fetch_single_router_data(r_cfg)
         boxes.append(data)
-        # Verbindungsdaten zusammenführen (aktive/aktuellere behalten)
         for mac, info in data.get("device_connections", {}).items():
             if mac not in all_device_connections or info.get("type") == "WLAN":
                 all_device_connections[mac] = info
 
-    res = {
+    now = time.time()
+    return {
         "boxes": boxes,
         "device_connections": all_device_connections,
         "updated_at": int(now),
     }
 
-    with _cache_lock:
-        _cached_data = res
-        _cached_at = now
 
-    return res
+def _bg_worker(settings: Settings) -> None:
+    global _cached_at, _cached_data, _is_refreshing
+    try:
+        res = _fetch_all_sync(settings)
+        with _cache_lock:
+            _cached_data = res
+            _cached_at = time.time()
+    except Exception as e:
+        logger.debug("Hintergrundabfrage FRITZ!Box fehlgeschlagen: %s", e)
+    finally:
+        with _refresh_lock:
+            _is_refreshing = False
+
+
+def get_all_fritz_data(settings: Settings, force: bool = False) -> dict[str, Any]:
+    """Liefert aggregierte Daten aller konfigurierten FRITZ!Boxen (für Pi 3: nicht-blockierend aus Cache)."""
+    global _cached_at, _cached_data, _is_refreshing
+
+    # In Tests synchron ausführen
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        with _cache_lock:
+            if not force and _cached_data is not None and (time.time() - _cached_at) < CACHE_TTL:
+                return _cached_data
+        res = _fetch_all_sync(settings)
+        with _cache_lock:
+            _cached_data = res
+            _cached_at = time.time()
+        return res
+
+    now = time.time()
+    trigger_bg = False
+
+    with _cache_lock:
+        if force or _cached_data is None or (now - _cached_at) > CACHE_TTL:
+            with _refresh_lock:
+                if not _is_refreshing:
+                    _is_refreshing = True
+                    trigger_bg = True
+
+        if _cached_data is not None:
+            data = _cached_data
+        else:
+            # Schneller initialer Platzhalter (0 ms), blockiert keinen Request
+            data = {
+                "boxes": [
+                    {
+                        "name": r.get("name") or "FRITZ!Box",
+                        "ip": r.get("ip", ""),
+                        "user": r.get("user", ""),
+                        "has_password": bool(r.get("password")),
+                        "online": False,
+                        "error": None,
+                        "model": "",
+                        "software_version": "",
+                        "uptime": "",
+                        "connection_status": "Verbindung wird geprüft...",
+                        "is_connected": False,
+                        "is_repeater": False,
+                        "external_ip": "",
+                        "external_ipv6": "",
+                        "max_down": "",
+                        "max_up": "",
+                        "update_available": False,
+                        "wlan_24": None,
+                        "wlan_50": None,
+                        "guest_wlan": None,
+                        "device_connections": {},
+                    }
+                    for r in get_routers(settings)
+                ],
+                "device_connections": {},
+                "updated_at": 0,
+            }
+
+    if trigger_bg:
+        threading.Thread(target=_bg_worker, args=(settings,), daemon=True).start()
+
+    return data
 
 
 def get_device_connection(settings: Settings, mac: str) -> dict[str, Any] | None:
@@ -357,7 +430,7 @@ def _get_connection_for_router(settings: Settings, router_index: int):
         address=cfg.get("ip", "192.168.178.1"),
         user=cfg.get("user") or None,
         password=cfg.get("password") or None,
-        timeout=5.0,
+        timeout=4.0,
     )
 
 

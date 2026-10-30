@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import access, blocklist, charts, db, fritz, stats, warp
+from . import access, blocklist, charts, db, fritz, stats, system_info, warp
 from .settings import Settings
 
 BASE_DIR = Path(__file__).parent
@@ -254,6 +254,10 @@ def ctx_fritzbox(request: Request, fehler: str | None = None, erfolg: str | None
     }
 
 
+def ctx_leistung(request: Request) -> dict:
+    return {"system": system_info.get_system_metrics()}
+
+
 PARTS = {
     "status": ctx_status,
     "kpis": ctx_kpis,
@@ -267,6 +271,7 @@ PARTS = {
     "weiterleitungen": ctx_weiterleitungen,
     "vpn": ctx_vpn,
     "fritzbox": ctx_fritzbox,
+    "leistung": ctx_leistung,
 }
 PARAMS = {"ip", "zeitraum", "fehler", "erfolg"}
 
@@ -321,6 +326,11 @@ async def schutz(request: Request):
 @router.get("/vpn", response_class=HTMLResponse, dependencies=[Depends(require_password)])
 async def vpn(request: Request):
     return await page(request, "seiten/vpn.html", "VPN", "/vpn", ["vpn"])
+
+
+@router.get("/leistung", response_class=HTMLResponse, dependencies=[Depends(require_password)])
+async def leistung_page(request: Request):
+    return await page(request, "seiten/leistung.html", "Leistung", "/leistung", ["leistung"])
 
 
 @router.get("/fritzbox", response_class=HTMLResponse, dependencies=[Depends(require_password)])

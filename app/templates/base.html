@@ -104,7 +104,7 @@
     <div class="bar">
       <a class="logo" href="/" data-nav>cloudy</a>
       <nav>
-        {% for href, name in [("/", "Übersicht"), ("/geraete", "Geräte"), ("/statistik", "Statistik"), ("/schutz", "Schutz"), ("/vpn", "VPN"), ("/fritzbox", "FRITZ!Box"), ("/einstellungen", "Einstellungen")] %}
+        {% for href, name in [("/", "Übersicht"), ("/geraete", "Geräte"), ("/statistik", "Statistik"), ("/schutz", "Schutz"), ("/vpn", "VPN"), ("/fritzbox", "FRITZ!Box"), ("/leistung", "Leistung"), ("/einstellungen", "Einstellungen")] %}
         <a href="{{ href }}" data-nav class="{{ 'active' if active == href }}">{{ name }}</a>
         {% endfor %}
       </nav>

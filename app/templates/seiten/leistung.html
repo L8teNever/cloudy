@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;margin-bottom:1rem">
+  <div>
+    <h1 style="margin:0 0 .25rem">Systemleistung & Ressourcen</h1>
+    <div class="muted small">Live-Überwachung von CPU, Arbeitsspeicher, Speicherplatz und Temperatur deines Raspberry Pi</div>
+  </div>
+</div>
+
+<div data-live="/teil/leistung" data-every="5">
+  {% include "teile/leistung.html" %}
+</div>
+
+<!-- Detailliertere Aufschlüsselung -->
+<div class="card">
+  <h2>ℹ️ System-Details</h2>
+  <table style="font-size:.88rem">
+    <tr>
+      <td><strong>Betriebssystem / Uptime</strong></td>
+      <td>{{ system.uptime or 'Unbekannt' }}</td>
+    </tr>
+    <tr>
+      <td><strong>Prozessorkerne</strong></td>
+      <td>{{ system.cpu.cores }} virtuelle / physische Kerne</td>
+    </tr>
+    {% if system.cpu.load_avg %}
+    <tr>
+      <td><strong>Load Average (1m / 5m / 15m)</strong></td>
+      <td class="mono">{{ system.cpu.load_avg }}</td>
+    </tr>
+    {% endif %}
+    {% if system.temperature.celsius %}
+    <tr>
+      <td><strong>CPU-Temperatur</strong></td>
+      <td><span class="pill {{ system.temperature.status }}">🌡️ {{ system.temperature.celsius }} °C</span></td>
+    </tr>
+    {% endif %}
+    <tr>
+      <td><strong>Arbeitsspeicher Belegung</strong></td>
+      <td>{{ system.memory.used_fmt }} von {{ system.memory.total_fmt }} ({{ system.memory.percent }} %) · <strong style="color:var(--good)">{{ system.memory.free_fmt }} frei</strong></td>
+    </tr>
+    <tr>
+      <td><strong>Speicherplatz Belegung</strong></td>
+      <td>{{ system.disk.used_fmt }} von {{ system.disk.total_fmt }} ({{ system.disk.percent }} %) · <strong style="color:var(--good)">{{ system.disk.free_fmt }} frei</strong></td>
+    </tr>
+    <tr>
+      <td><strong>Cloudy-Dienst Eigenverbrauch</strong></td>
+      <td class="mono">{{ system.process.ram_fmt }} RAM · {{ system.process.cpu_percent }} % CPU</td>
+    </tr>
+  </table>
+</div>
+{% endblock %}

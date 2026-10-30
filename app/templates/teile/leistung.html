@@ -1,0 +1,78 @@
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem;margin-bottom:1rem">
+    <div>
+      <h2 style="margin:0 0 .2rem;display:flex;align-items:center;gap:.5rem">
+        ⚡ Systemleistung & Ressourcen
+        {% if system.temperature.celsius %}
+        <span class="pill {{ system.temperature.status }}" title="CPU-Temperatur">
+          🌡️ {{ system.temperature.celsius }} °C
+        </span>
+        {% endif %}
+      </h2>
+      <div class="muted small">
+        Auslastung und verbleibende Reserven des Pi
+        {% if system.uptime %} · Laufzeit: {{ system.uptime }}{% endif %}
+        {% if system.cpu.load_avg %} · Load: {{ system.cpu.load_avg }}{% endif %}
+      </div>
+    </div>
+    <div class="small muted mono">
+      Cloudy-Prozess: {{ system.process.ram_fmt }} RAM · {{ system.process.cpu_percent }} % CPU
+    </div>
+  </div>
+
+  <div class="grid" style="grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:1rem">
+    <!-- CPU -->
+    <div style="background:var(--page);border:1px solid var(--line);border-radius:10px;padding:.9rem">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem">
+        <strong style="font-size:.92rem">💻 Prozessor (CPU)</strong>
+        <span class="pill {{ 'bad' if system.cpu.percent > 85 else ('warn' if system.cpu.percent > 65 else 'on') }}" style="margin:0;font-size:.78rem">
+          {{ system.cpu.percent }} % belegt
+        </span>
+      </div>
+      <!-- Fortschrittsbalken -->
+      <div style="height:8px;background:var(--line);border-radius:99px;overflow:hidden;margin:.55rem 0">
+        <div style="height:100%;width:{{ system.cpu.percent }}%;background:{{ 'var(--bad)' if system.cpu.percent > 85 else ('var(--warn)' if system.cpu.percent > 65 else 'var(--good)') }};border-radius:99px;transition:width .3s"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:.82rem" class="muted">
+        <span>{{ system.cpu.cores }} Kerne aktiv</span>
+        <span style="color:var(--good);font-weight:600">{{ system.cpu.free_percent }} % noch frei</span>
+      </div>
+    </div>
+
+    <!-- RAM -->
+    <div style="background:var(--page);border:1px solid var(--line);border-radius:10px;padding:.9rem">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem">
+        <strong style="font-size:.92rem">🧠 Arbeitsspeicher (RAM)</strong>
+        <span class="pill {{ 'bad' if system.memory.percent > 88 else ('warn' if system.memory.percent > 75 else 'on') }}" style="margin:0;font-size:.78rem">
+          {{ system.memory.used_fmt }} / {{ system.memory.total_fmt }}
+        </span>
+      </div>
+      <!-- Fortschrittsbalken -->
+      <div style="height:8px;background:var(--line);border-radius:99px;overflow:hidden;margin:.55rem 0">
+        <div style="height:100%;width:{{ system.memory.percent }}%;background:{{ 'var(--bad)' if system.memory.percent > 88 else ('var(--warn)' if system.memory.percent > 75 else 'var(--good)') }};border-radius:99px;transition:width .3s"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:.82rem" class="muted">
+        <span>{{ system.memory.percent }} % belegt</span>
+        <span style="color:var(--good);font-weight:600">{{ system.memory.free_fmt }} noch frei ({{ system.memory.free_percent }} %)</span>
+      </div>
+    </div>
+
+    <!-- Festplatte / SD-Karte -->
+    <div style="background:var(--page);border:1px solid var(--line);border-radius:10px;padding:.9rem">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem">
+        <strong style="font-size:.92rem">💾 Speicher (SD / SSD)</strong>
+        <span class="pill {{ 'bad' if system.disk.percent > 90 else ('warn' if system.disk.percent > 80 else '') }}" style="margin:0;font-size:.78rem">
+          {{ system.disk.used_fmt }} / {{ system.disk.total_fmt }}
+        </span>
+      </div>
+      <!-- Fortschrittsbalken -->
+      <div style="height:8px;background:var(--line);border-radius:99px;overflow:hidden;margin:.55rem 0">
+        <div style="height:100%;width:{{ system.disk.percent }}%;background:{{ 'var(--bad)' if system.disk.percent > 90 else ('var(--warn)' if system.disk.percent > 80 else 'var(--brand)') }};border-radius:99px;transition:width .3s"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:.82rem" class="muted">
+        <span>{{ system.disk.percent }} % belegt</span>
+        <span style="color:var(--good);font-weight:600">{{ system.disk.free_fmt }} noch frei</span>
+      </div>
+    </div>
+  </div>
+</div>
