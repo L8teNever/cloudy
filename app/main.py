@@ -567,6 +567,7 @@ async def fritzbox_config(
     r2_ip: str = Form(""),
     r2_user: str = Form(""),
     r2_password: str = Form(""),
+    same_login: str = Form(""),
 ):
     routers = [
         {
@@ -576,6 +577,8 @@ async def fritzbox_config(
             "password": r1_password.strip(),
         }
     ]
+    if same_login:
+        r2_user, r2_password = r1_user, r1_password
     if r2_ip.strip():
         routers.append(
             {
@@ -586,7 +589,17 @@ async def fritzbox_config(
             }
         )
     await run_in_threadpool(fritz.save_routers, routers)
+    await run_in_threadpool(fritz.refresh_now, request.app.state.settings)
     return RedirectResponse(f"/fritzbox?erfolg={quote('FRITZ!Box-Zugangsdaten erfolgreich gespeichert.')}", status_code=303)
+
+
+@app.post("/fritzbox/retry", dependencies=[Depends(require_password)])
+async def fritzbox_retry(request: Request):
+    data = await run_in_threadpool(fritz.refresh_now, request.app.state.settings)
+    offline = [b["name"] for b in data["boxes"] if not b["online"]]
+    if offline:
+        return RedirectResponse(f"/fritzbox?fehler={quote('Weiterhin nicht erreichbar: ' + ', '.join(offline))}", status_code=303)
+    return RedirectResponse(f"/fritzbox?erfolg={quote('Alle FRITZ!Boxen sind erreichbar.')}", status_code=303)
 
 
 @app.post("/fritzbox/guest-wlan", dependencies=[Depends(require_password)])

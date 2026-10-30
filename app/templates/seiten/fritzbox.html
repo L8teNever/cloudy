@@ -6,7 +6,10 @@
     <h1 style="margin:0 0 .25rem">FRITZ!Box</h1>
     <div class="muted small">Auslesen von Status, WLAN-SSIDs, Mesh/LAN-Ports und Steuerung (Gastzugang, Reconnect, Neustart)</div>
   </div>
-  <div>
+  <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+    <form method="post" action="/fritzbox/retry" class="inline">
+      <button class="secondary small" title="Verbindung zu allen Boxen neu aufbauen">🔄 Neu versuchen</button>
+    </form>
     <a href="#fritz-setup" class="pill" style="text-decoration:none;font-weight:600">⚙️ Zugangsdaten anpassen</a>
   </div>
 </div>
@@ -25,6 +28,13 @@
   </p>
 
   <form method="post" action="/fritzbox/config">
+    {% set r1c = routers[0] if routers|length > 0 else {} %}
+    {% set r2c = routers[1] if routers|length > 1 else {} %}
+    <label class="small" style="display:flex;gap:.5rem;align-items:center;margin-bottom:1rem">
+      <input type="checkbox" name="same_login" value="1" id="same-login"
+             {% if not r2c or (r2c.password == r1c.password and r2c.user == r1c.user) %}checked{% endif %}>
+      <span><strong>Gleiche Zugangsdaten für beide Boxen verwenden</strong> (Benutzer und Kennwort der Box 1 gelten auch für Box 2)</span>
+    </label>
     <div style="display:grid;gap:1.5rem;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));margin-bottom:1.25rem">
       <!-- Box 1 -->
       {% set r1 = routers[0] if routers|length > 0 else {'name': 'FRITZ!Box 1', 'ip': settings.router_ip or '192.168.178.1', 'user': '', 'password': ''} %}
@@ -52,7 +62,7 @@
 
       <!-- Box 2 -->
       {% set r2 = routers[1] if routers|length > 1 else {'name': 'FRITZ!Box 2', 'ip': '', 'user': '', 'password': ''} %}
-      <div style="background:var(--page);border:1px solid var(--line);border-radius:10px;padding:1rem">
+      <div id="box2-login" style="background:var(--page);border:1px solid var(--line);border-radius:10px;padding:1rem">
         <h3 style="margin:0 0 .75rem;font-size:1rem;color:var(--brand)">FRITZ!Box 2 (Zweite Box / Repeater, optional)</h3>
         <div style="display:flex;flex-direction:column;gap:.6rem">
           <label class="small">
@@ -77,5 +87,20 @@
 
     <button type="submit" style="font-weight:600">Speichern & Verbindung aktualisieren</button>
   </form>
+  <script>
+    (function () {
+      var cb = document.getElementById("same-login");
+      var box = document.getElementById("box2-login");
+      function sync() {
+        ["r2_user", "r2_password"].forEach(function (n) {
+          var el = box.querySelector('[name="' + n + '"]');
+          el.disabled = cb.checked;
+          el.closest("label").style.opacity = cb.checked ? ".45" : "1";
+        });
+      }
+      cb.addEventListener("change", sync);
+      sync();
+    })();
+  </script>
 </div>
 {% endblock %}

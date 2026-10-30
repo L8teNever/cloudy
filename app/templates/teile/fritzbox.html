@@ -33,6 +33,11 @@
   {% if box.error %}
   <div class="alert" style="margin-bottom:1rem">
     <strong>Hinweis:</strong> {{ box.error }}
+    {% if box.has_password %}
+    <form method="post" action="/fritzbox/retry" class="inline" style="margin-left:.5rem">
+      <button class="secondary small">🔄 Neu versuchen</button>
+    </form>
+    {% endif %}
     {% if not box.has_password %}
     <br><a href="#fritz-setup" style="text-decoration:underline">Hier unten Kennwort eintragen</a>, um die Box auszulesen.
     {% endif %}

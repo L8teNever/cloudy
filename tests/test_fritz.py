@@ -228,3 +228,17 @@ def test_leistung_seite(client):
     assert r.status_code == 200
     assert "Systemleistung" in r.text
     assert client.get("/teil/leistung").status_code == 200
+
+
+def test_gleiche_zugangsdaten_und_retry(client):
+    r = client.post("/fritzbox/config", data={
+        "r1_name": "A", "r1_ip": "192.0.2.1", "r1_user": "u", "r1_password": "pw",
+        "r2_name": "B", "r2_ip": "192.0.2.2", "same_login": "1",
+    }, follow_redirects=False)
+    assert r.status_code == 303
+    s = Settings.from_env()
+    routers = fritz.get_routers(s)
+    assert routers[1]["password"] == "pw" and routers[1]["user"] == "u"
+
+    r = client.post("/fritzbox/retry", follow_redirects=False)
+    assert r.status_code == 303

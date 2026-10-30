@@ -15,6 +15,7 @@ import logging
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from . import db
@@ -31,6 +32,11 @@ _cached_at: float = 0.0
 
 _refresh_lock = threading.Lock()
 _is_refreshing: bool = False
+
+# Wiederverwendete Verbindungen: FritzConnection lädt beim Aufbau mehrere XML-Beschreibungen,
+# das ist auf dem Pi der teuerste Schritt. Schlüssel: (ip, user, password)
+_conn_lock = threading.Lock()
+_conns: dict[tuple[str, str, str], Any] = {}
 
 
 def default_routers(settings: Settings) -> list[dict[str, str]]:
@@ -67,6 +73,28 @@ def invalidate_cache() -> None:
     with _cache_lock:
         _cached_at = 0.0
         _cached_data = None
+    with _conn_lock:
+        _conns.clear()
+
+
+def _connect(ip: str, user: str, password: str, timeout: float = 3.0):
+    """Liefert eine (wiederverwendete) FritzConnection zur Box."""
+    from fritzconnection import FritzConnection
+
+    key = (ip, user, password)
+    with _conn_lock:
+        fc = _conns.get(key)
+    if fc is not None:
+        return fc
+    fc = FritzConnection(address=ip, user=user or None, password=password or None, timeout=timeout)
+    with _conn_lock:
+        _conns[key] = fc
+    return fc
+
+
+def _forget_connection(ip: str, user: str, password: str) -> None:
+    with _conn_lock:
+        _conns.pop((ip, user, password), None)
 
 
 def _format_uptime(seconds: int | float | None) -> str:
@@ -156,7 +184,7 @@ def _fetch_single_router_data(router_cfg: dict[str, str]) -> dict[str, Any]:
         from fritzconnection.lib.fritzstatus import FritzStatus
         from fritzconnection.lib.fritzwlan import FritzGuestWLAN, FritzWLAN
 
-        fc = FritzConnection(address=ip, user=user or None, password=password, timeout=3.0)
+        fc = _connect(ip, user, password)
         result["online"] = True
         result["model"] = getattr(fc, "modelname", "FRITZ!Box")
         result["software_version"] = getattr(fc, "system_version", "")
@@ -298,10 +326,13 @@ def _fetch_single_router_data(router_cfg: dict[str, str]) -> dict[str, Any]:
             logger.debug("Fehler beim Lesen von Hosts für %s: %s", ip, e)
 
     except FritzSecurityError:
+        _forget_connection(ip, user, password)
         result["error"] = "Anmeldung fehlgeschlagen: Benutzername oder Kennwort ungültig."
     except FritzConnectionException as e:
+        _forget_connection(ip, user, password)
         result["error"] = f"FRITZ!Box nicht erreichbar ({e})"
     except Exception as e:
+        _forget_connection(ip, user, password)
         result["error"] = f"Fehler bei Abfrage: {e}"
 
     return result
@@ -309,12 +340,16 @@ def _fetch_single_router_data(router_cfg: dict[str, str]) -> dict[str, Any]:
 
 def _fetch_all_sync(settings: Settings) -> dict[str, Any]:
     routers = get_routers(settings)
-    boxes = []
     all_device_connections: dict[str, dict[str, Any]] = {}
 
-    for r_cfg in routers:
-        data = _fetch_single_router_data(r_cfg)
-        boxes.append(data)
+    # Alle Boxen gleichzeitig abfragen: eine nicht erreichbare Box bremst die andere nicht mehr aus
+    if len(routers) > 1:
+        with ThreadPoolExecutor(max_workers=len(routers)) as pool:
+            boxes = list(pool.map(_fetch_single_router_data, routers))
+    else:
+        boxes = [_fetch_single_router_data(r) for r in routers]
+
+    for data in boxes:
         for mac, info in data.get("device_connections", {}).items():
             if mac not in all_device_connections or info.get("type") == "WLAN":
                 all_device_connections[mac] = info
@@ -325,6 +360,17 @@ def _fetch_all_sync(settings: Settings) -> dict[str, Any]:
         "device_connections": all_device_connections,
         "updated_at": int(now),
     }
+
+
+def refresh_now(settings: Settings) -> dict[str, Any]:
+    """Verwirft den Cache und fragt alle Boxen sofort neu ab (für „Neu versuchen“)."""
+    global _cached_at, _cached_data
+    invalidate_cache()
+    res = _fetch_all_sync(settings)
+    with _cache_lock:
+        _cached_data = res
+        _cached_at = time.time()
+    return res
 
 
 def _bg_worker(settings: Settings) -> None:
