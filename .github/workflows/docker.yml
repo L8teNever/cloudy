@@ -7,7 +7,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   # Läuft parallel zum Build – blockiert den Image-Push nicht.
@@ -58,6 +57,8 @@ jobs:
         run: |
           platform=${{ matrix.platform }}
           echo "pair=${platform//\//-}" >> "$GITHUB_OUTPUT"
+          # ghcr verlangt kleingeschriebene Repo-Namen (L8teNever → l8tenever)
+          echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
       - id: build
         uses: docker/build-push-action@v6
@@ -113,8 +114,9 @@ jobs:
       - name: Manifest erstellen
         working-directory: /tmp/digests
         run: |
+          image="${REGISTRY}/${GITHUB_REPOSITORY,,}"
           short="${GITHUB_SHA:0:7}"
           docker buildx imagetools create \
-            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.tag }}" \
-            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.sha_prefix }}${short}" \
-            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
+            -t "${image}:${{ matrix.tag }}" \
+            -t "${image}:${{ matrix.sha_prefix }}${short}" \
+            $(printf "${image}@sha256:%s " *)
