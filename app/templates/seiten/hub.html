@@ -147,7 +147,6 @@
 
   <script>
   (function () {
-    var haUrl = {{ ha_url | tojson }};
     function updateHAStatus(online) {
       var badge = document.getElementById("haBadge");
       var text = document.getElementById("haStatusText");
@@ -167,13 +166,11 @@
       }
     }
     function checkHomeAssistant() {
-      var start = performance.now();
-      var img = new Image();
-      img.onload = function () { updateHAStatus(true); };
-      img.onerror = function () {
-        updateHAStatus(Math.round(performance.now() - start) < 1500);
-      };
-      img.src = haUrl.replace(/\/$/, "") + "/static/icons/favicon.ico?" + Date.now();
+      // Der Pi prüft Home Assistant – kein http-Inhalt auf der https-Seite (sonst „Nicht sicher“).
+      fetch("/hub/ha-status", { cache: "no-store" })
+        .then(function (r) { return r.json(); })
+        .then(function (d) { updateHAStatus(!!d.online); })
+        .catch(function () { updateHAStatus(false); });
     }
     setTimeout(checkHomeAssistant, 400);
   })();

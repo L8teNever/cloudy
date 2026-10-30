@@ -39,6 +39,7 @@ DOMAIN_KEY = "local_domain"  # nur „Mein Gerät“ (/mein)
 DASH_KEY = "local_domain_dashboard"  # das ganze Dashboard (wie cloudy.lan)
 HUB_KEY = "local_domain_hub"  # Hub-Startseite (/hub)
 HA_URL_KEY = "hub_ha_url"  # Home-Assistant-URL für den Hub-Status
+CHAIN_FIX_KEY = "cert_chain_fix_v1"  # einmal geprüft, ob die Kette bei ISRG Root X1/X2 endet
 TOKEN_KEY = "local_domain_cf_token"
 EMAIL_KEY = "local_domain_email"
 STATUS_KEY = "local_domain_status"
@@ -208,6 +209,15 @@ def needs_issue(s: Settings, names: list[str]) -> bool:
         return False
     if info is None or not set(names) <= set(info["names"]):
         return True
+    if not db.get_setting(CHAIN_FIX_KEY):
+        # Einmalig: ältere Zertifikate mit Kette über eine neue, noch nicht überall bekannte Wurzel neu holen.
+        db.set_setting(CHAIN_FIX_KEY, "1")
+        try:
+            with open(paths(s)[0], encoding="utf-8") as f:
+                if _top_issuer(f.read()) not in PREFERRED_ROOTS:
+                    return True
+        except (OSError, ValueError):
+            pass
     left = info["expires"] - datetime.datetime.now(datetime.timezone.utc)
     return left < datetime.timedelta(days=RENEW_BEFORE_DAYS)
 
@@ -227,9 +237,41 @@ def _http(url: str, data: bytes | None = None, headers: dict | None = None, meth
     req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
-            return resp.status, dict(resp.headers), resp.read()
+            return resp.status, _headers(resp.headers), resp.read()
     except urllib.error.HTTPError as exc:
-        return exc.code, dict(exc.headers), exc.read()
+        return exc.code, _headers(exc.headers), exc.read()
+
+
+def _headers(msg) -> dict:
+    """Wie dict(headers), aber mehrfache Header (z. B. Link) bleiben erhalten (mit Komma verbunden)."""
+    out: dict[str, str] = {}
+    for k, v in msg.items():
+        out[k] = f"{out[k]}, {v}" if k in out else v
+    return out
+
+
+PREFERRED_ROOTS = ("ISRG Root X1", "ISRG Root X2")  # in allen Browsern und Geräten bekannt
+
+
+def _top_issuer(chain_pem: str) -> str:
+    certs = x509.load_pem_x509_certificates(chain_pem.encode())
+    if not certs:
+        return ""
+    attrs = certs[-1].issuer.get_attributes_for_oid(NameOID.COMMON_NAME)
+    return attrs[0].value if attrs else ""
+
+
+def pick_chain(default: str, alternates: list[str]) -> str:
+    """Let's Encrypt bietet mehrere Ketten an. Die neuen Wurzeln (z. B. „Root YE“ hinter YE2) kennen noch nicht
+    alle Browser -> die Kette nehmen, die bei ISRG Root X1/X2 endet."""
+    for root in PREFERRED_ROOTS:
+        for pem in [default, *alternates]:
+            try:
+                if _top_issuer(pem) == root:
+                    return pem
+            except ValueError:
+                continue
+    return default
 
 
 # --------------------------------------------------------------------------- Cloudflare DNS
@@ -386,7 +428,17 @@ class Acme:
         )
         self.post(order["finalize"], {"csr": b64(csr.public_bytes(serialization.Encoding.DER))})
         done = self.poll(order_url, "valid", wait=wait)
-        _, _, chain = self.post(done["certificate"], None)
+        _, headers, chain = self.post(done["certificate"], None)
+        link = {k.lower(): v for k, v in headers.items()}.get("link", "")
+        alternates = []
+        for url in re.findall(r'<([^>]+)>\s*;\s*rel="?alternate"?', link):
+            try:
+                alt_status, _, alt = self.post(url, None)
+                if alt_status == 200:
+                    alternates.append(alt.decode())
+            except AcmeError:
+                pass
+        chain = pick_chain(chain.decode(), alternates).encode()
         key_pem = key.private_bytes(
             serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
         ).decode()

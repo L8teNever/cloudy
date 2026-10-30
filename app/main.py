@@ -195,7 +195,7 @@ async def redirect_middleware(request: Request, call_next):
         if path == "/":
             return RedirectResponse("/hub", status_code=302)
         if (
-            path not in ("/healthz", "/favicon.ico", "/hub", "/hub/statistik", "/mein")
+            path not in ("/healthz", "/favicon.ico", "/hub", "/hub/statistik", "/hub/ha-status", "/mein")
             and not path.startswith("/mein/")
             and not path.startswith("/static/")
         ):
@@ -415,6 +415,26 @@ async def werbeblocker_global(request: Request, on: str = Form("1"), mac: str = 
         await run_in_threadpool(adblock.set_enabled, on == "1")
     await run_in_threadpool(_adblock_apply, request)
     return RedirectResponse(back if back.startswith("/") and not back.startswith("//") else "/schutz", status_code=303)
+
+
+def _ha_online(url: str) -> bool:
+    """Antwortet Home Assistant? (Der Pi prüft – so lädt die Hub-Seite nichts Unverschlüsseltes über http.)"""
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, method="HEAD"), timeout=2.5):
+            return True
+    except urllib.error.HTTPError:
+        return True  # antwortet, nur z. B. mit 401/405
+    except Exception:  # noqa: BLE001
+        return False
+
+
+@app.get("/hub/ha-status")
+async def hub_ha_status():
+    url = await run_in_threadpool(localdomain.ha_url)
+    return {"online": await run_in_threadpool(_ha_online, url)}
 
 
 def _hub_series_bars(series: list[dict]) -> tuple[list[dict], int]:

@@ -396,3 +396,42 @@ def test_env_file_first_line_wins(tmp_path, monkeypatch):
     assert os.environ["NEU"] == "x"
     assert set(fixed) == {"PI_IP", "GATEWAY_ENABLED", "NEU"}
     assert S.apply_env_file(str(tmp_path / "fehlt.env")) == []
+
+
+def _pem_issued_by(issuer_cn: str) -> str:
+    import datetime as dt
+
+    from cryptography import x509 as X
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    now = dt.datetime.now(dt.timezone.utc)
+    cert = (
+        X.CertificateBuilder()
+        .subject_name(X.Name([X.NameAttribute(NameOID.COMMON_NAME, "x")]))
+        .issuer_name(X.Name([X.NameAttribute(NameOID.COMMON_NAME, issuer_cn)]))
+        .public_key(key.public_key()).serial_number(1)
+        .not_valid_before(now).not_valid_after(now + dt.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM).decode()
+
+
+def test_pick_chain_prefers_isrg_root():
+    from app import localdomain as L
+
+    new_root = _pem_issued_by("Root YE")
+    old_root = _pem_issued_by("ISRG Root X1")
+    assert L.pick_chain(new_root, [old_root]) == old_root
+    assert L.pick_chain(new_root, []) == new_root
+    assert L.pick_chain(old_root, [new_root]) == old_root
+
+
+def test_hub_ha_status_is_checked_by_pi(client, monkeypatch):
+    import app.main as m
+
+    monkeypatch.setattr(m, "_ha_online", lambda url: True)
+    assert client.get("/hub/ha-status").json() == {"online": True}
+    assert "homeassistant.local" not in client.get("/hub").text.split("<script>")[-1]
