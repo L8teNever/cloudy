@@ -191,7 +191,7 @@ def read_status(s: Settings, slot: str, now: float | None = None) -> SlotStatus:
             text = f.readline().strip()
         age = now - os.path.getmtime(path)
     except FileNotFoundError:
-        return SlotStatus(False, "Container läuft nicht (cloudy update ausführen)")
+        return SlotStatus(False, "Container läuft nicht – auf dem Pi: cloudy slots")
     if age > STATUS_MAX_AGE:
         return SlotStatus(False, "Container antwortet nicht")
     if text == "Connected":
