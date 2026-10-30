@@ -1,4 +1,5 @@
 import os
+import re
 import secrets
 import socket
 import threading
@@ -15,7 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import access, blocklist, certs, db, fritz, views, warp
+from . import access, blocklist, certs, db, fritz, localdomain, portal as portal_app, views, warp
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -113,11 +114,35 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # noqa: BLE001
             print(f"cloudy: Port 80 nicht gebunden: {exc}", flush=True)
 
+    # Geräte-Portal (eigene Seite, eigener Port) – nur erreichbar über den Cloudflare Tunnel.
+    portal_server = None
+    if settings.portal_port and "PYTEST_CURRENT_TEST" not in os.environ:
+        try:
+            portal_app.portal.state.settings = settings
+            portal_app.portal.state.presence = presence
+            portal_server = uvicorn.Server(
+                uvicorn.Config(portal_app.portal, host="0.0.0.0", port=settings.portal_port, lifespan="off", log_level="warning")
+            )
+
+            def _run_portal():
+                try:
+                    portal_server.run()
+                except BaseException as exc:  # noqa: BLE001 – das Portal darf das Dashboard nie verhindern
+                    print(f"cloudy: Geräte-Portal beendet: {exc}", flush=True)
+
+            threading.Thread(target=_run_portal, daemon=True).start()
+            print(f"cloudy: Geräte-Portal an (Port {settings.portal_port})", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"cloudy: Geräte-Portal nicht gestartet: {exc}", flush=True)
+
     https_server = None
     if settings.https_port:
         try:
             certfile, keyfile = ensure_certs(settings)
             def redirect_cert(name: str, _s=settings):
+                own = localdomain.sni_pair(_s, name)
+                if own:
+                    return own
                 rule = find_rule(name, db.redirect_map())
                 return certs.ensure_domain_cert(_s, rule[0]) if rule else None
 
@@ -125,7 +150,13 @@ async def lifespan(app: FastAPI):
             print(f"cloudy: HTTPS an (Port {settings.https_port})", flush=True)
         except Exception as exc:  # noqa: BLE001 – ohne HTTPS läuft das Dashboard weiter über HTTP
             print(f"cloudy: HTTPS nicht verfügbar: {exc}", flush=True)
+    renew_stop = threading.Event()
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        threading.Thread(target=localdomain.renew_loop, args=(settings, renew_stop), daemon=True).start()
     yield
+    renew_stop.set()
+    if portal_server:
+        portal_server.should_exit = True
     if https_server:
         https_server.should_exit = True
     if http_80_server:
@@ -147,7 +178,23 @@ app = FastAPI(title="cloudy", docs_url=None, redoc_url=None, openapi_url=None, l
 async def redirect_middleware(request: Request, call_next):
     raw_host = request.headers.get("host", "").split(":")[0].strip().lower()
     settings = getattr(request.app.state, "settings", None)
+    own_domain = await run_in_threadpool(localdomain.domain)
+    if own_domain and raw_host == own_domain:
+        # Eigene Domain nur im Heimnetz (z. B. main.kulbarts.com): zeigt ausschließlich „Mein Gerät“.
+        path = request.url.path
+        if from_tunnel(request):
+            return Response("Nur im Heimnetz.", status_code=404)
+        if request.url.scheme == "http" and settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
+            port = "" if settings.https_port == 443 else f":{settings.https_port}"
+            return RedirectResponse(f"https://{own_domain}{port}/mein", status_code=302)
+        if path == "/":
+            return RedirectResponse("/mein", status_code=302)
+        if path not in ("/healthz", "/favicon.ico", "/mein") and not path.startswith("/mein/"):
+            return Response("Nicht gefunden.", status_code=404)
+        return await call_next(request)
     own_hosts = {"localhost", "127.0.0.1"}
+    if own_domain:
+        own_hosts.add(own_domain)
     if settings:
         own_hosts.add(settings.pi_ip.lower())
         if settings.local_name:
@@ -331,6 +378,19 @@ async def mein_geraet(request: Request, ok: int | None = None, fehler: str | Non
     )
 
 
+@app.post("/mein/koppeln")
+async def mein_koppeln(request: Request, code: str = Form("")):
+    """Kopplungscode vom Geräte-Portal einlösen: das Portal-Gerät gehört dann zu diesem Gerät (MAC aus Client-IP)."""
+    ip = client_ip(request)
+    device = await run_in_threadpool(db.device, ip) if ip else None
+    mac = ((device or {}).get("mac") or "").strip().lower()
+    if not warp.MAC_RE.match(mac):
+        return RedirectResponse(f"/mein?fehler={quote('Gerät noch nicht erkannt – bitte kurz warten.')}", status_code=303)
+    if not await run_in_threadpool(db.pairing_redeem, code, mac):
+        return RedirectResponse(f"/mein?fehler={quote('Code ungültig oder abgelaufen.')}", status_code=303)
+    return RedirectResponse("/mein?ok=1", status_code=303)
+
+
 @app.post("/mein/warp")
 async def mein_set_warp(request: Request, slot: str = Form("")):
     """VPN/WARP nur für das Gerät umstellen, das gerade die Seite aufruft (MAC aus Client-IP)."""
@@ -444,6 +504,76 @@ async def tunnel_logout(request: Request):
     """Tunnel aus: Token löschen (der Container beendet cloudflared). Team/AUD bleiben gespeichert."""
     await run_in_threadpool(warp.remove_token, request.app.state.settings, access.SLOT)
     return RedirectResponse("/einstellungen#fernzugriff", status_code=303)
+
+
+@app.post("/lokale-domain", dependencies=[Depends(require_password)])
+async def lokale_domain_set(request: Request, name: str = Form(""), cf_token: str = Form(""), email: str = Form("")):
+    """Eigene Domain nur im Heimnetz einrichten und das Let's-Encrypt-Zertifikat holen."""
+    try:
+        name = localdomain.normalize_domain(name) if name.strip() else ""
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    cf_token = cf_token.strip()
+    if cf_token and (len(cf_token) > 512 or any(ch.isspace() for ch in cf_token)):
+        raise HTTPException(status_code=400, detail="Ungültiger API-Token")
+    email = email.strip()
+    if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(status_code=400, detail="Ungültige E-Mail-Adresse")
+    await run_in_threadpool(db.set_setting, localdomain.DOMAIN_KEY, name)
+    await run_in_threadpool(db.set_setting, localdomain.EMAIL_KEY, email)
+    if cf_token:
+        await run_in_threadpool(db.set_setting, localdomain.TOKEN_KEY, cf_token)
+    if not name:
+        await run_in_threadpool(db.set_setting, localdomain.TOKEN_KEY, "")
+    await run_in_threadpool(_apply_redirects, request)  # schreibt auch die DNS-Zeile für die Domain
+    if name:
+        localdomain.start_in_background(request.app.state.settings)
+    return RedirectResponse("/einstellungen#lokale-domain", status_code=303)
+
+
+@app.post("/lokale-domain/neu", dependencies=[Depends(require_password)])
+async def lokale_domain_neu(request: Request):
+    localdomain.start_in_background(request.app.state.settings)
+    return RedirectResponse("/einstellungen#lokale-domain", status_code=303)
+
+
+@app.post("/portal/config", dependencies=[Depends(require_password)])
+async def portal_config(aud: str = Form(""), cf_token: str = Form(""), cf_account: str = Form("")):
+    """Geräte-Portal einrichten: AUD der Portal-Access-App, optional Cloudflare-API (Zero Trust: Read) für die Geräte-Zuordnung."""
+    try:
+        aud_n = access.normalize_aud(aud) if aud.strip() else ""
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    account = cf_account.strip().lower()
+    if account and not re.match(r"^[0-9a-f]{32}$", account):
+        raise HTTPException(status_code=400, detail="Account-ID ungültig (32 Hex-Zeichen)")
+    cf_token = cf_token.strip()
+    if cf_token and (len(cf_token) > 512 or any(ch.isspace() for ch in cf_token)):
+        raise HTTPException(status_code=400, detail="Ungültiger API-Token")
+    if aud_n:
+        await run_in_threadpool(db.set_setting, access.PORTAL_AUD_KEY, aud_n)
+    if account:
+        await run_in_threadpool(db.set_setting, access.CF_ACCOUNT_KEY, account)
+    if cf_token:
+        await run_in_threadpool(db.set_setting, access.CF_TOKEN_KEY, cf_token)
+    return RedirectResponse("/einstellungen#portal", status_code=303)
+
+
+@app.post("/portal/pair", dependencies=[Depends(require_password)])
+async def portal_pair(code: str = Form(""), mac: str = Form("")):
+    """Kopplungscode im Dashboard einlösen und einem Gerät zuordnen."""
+    mac = mac.strip().lower()
+    if not warp.MAC_RE.match(mac):
+        raise HTTPException(status_code=400, detail="Ungültige MAC-Adresse")
+    if not await run_in_threadpool(db.pairing_redeem, code, mac):
+        return RedirectResponse(f"/einstellungen?fehler={quote('Code ungültig oder abgelaufen.')}#portal", status_code=303)
+    return RedirectResponse("/einstellungen#portal", status_code=303)
+
+
+@app.post("/portal/unlink", dependencies=[Depends(require_password)])
+async def portal_unlink(cf_device_id: str = Form(...)):
+    await run_in_threadpool(db.portal_unlink, cf_device_id)
+    return RedirectResponse("/einstellungen#portal", status_code=303)
 
 
 @app.post("/devices/warp", dependencies=[Depends(require_password)])

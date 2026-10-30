@@ -7,6 +7,7 @@ Dashboard trotzdem zu.
 """
 
 import base64
+import hashlib
 import json
 import re
 import threading
@@ -22,6 +23,10 @@ from . import db
 SLOT = "tunnel"  # Token liegt wie bei WARP in data/warp/tunnel/token (Helfer aus warp.py)
 TEAM_KEY = "tunnel_team"
 AUD_KEY = "tunnel_aud"
+PORTAL_AUD_KEY = "portal_aud"  # eigene Access-App fürs Geräte-Portal
+CF_TOKEN_KEY = "cf_api_token"  # optional: Cloudflare-API (Zero Trust: Read) für die Geräte-Zuordnung
+CF_ACCOUNT_KEY = "cf_account_id"
+IDENTITY_TTL = 300
 DEFAULT_TEAM = "l8tenever.cloudflareaccess.com"
 CERTS_TTL = 3600  # Schlüssel eine Stunde zwischenspeichern
 REFRESH_MIN = 60  # unbekannter Schlüssel: höchstens einmal pro Minute neu laden
@@ -88,6 +93,14 @@ def _key(team: str, kid: str, now: float):
 
 def verify(token: str, team: str, aud: str, now: float | None = None) -> str | None:
     """Gibt die angemeldete E-Mail zurück, wenn das Token gültig ist, sonst None."""
+    claims = verify_claims(token, team, aud, now)
+    if claims is None:
+        return None
+    return str(claims.get("email") or claims.get("common_name") or "angemeldet")
+
+
+def verify_claims(token: str, team: str, aud: str, now: float | None = None) -> dict | None:
+    """Wie verify(), gibt aber alle Angaben aus dem Token zurück (oder None)."""
     now = now if now is not None else time.time()
     try:
         head_b64, body_b64, sig_b64 = token.strip().split(".")
@@ -114,4 +127,80 @@ def verify(token: str, team: str, aud: str, now: float | None = None) -> str | N
             return None
     except (TypeError, ValueError):
         return None
-    return str(claims.get("email") or claims.get("common_name") or "angemeldet")
+    return claims
+
+
+def portal_config() -> tuple[str, str]:
+    """(Team-Domain, AUD der Portal-App); leer, solange nichts eingetragen ist."""
+    return db.get_setting(TEAM_KEY), db.get_setting(PORTAL_AUD_KEY)
+
+
+_identities: dict[str, tuple[float, dict]] = {}
+_identity_lock = threading.Lock()
+
+
+def _device_id_of(data: dict) -> str:
+    """Cloudflare-Geräte-ID aus Token-Angaben oder get-identity (je nach Anmeldeart an anderer Stelle)."""
+    for key in ("device_id", "deviceId"):
+        if isinstance(data.get(key), str) and data[key]:
+            return data[key]
+    sessions = data.get("devicePosture") or data.get("device_sessions")
+    if isinstance(sessions, dict):
+        for v in sessions.values():
+            if isinstance(v, dict) and v.get("device_id"):
+                return str(v["device_id"])
+    return ""
+
+
+def identity(token: str, team: str, claims: dict | None = None, now: float | None = None) -> dict:
+    """Wer ruft auf? {'email', 'device_id', 'name'} – Geräte-ID und Name nur, wenn per WARP-Client angemeldet.
+
+    Erst aus dem Token, sonst über /cdn-cgi/access/get-identity (fünf Minuten zwischengespeichert).
+    """
+    now = now if now is not None else time.time()
+    claims = claims or {}
+    out = {"email": str(claims.get("email") or ""), "device_id": _device_id_of(claims), "name": ""}
+    if out["device_id"]:
+        return out
+    key = hashlib.sha256(token.encode()).hexdigest()
+    with _identity_lock:
+        cached = _identities.get(key)
+        if cached and now - cached[0] < IDENTITY_TTL:
+            return cached[1]
+        if len(_identities) > 500:
+            _identities.clear()
+    try:
+        req = urllib.request.Request(
+            f"https://{team}/cdn-cgi/access/get-identity", headers={"Cookie": f"CF_Authorization={token}"}
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+        if isinstance(data, dict):
+            out["email"] = str(data.get("email") or out["email"])
+            out["device_id"] = _device_id_of(data)
+            out["name"] = str(data.get("device_name") or data.get("name") or "")
+    except (OSError, ValueError) as exc:
+        print(f"cloudy: Access-Identität nicht ladbar: {exc}", flush=True)
+        return out  # nicht zwischenspeichern: beim nächsten Aufruf nochmal versuchen
+    with _identity_lock:
+        _identities[key] = (now, out)
+    return out
+
+
+def cloudflare_device(device_id: str) -> dict | None:
+    """Gerätedaten (Name, MAC) über die Cloudflare-API; None ohne API-Token oder bei Fehlern."""
+    api, account = db.get_setting(CF_TOKEN_KEY), db.get_setting(CF_ACCOUNT_KEY)
+    if not (api and account and re.match(r"^[0-9a-zA-Z-]{8,64}$", device_id) and re.match(r"^[0-9a-f]{32}$", account)):
+        return None
+    try:
+        req = urllib.request.Request(
+            f"https://api.cloudflare.com/client/v4/accounts/{account}/devices/{device_id}",
+            headers={"Authorization": f"Bearer {api}"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+    except (OSError, ValueError) as exc:
+        print(f"cloudy: Cloudflare-Gerät nicht ladbar: {exc}", flush=True)
+        return None
+    result = data.get("result") if isinstance(data, dict) else None
+    return result if isinstance(result, dict) else None

@@ -300,7 +300,7 @@ def start_https_server(app, certfile: str, keyfile: str, port: int, sni_cert=Non
     )
     config.load()
     if sni_cert is not None:
-        contexts: dict[tuple[str, str], ssl.SSLContext] = {}
+        contexts: dict[tuple, ssl.SSLContext] = {}
 
         def choose(sslobj, server_name, _ctx) -> None:
             if not server_name:
@@ -309,11 +309,13 @@ def start_https_server(app, certfile: str, keyfile: str, port: int, sni_cert=Non
                 pair = sni_cert(server_name)
                 if pair is None:
                     return
-                if pair not in contexts:
+                # Erneuerte Zertifikate (gleicher Dateiname) werden über das Änderungsdatum erkannt.
+                cache_key = (*pair, os.path.getmtime(pair[0]))
+                if cache_key not in contexts:
                     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
                     ctx.load_cert_chain(*pair)
-                    contexts[pair] = ctx
-                sslobj.context = contexts[pair]
+                    contexts[cache_key] = ctx
+                sslobj.context = contexts[cache_key]
             except Exception as exc:  # noqa: BLE001 – dann eben das normale Zertifikat
                 print(f"cloudy: Zertifikat für {server_name} fehlgeschlagen: {exc}", file=sys.stderr, flush=True)
 

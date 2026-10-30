@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import access, blocklist, charts, db, fritz, stats, system_info, warp
+from . import access, blocklist, charts, db, fritz, localdomain, stats, system_info, warp
 from .settings import Settings
 
 BASE_DIR = Path(__file__).parent
@@ -355,10 +355,43 @@ def tunnel_ctx(request: Request) -> dict:
     }
 
 
+def portal_ctx(request: Request) -> dict:
+    """Geräte-Portal (eigene Seite für unterwegs) für die Einstellungsseite."""
+    s: Settings = request.app.state.settings
+    gateway = s.tunnel_ip.rsplit(".", 1)[0] + ".1"
+    team, aud = access.portal_config()
+    return {
+        "enabled": bool(s.portal_port),
+        "target": f"http://{gateway}:{s.portal_port}",
+        "aud": aud,
+        "secured": bool(team and aud),
+        "has_api": bool(db.get_setting(access.CF_TOKEN_KEY) and db.get_setting(access.CF_ACCOUNT_KEY)),
+        "account": db.get_setting(access.CF_ACCOUNT_KEY),
+        "links": db.portal_links(),
+        "pairing": db.pairing_open(),
+        "devices": [d for d in db.devices() if d.get("mac")],
+    }
+
+
+def localdomain_ctx(request: Request) -> dict:
+    """Eigene Domain nur im Heimnetz (Let's Encrypt per DNS-Challenge) für die Einstellungsseite."""
+    s: Settings = request.app.state.settings
+    info = localdomain.cert_info(s)
+    return {
+        "domain": localdomain.domain(),
+        "email": db.get_setting(localdomain.EMAIL_KEY),
+        "has_token": bool(db.get_setting(localdomain.TOKEN_KEY)),
+        "cert": info,
+        "status": localdomain.status(),
+    }
+
+
 @router.get("/einstellungen", response_class=HTMLResponse, dependencies=[Depends(require_password)])
 async def einstellungen(request: Request):
     tunnel = await run_in_threadpool(tunnel_ctx, request)
-    return await page(request, "seiten/einstellungen.html", "Einstellungen", "/einstellungen", [], tunnel=tunnel)
+    portal = await run_in_threadpool(portal_ctx, request)
+    lokal = await run_in_threadpool(localdomain_ctx, request)
+    return await page(request, "seiten/einstellungen.html", "Einstellungen", "/einstellungen", [], tunnel=tunnel, portal=portal, lokal=lokal)
 
 
 @router.get("/teil/{name}", response_class=HTMLResponse, dependencies=[Depends(require_password)])

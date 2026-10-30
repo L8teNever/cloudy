@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 
-from . import db, ipv6
+from . import db, ipv6, localdomain
 from .settings import Settings
 
 QUERY_RE = re.compile(r"query\[(?P<qtype>[A-Za-z0-9]+)\] (?P<domain>\S+) from (?P<ip>\S+)")
@@ -287,6 +287,7 @@ def sync_redirects_hosts(s: Settings) -> None:
 
     lines = ["# cloudy: Domain-Weiterleitungen (automatisch erzeugt, nicht von Hand ändern)"]
     lines += dnsmasq_lines([r["source"] for r in db.redirects()], s.pi_ip)
+    lines += localdomain.dnsmasq_lines(localdomain.domain(), s.pi_ip)
     os.makedirs(s.data_dir, exist_ok=True)
     tmp = s.redirects_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
