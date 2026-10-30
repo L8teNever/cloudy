@@ -326,3 +326,18 @@ def test_mein_has_no_standard_option(client):
     assert 'value="direct" checked' in page  # ohne eigene Wahl und ohne Standard-Profil: Normal ist markiert
     db.set_setting(warp.DEFAULT_KEY, "warp1")
     assert 'value="warp1" checked' in client.get("/mein").text
+
+
+def test_site_routes_many_at_once(client):
+    r = client.post("/seiten-routen/add", data={"domain": "netflix.com, disneyplus.com\nmax.com;netflix.com", "slot": "vpn1"},
+                    follow_redirects=False)
+    assert r.headers["location"] == "/vpn#seitenrouten"
+    assert db.site_routes() == {"netflix.com": "vpn1", "disneyplus.com": "vpn1", "max.com": "vpn1"}
+    page = client.get("/vpn").text
+    assert "3 Seiten" in page and "disneyplus.com" in page and 'data-refresh-box' in page
+    r = client.post("/seiten-routen/add", data={"domain": "bank.de, kaputt!!", "slot": "direct"}, follow_redirects=False)
+    assert "fehler=" in r.headers["location"] and db.site_routes()["bank.de"] == "direct"
+    gid = db.create_group("TV", "#3b82f6", "", False)
+    client.post(f"/gruppen/{gid}/seiten/add", data={"domain": "a.com, b.com", "slot": "warp1"})
+    assert db.group_site_routes(gid) == {"a.com": "warp1", "b.com": "warp1"}
+    assert "2 Seiten" in client.get(f"/gruppen/{gid}").text

@@ -169,5 +169,17 @@ a.chip:hover { border-color: var(--brand-border); background: var(--surface-high
 .steps { margin: .35rem 0 0; padding-left: 1.2rem; }
 .steps li { margin: .2rem 0; }
 
+/* Seiten-Regeln: mehrere auf einmal eintragen, nach Profil gruppiert */
+.site-add { display: grid; gap: .5rem; margin: .75rem 0 1rem; max-width: 46rem; }
+.site-add textarea { width: 100%; resize: vertical; min-height: 2.6rem; font-family: var(--font-mono); font-size: .84rem; }
+.site-add-row { display: flex; gap: .5rem; flex-wrap: wrap; }
+.site-groups { display: grid; gap: .75rem; }
+.site-group { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); padding: .7rem .8rem; }
+.site-group-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .5rem; }
+.site-chip { padding: .2rem .25rem .2rem .65rem; gap: .2rem; background: var(--surface-high); }
+.site-chip .mono { font-size: .8rem; color: var(--ink); word-break: normal; }
+.chip-x { background: transparent; color: var(--muted); border: 0; padding: .05rem .4rem; font-size: 1rem; line-height: 1; font-weight: 600; border-radius: 6px; }
+.chip-x:hover { background: var(--bad-soft); color: var(--bad); filter: none; }
+
 @media (max-width: 640px) { .hb { grid-template-columns: minmax(70px, 38%) 1fr auto; } main { padding: .75rem .6rem 3rem; } .card { padding: 1rem; border-radius: var(--radius-lg); } }
 </style>

@@ -1,0 +1,47 @@
+{# Eingabe und Liste für Seiten-Regeln (global und pro Gruppe). #}
+
+{% macro add_form(action, profiles, button="Speichern", next="") %}
+<form method="post" action="{{ action }}" class="site-add" data-ok="Gespeichert">
+  {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+  <textarea name="domain" rows="2" required autocomplete="off" spellcheck="false"
+            placeholder="Eine oder mehrere Seiten, mit Komma getrennt – z. B. netflix.com, disneyplus.com, max.com"></textarea>
+  <div class="site-add-row">
+    <select name="slot" aria-label="Profil">
+      <option value="direct">Normal – direkt über die Fritzbox</option>
+      {% for w in profiles %}<option value="{{ w.slot }}">{{ w.label }}{{ '' if w.has_token else ' (nicht eingerichtet)' }}</option>{% endfor %}
+    </select>
+    <button>{{ button }}</button>
+  </div>
+</form>
+{% endmacro %}
+
+{% macro route_list(routes, profiles, remove_action, next="", empty="Noch keine Regeln.") %}
+{% if routes %}
+{% set names = {'direct': 'Normal (Fritzbox)'} %}
+{% for w in profiles %}{% set _ = names.update({w.slot: w.label}) %}{% endfor %}
+<div class="site-groups">
+  {% for slot, items in routes.items() | groupby(1) %}
+  <div class="site-group">
+    <div class="site-group-head">
+      <span class="pill {{ '' if slot == 'direct' else 'on' }}" style="margin:0">{{ names.get(slot, slot) }}</span>
+      <span class="muted small">{{ items | length }} Seite{{ 'n' if items | length != 1 }}</span>
+    </div>
+    <div class="chips">
+      {% for domain, _ in items | sort %}
+      <span class="chip site-chip">
+        <span class="mono">{{ domain }}</span>
+        <form method="post" action="{{ remove_action }}" class="inline" data-ok="Entfernt">
+          <input type="hidden" name="domain" value="{{ domain }}">
+          {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+          <button class="chip-x" title="{{ domain }} entfernen" aria-label="{{ domain }} entfernen">×</button>
+        </form>
+      </span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="muted small">{{ empty }}</p>
+{% endif %}
+{% endmacro %}

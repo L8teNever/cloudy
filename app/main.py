@@ -894,23 +894,49 @@ def _site_route_back(next_url: str, fallback: str) -> str:
     return fallback
 
 
+def _parse_domains(text: str) -> tuple[list[str], list[str]]:
+    """Mehrere Seiten auf einmal: mit Komma, Semikolon, Leerzeichen oder Zeilenumbruch getrennt.
+    Rückgabe: (gültige, normalisiert und ohne Doppelte), (ungültige Eingaben)."""
+    from .redirects import normalize_source
+
+    ok: list[str] = []
+    bad: list[str] = []
+    for raw in re.split(r"[\s,;]+", text or ""):
+        if not raw:
+            continue
+        try:
+            domain = normalize_source(raw)
+        except ValueError:
+            bad.append(raw)
+            continue
+        if domain not in ok:
+            ok.append(domain)
+    return ok, bad
+
+
+def _domains_error(bad: list[str], saved: int) -> str:
+    shown = ", ".join(bad[:5]) + (" …" if len(bad) > 5 else "")
+    return f"Ungültig: {shown}" + (f" ({saved} gespeichert)" if saved else "")
+
+
 @app.post("/seiten-routen/add", dependencies=[Depends(require_password)])
 async def site_route_add(
     request: Request, domain: str = Form(...), slot: str = Form(...), next: str = Form("")
 ):
-    """Eine Seite (inkl. Subdomains) für alle Geräte immer durch ein bestimmtes WARP-/VPN-Profil schicken."""
-    from .redirects import normalize_source
-
+    """Seiten (inkl. Subdomains) für alle Geräte immer durch ein bestimmtes WARP-/VPN-Profil schicken.
+    domain darf mehrere Seiten enthalten (mit Komma getrennt)."""
     back = _site_route_back(next, "/vpn#seitenrouten")
     if slot != warp.DIRECT:
         _check_slot(request, slot)
-    try:
-        domain = normalize_source(domain)
-    except ValueError as exc:
+    domains, bad = _parse_domains(domain)
+    for d in domains:
+        await run_in_threadpool(db.set_site_route, d, slot)
+    if domains:
+        await run_in_threadpool(_apply_redirects, request)
+    if bad or not domains:
         sep = "&" if "?" in back else "?"
-        return RedirectResponse(f"{back.split('#')[0]}{sep}fehler={quote(str(exc))}#seitenrouten", status_code=303)
-    await run_in_threadpool(db.set_site_route, domain, slot)
-    await run_in_threadpool(_apply_redirects, request)
+        msg = _domains_error(bad, len(domains)) if bad else "Keine Seite angegeben"
+        return RedirectResponse(f"{back.split('#')[0]}{sep}fehler={quote(msg)}#seitenrouten", status_code=303)
     return RedirectResponse(back, status_code=303)
 
 
@@ -926,19 +952,19 @@ async def site_route_remove(request: Request, domain: str = Form(...), next: str
 async def group_site_route_add(
     request: Request, group_id: int, domain: str = Form(...), slot: str = Form(...)
 ):
-    """Seiten-Regel nur für Mitglieder dieser Gruppe (anderes Profil oder immer normal)."""
-    from .redirects import normalize_source
-
+    """Seiten-Regeln nur für Mitglieder dieser Gruppe (anderes Profil oder immer normal), auch mehrere auf einmal."""
     if not await run_in_threadpool(db.group, group_id):
         raise HTTPException(status_code=404, detail="Gruppe nicht gefunden")
     if slot != warp.DIRECT:
         _check_slot(request, slot)
-    try:
-        domain = normalize_source(domain)
-    except ValueError as exc:
-        return RedirectResponse(f"/gruppen/{group_id}?fehler={quote(str(exc))}#gruppenseiten", status_code=303)
-    await run_in_threadpool(db.set_group_site_route, group_id, domain, slot)
-    await run_in_threadpool(_apply_redirects, request)
+    domains, bad = _parse_domains(domain)
+    for d in domains:
+        await run_in_threadpool(db.set_group_site_route, group_id, d, slot)
+    if domains:
+        await run_in_threadpool(_apply_redirects, request)
+    if bad or not domains:
+        msg = _domains_error(bad, len(domains)) if bad else "Keine Seite angegeben"
+        return RedirectResponse(f"/gruppen/{group_id}?fehler={quote(msg)}#gruppenseiten", status_code=303)
     return RedirectResponse(f"/gruppen/{group_id}#gruppenseiten", status_code=303)
 
 

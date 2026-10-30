@@ -79,6 +79,22 @@
       t.textContent = msg; t.className = bad ? "bad" : ""; t.style.display = "block";
       clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", bad ? 6000 : 2500);
     }
+    // Bereiche mit data-refresh-box (und id) nach dem Speichern frisch von der Seite holen – ohne Neuladen.
+    // Bei einem Fehler bleibt die Eingabe (Textfeld) erhalten.
+    async function refreshBox(form) {
+      const box = form.closest("[data-refresh-box][id]");
+      if (!box) return;
+      const typed = [...form.querySelectorAll("textarea, input:not([type=hidden])")].map(i => [i.name, i.value]);
+      try {
+        const res = await fetch(location.pathname + location.search, { headers: { "X-Cloudy": "1" } });
+        const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+        const fresh = doc.getElementById(box.id);
+        if (!fresh) return;
+        box.replaceWith(fresh);
+        const again = fresh.querySelector(`form[action="${form.getAttribute("action")}"]`);
+        if (again) typed.forEach(([name, value]) => { const i = name && again.querySelector(`[name="${name}"]`); if (i && value) i.value = value; });
+      } catch (_) {}
+    }
     document.addEventListener("submit", async e => {
       const form = e.target;
       if (form.method.toLowerCase() !== "post" || form.hasAttribute("data-noajax")) return;
@@ -101,6 +117,7 @@
         }
       } catch (_) { toast("Keine Verbindung zum Pi", true); }
       buttons.forEach(b => b.disabled = false);
+      await refreshBox(form);
       window.cloudyRefresh();
     });
     document.addEventListener("change", e => {

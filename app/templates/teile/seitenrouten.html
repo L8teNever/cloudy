@@ -1,4 +1,5 @@
-<div class="card" id="seitenrouten">
+{% import "teile/seiten_makros.html" as sm %}
+<div class="card" id="seitenrouten" data-refresh-box>
   <h2>Seiten immer über ein Profil – oder immer normal</h2>
   <p class="muted small">
     Ruft ein Gerät im Heimnetz eine dieser Seiten (inkl. aller Subdomains) auf, läuft <b>nur diese Seite</b> durch das gewählte
@@ -10,53 +11,6 @@
   {% if not site_gateway %}<div class="info small">Gateway-Modus ist aus – die Regeln greifen erst, wenn er an ist (<code>cloudy gateway an</code>).</div>{% endif %}
   {% if params.fehler %}<div class="info small">{{ params.fehler }}</div>{% endif %}
 
-  <form method="post" action="/seiten-routen/add" class="inline" style="margin:.75rem 0 1rem;gap:.5rem">
-    <input name="domain" placeholder="Seite (z. B. netflix.com)" size="26" required>
-    <select name="slot" aria-label="Profil">
-      <option value="direct">Normal – direkt über die Fritzbox</option>
-      {% for w in site_profiles %}<option value="{{ w.slot }}">{{ w.label }}{{ '' if w.has_token else ' (nicht eingerichtet)' }}</option>{% endfor %}
-    </select>
-    <button>Regel speichern</button>
-  </form>
-
-  {% if site_routes %}
-  <div class="table-wrap"><table>
-    <thead><tr><th>Seite (inkl. Subdomains)</th><th>Läuft über</th><th>Aktion</th></tr></thead>
-    <tbody>
-    {% for domain, slot in site_routes.items() %}
-      <tr>
-        <td class="mono" style="font-weight:600;color:var(--brand)">{{ domain }}</td>
-        <td>{% if slot == 'direct' %}Normal (Fritzbox){% else %}{% for w in site_profiles if w.slot == slot %}{{ w.label }}{% else %}{{ slot }}{% endfor %}{% endif %}</td>
-        <td>
-          <form method="post" action="/seiten-routen/remove" class="inline">
-            <input type="hidden" name="domain" value="{{ domain }}">
-            <button class="secondary" style="padding:.2rem .45rem;font-size:.78rem">Löschen</button>
-          </form>
-        </td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table></div>
-  {% else %}
-  <p class="muted small">Noch keine Regeln.</p>
-  {% endif %}
-</div>
-
-<div class="card" id="mein-auswahl">
-  <h2>Was andere auf „Mein Gerät“ auswählen dürfen</h2>
-  <p class="muted small">
-    Jeder im Heimnetz kann unter <code>{{ settings.local_name or 'cloudy.lan' }}/mein</code> (bzw. deiner „Mein Gerät“-Domain) das
-    Internet für sein eigenes Gerät umstellen. Hier legst du fest, welche Möglichkeiten er dort sieht. Eine bereits gesetzte Auswahl
-    bleibt für das Gerät sichtbar. Als Admin kannst du weiterhin alles im Dashboard einstellen.
-  </p>
-  <form method="post" action="/mein-auswahl">
-    <div class="choices" style="display:grid;gap:.4rem;margin:.75rem 0">
-      <label><input type="checkbox" name="choice" value="standard" {{ 'checked' if mein_allowed is none or 'standard' in mein_allowed }}> Standard (wie bei allen anderen eingestellt)</label>
-      <label><input type="checkbox" name="choice" value="direct" {{ 'checked' if mein_allowed is none or 'direct' in mein_allowed }}> Normal – direkt über die Fritzbox</label>
-      {% for w in site_profiles %}
-      <label><input type="checkbox" name="choice" value="{{ w.slot }}" {{ 'checked' if mein_allowed is none or w.slot in mein_allowed }}> {{ w.label }}{{ '' if w.has_token else ' (nicht eingerichtet)' }}</label>
-      {% endfor %}
-    </div>
-    <button>Speichern</button>
-  </form>
+  {{ sm.add_form("/seiten-routen/add", site_profiles, "Regeln speichern") }}
+  {{ sm.route_list(site_routes, site_profiles, "/seiten-routen/remove") }}
 </div>
