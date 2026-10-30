@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;margin-bottom:1rem">
+  <div>
+    <h1 style="margin:0 0 .25rem">FRITZ!Box</h1>
+    <div class="muted small">Auslesen von Status, WLAN-SSIDs, Mesh/LAN-Ports und Steuerung (Gastzugang, Reconnect, Neustart)</div>
+  </div>
+  <div>
+    <a href="#fritz-setup" class="pill" style="text-decoration:none;font-weight:600">⚙️ Zugangsdaten anpassen</a>
+  </div>
+</div>
+
+<div data-live="/teil/fritzbox" data-every="15">
+  {% include "teile/fritzbox.html" %}
+</div>
+
+<!-- Konfiguration der FRITZ!Boxen -->
+<div class="card" id="fritz-setup">
+  <h2>⚙️ FRITZ!Box Zugangsdaten konfigurieren</h2>
+  <p class="muted small">
+    Cloudy liest Status und Geräte über das TR-064-Protokoll der FRITZ!Box aus.
+    In der FRITZ!Box muss unter <em>Heimnetz → Netzwerk → Netzwerkeinstellungen</em> der Haken bei
+    <strong>„Zugriff für Anwendungen zulassen“</strong> aktiv sein.
+  </p>
+
+  <form method="post" action="/fritzbox/config">
+    <div style="display:grid;gap:1.5rem;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));margin-bottom:1.25rem">
+      <!-- Box 1 -->
+      {% set r1 = routers[0] if routers|length > 0 else {'name': 'FRITZ!Box 1', 'ip': settings.router_ip or '192.168.178.1', 'user': '', 'password': ''} %}
+      <div style="background:var(--page);border:1px solid var(--line);border-radius:10px;padding:1rem">
+        <h3 style="margin:0 0 .75rem;font-size:1rem;color:var(--brand)">FRITZ!Box 1 (Hauptbox)</h3>
+        <div style="display:flex;flex-direction:column;gap:.6rem">
+          <label class="small">
+            <strong>Bezeichnung:</strong><br>
+            <input type="text" name="r1_name" value="{{ r1.name or 'FRITZ!Box 1' }}" style="width:100%" required>
+          </label>
+          <label class="small">
+            <strong>IP-Adresse:</strong><br>
+            <input type="text" name="r1_ip" value="{{ r1.ip or '192.168.178.1' }}" style="width:100%" required>
+          </label>
+          <label class="small">
+            <strong>Benutzername (optional):</strong><br>
+            <input type="text" name="r1_user" value="{{ r1.user or '' }}" placeholder="z. B. admin oder fritz1234" style="width:100%">
+          </label>
+          <label class="small">
+            <strong>Kennwort:</strong><br>
+            <input type="password" name="r1_password" value="{{ r1.password or '' }}" placeholder="FRITZ!Box Kennwort" style="width:100%">
+          </label>
+        </div>
+      </div>
+
+      <!-- Box 2 -->
+      {% set r2 = routers[1] if routers|length > 1 else {'name': 'FRITZ!Box 2', 'ip': '', 'user': '', 'password': ''} %}
+      <div style="background:var(--page);border:1px solid var(--line);border-radius:10px;padding:1rem">
+        <h3 style="margin:0 0 .75rem;font-size:1rem;color:var(--brand)">FRITZ!Box 2 (Zweite Box / Repeater, optional)</h3>
+        <div style="display:flex;flex-direction:column;gap:.6rem">
+          <label class="small">
+            <strong>Bezeichnung:</strong><br>
+            <input type="text" name="r2_name" value="{{ r2.name or 'FRITZ!Box 2' }}" style="width:100%">
+          </label>
+          <label class="small">
+            <strong>IP-Adresse (leer lassen wenn keine 2. Box vorhanden):</strong><br>
+            <input type="text" name="r2_ip" value="{{ r2.ip or '' }}" placeholder="z. B. 192.168.178.2" style="width:100%">
+          </label>
+          <label class="small">
+            <strong>Benutzername (optional):</strong><br>
+            <input type="text" name="r2_user" value="{{ r2.user or '' }}" placeholder="z. B. admin" style="width:100%">
+          </label>
+          <label class="small">
+            <strong>Kennwort:</strong><br>
+            <input type="password" name="r2_password" value="{{ r2.password or '' }}" placeholder="Kennwort der zweiten Box" style="width:100%">
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <button type="submit" style="font-weight:600">Speichern & Verbindung aktualisieren</button>
+  </form>
+</div>
+{% endblock %}

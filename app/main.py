@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import access, blocklist, certs, db, views, warp
+from . import access, blocklist, certs, db, fritz, views, warp
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -552,3 +552,70 @@ async def redirects_remove(request: Request, source: str = Form(...)):
     await run_in_threadpool(db.remove_redirect, source)
     await run_in_threadpool(_apply_redirects, request)
     return RedirectResponse("/#redirects", status_code=303)
+
+
+# --------------------------------------------------------------------------- FRITZ!Box Aktionen
+
+@app.post("/fritzbox/config", dependencies=[Depends(require_password)])
+async def fritzbox_config(
+    request: Request,
+    r1_name: str = Form("FRITZ!Box 1"),
+    r1_ip: str = Form("192.168.178.1"),
+    r1_user: str = Form(""),
+    r1_password: str = Form(""),
+    r2_name: str = Form("FRITZ!Box 2"),
+    r2_ip: str = Form(""),
+    r2_user: str = Form(""),
+    r2_password: str = Form(""),
+):
+    routers = [
+        {
+            "name": r1_name.strip() or "FRITZ!Box 1",
+            "ip": r1_ip.strip() or "192.168.178.1",
+            "user": r1_user.strip(),
+            "password": r1_password.strip(),
+        }
+    ]
+    if r2_ip.strip():
+        routers.append(
+            {
+                "name": r2_name.strip() or "FRITZ!Box 2",
+                "ip": r2_ip.strip(),
+                "user": r2_user.strip(),
+                "password": r2_password.strip(),
+            }
+        )
+    await run_in_threadpool(fritz.save_routers, routers)
+    return RedirectResponse(f"/fritzbox?erfolg={quote('FRITZ!Box-Zugangsdaten erfolgreich gespeichert.')}", status_code=303)
+
+
+@app.post("/fritzbox/guest-wlan", dependencies=[Depends(require_password)])
+async def fritzbox_guest_wlan(request: Request, router_index: int = Form(0), enable: str = Form("1")):
+    settings = request.app.state.settings
+    ok, msg = await run_in_threadpool(fritz.toggle_guest_wlan, settings, router_index, enable == "1")
+    param = f"erfolg={quote(msg)}" if ok else f"fehler={quote(msg)}"
+    return RedirectResponse(f"/fritzbox?{param}", status_code=303)
+
+
+@app.post("/fritzbox/wlan", dependencies=[Depends(require_password)])
+async def fritzbox_wlan(request: Request, router_index: int = Form(0), service_id: int = Form(1), enable: str = Form("1")):
+    settings = request.app.state.settings
+    ok, msg = await run_in_threadpool(fritz.toggle_wlan, settings, router_index, service_id, enable == "1")
+    param = f"erfolg={quote(msg)}" if ok else f"fehler={quote(msg)}"
+    return RedirectResponse(f"/fritzbox?{param}", status_code=303)
+
+
+@app.post("/fritzbox/reconnect", dependencies=[Depends(require_password)])
+async def fritzbox_reconnect(request: Request, router_index: int = Form(0)):
+    settings = request.app.state.settings
+    ok, msg = await run_in_threadpool(fritz.reconnect_internet, settings, router_index)
+    param = f"erfolg={quote(msg)}" if ok else f"fehler={quote(msg)}"
+    return RedirectResponse(f"/fritzbox?{param}", status_code=303)
+
+
+@app.post("/fritzbox/reboot", dependencies=[Depends(require_password)])
+async def fritzbox_reboot(request: Request, router_index: int = Form(0)):
+    settings = request.app.state.settings
+    ok, msg = await run_in_threadpool(fritz.reboot_fritzbox, settings, router_index)
+    param = f"erfolg={quote(msg)}" if ok else f"fehler={quote(msg)}"
+    return RedirectResponse(f"/fritzbox?{param}", status_code=303)

@@ -48,6 +48,13 @@
           </td>
           <td>
             <a href="/geraete/{{ d.ip | urlencode }}" data-nav style="font-weight:600">{{ d.hostname or d.ip }}</a>
+            {% if d.connection %}
+            <div style="margin-top:.2rem">
+              <span class="pill {{ 'on' if d.connection.type == 'WLAN' else '' }}" style="font-size:.74rem;padding:.05rem .45rem" title="{{ d.connection.full_details }}">
+                {{ '📶 ' if d.connection.type == 'WLAN' else '🔌 ' }}{{ d.connection.summary }}
+              </span>
+            </div>
+            {% endif %}
           </td>
           <td>
             {% if d.current_site and d.current_site.domain %}

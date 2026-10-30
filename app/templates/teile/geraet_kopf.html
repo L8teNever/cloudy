@@ -19,6 +19,13 @@
       <div class="muted small mono">
         IP: {{ device.ip }}{% if device.mac %} · MAC: {{ device.mac }}{% endif %}
       </div>
+      {% if device.connection %}
+      <div style="margin-top:.4rem">
+        <span class="pill {{ 'on' if device.connection.type == 'WLAN' else '' }}" style="font-size:.82rem" title="{{ device.connection.full_details }}">
+          {{ '📶 ' if device.connection.type == 'WLAN' else '🔌 ' }}<strong>{{ device.connection.summary }}</strong>{% if device.connection.full_details %} · {{ device.connection.full_details }}{% endif %}
+        </span>
+      </div>
+      {% endif %}
     </div>
   </div>
 

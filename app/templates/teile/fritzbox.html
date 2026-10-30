@@ -1,0 +1,175 @@
+{% if fehler %}
+<div class="alert">{{ fehler }}</div>
+{% endif %}
+{% if erfolg %}
+<div class="info">{{ erfolg }}</div>
+{% endif %}
+
+{% for box in fritz.boxes %}
+{% set router_idx = loop.index0 %}
+<div class="card" style="margin-bottom:1.5rem">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:1rem;margin-bottom:1rem">
+    <div>
+      <h2 style="margin:0 0 .25rem;display:flex;align-items:center;gap:.5rem">
+        {{ box.name }}
+        {% if box.model %}
+        <span class="muted small" style="font-weight:normal">({{ box.model }})</span>
+        {% endif %}
+        {% if box.online %}
+        <span class="pill on">● Online</span>
+        {% elif box.has_password %}
+        <span class="pill bad">● Nicht erreichbar</span>
+        {% else %}
+        <span class="pill">Nicht eingerichtet</span>
+        {% endif %}
+      </h2>
+      <div class="muted small mono">IP: {{ box.ip }}{% if box.user %} · Benutzer: {{ box.user }}{% endif %}</div>
+    </div>
+  </div>
+
+  {% if box.error %}
+  <div class="alert" style="margin-bottom:1rem">
+    <strong>Hinweis:</strong> {{ box.error }}
+    {% if not box.has_password %}
+    <br><a href="#fritz-setup" style="text-decoration:underline">Hier unten Kennwort eintragen</a>, um die Box auszulesen.
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if box.online %}
+  <div class="grid" style="grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:1rem;margin-bottom:1rem">
+    <!-- Internet & Status -->
+    <div style="background:var(--page);border:1px solid var(--line);border-radius:10px;padding:.85rem">
+      <h3 style="margin:0 0 .5rem;font-size:.95rem;color:var(--brand)">🌐 Internet & Verbindung</h3>
+      <table style="font-size:.85rem">
+        <tr><td><strong>Status</strong></td><td><span class="pill {{ 'on' if box.is_connected else 'bad' }}">{{ box.connection_status }}</span></td></tr>
+        <tr><td><strong>Externe IPv4</strong></td><td class="mono">{{ box.external_ip or '–' }}</td></tr>
+        {% if box.external_ipv6 %}
+        <tr><td><strong>Externe IPv6</strong></td><td class="mono" style="font-size:.78rem">{{ box.external_ipv6 }}</td></tr>
+        {% endif %}
+        {% if box.max_down or box.max_up %}
+        <tr><td><strong>Geschwindigkeit</strong></td><td>↓ {{ box.max_down or '–' }} / ↑ {{ box.max_up or '–' }}</td></tr>
+        {% endif %}
+        <tr><td><strong>Laufzeit</strong></td><td>{{ box.uptime or '–' }}</td></tr>
+        <tr><td><strong>FRITZ!OS</strong></td><td>{{ box.software_version or '–' }}{% if box.update_available %} <span class="pill warn">Update verfügbar</span>{% endif %}</td></tr>
+      </table>
+      <div style="margin-top:.75rem">
+        <form method="post" action="/fritzbox/reconnect" class="inline" style="margin-right:.5rem">
+          <input type="hidden" name="router_index" value="{{ router_idx }}">
+          <button class="secondary small" title="Fordert eine neue öffentliche IP-Adresse an">🔄 Neue IP beziehen</button>
+        </form>
+        <form method="post" action="/fritzbox/reboot" class="inline" onsubmit="return confirm('Möchtest du {{ box.name }} wirklich neu starten? Dies dauert etwa 2 Minuten.');">
+          <input type="hidden" name="router_index" value="{{ router_idx }}">
+          <button class="danger small" style="opacity:.85">⚠️ Neu starten</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- WLAN & Gastnetz -->
+    <div style="background:var(--page);border:1px solid var(--line);border-radius:10px;padding:.85rem">
+      <h3 style="margin:0 0 .5rem;font-size:.95rem;color:var(--brand)">📶 WLAN & Gastnetz</h3>
+      <table style="font-size:.85rem">
+        {% if box.wlan_24 %}
+        <tr>
+          <td><strong>WLAN 2,4 GHz</strong></td>
+          <td>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem">
+              <span>{{ box.wlan_24.ssid or 'WLAN' }} <span class="muted small">(Kanal {{ box.wlan_24.channel or 'auto' }})</span></span>
+              <form method="post" action="/fritzbox/wlan" class="inline">
+                <input type="hidden" name="router_index" value="{{ router_idx }}">
+                <input type="hidden" name="service_id" value="1">
+                <input type="hidden" name="enable" value="{{ '0' if box.wlan_24.enabled else '1' }}">
+                <button class="{{ 'danger' if box.wlan_24.enabled else 'secondary' }} small" style="padding:.2rem .45rem">
+                  {{ 'Ausschalten' if box.wlan_24.enabled else 'Einschalten' }}
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endif %}
+        {% if box.wlan_50 %}
+        <tr>
+          <td><strong>WLAN 5 GHz</strong></td>
+          <td>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem">
+              <span>{{ box.wlan_50.ssid or 'WLAN' }} <span class="muted small">(Kanal {{ box.wlan_50.channel or 'auto' }})</span></span>
+              <form method="post" action="/fritzbox/wlan" class="inline">
+                <input type="hidden" name="router_index" value="{{ router_idx }}">
+                <input type="hidden" name="service_id" value="2">
+                <input type="hidden" name="enable" value="{{ '0' if box.wlan_50.enabled else '1' }}">
+                <button class="{{ 'danger' if box.wlan_50.enabled else 'secondary' }} small" style="padding:.2rem .45rem">
+                  {{ 'Ausschalten' if box.wlan_50.enabled else 'Einschalten' }}
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endif %}
+        {% if box.guest_wlan %}
+        <tr>
+          <td><strong>Gastzugang</strong></td>
+          <td>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem">
+              <div>
+                <span class="pill {{ 'on' if box.guest_wlan.enabled else 'muted' }}">{{ 'Aktiv' if box.guest_wlan.enabled else 'Inaktiv' }}</span>
+                <span class="small">{{ box.guest_wlan.ssid }}</span>
+              </div>
+              <form method="post" action="/fritzbox/guest-wlan" class="inline">
+                <input type="hidden" name="router_index" value="{{ router_idx }}">
+                <input type="hidden" name="enable" value="{{ '0' if box.guest_wlan.enabled else '1' }}">
+                <button class="{{ 'danger' if box.guest_wlan.enabled else '' }} small" style="padding:.2rem .45rem">
+                  {{ 'Ausschalten' if box.guest_wlan.enabled else 'Einschalten' }}
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endif %}
+      </table>
+    </div>
+  </div>
+
+  <!-- Verbundene Geräte an dieser Box -->
+  <h3 style="margin:1rem 0 .5rem;font-size:.95rem">Verbundene Geräte an {{ box.name }}</h3>
+  {% set dev_conns = box.device_connections %}
+  {% if dev_conns %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Typ</th>
+          <th>Verbindungsdetails</th>
+          <th>SSID / Port</th>
+          <th>Band</th>
+          <th>Geschwindigkeit</th>
+          <th>Signal</th>
+          <th>MAC</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for mac, c in dev_conns.items() %}
+        <tr>
+          <td>
+            {% if c.type == 'WLAN' %}
+            <span class="pill on">📶 WLAN</span>
+            {% else %}
+            <span class="pill">🔌 LAN</span>
+            {% endif %}
+          </td>
+          <td><strong>{{ c.full_details }}</strong></td>
+          <td>{{ c.ssid or c.port or '–' }}</td>
+          <td>{{ c.band or '–' }}</td>
+          <td>{{ c.speed or '–' }}</td>
+          <td>{{ c.signal or '–' }}</td>
+          <td class="mono small">{{ mac }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted small" style="margin:.5rem 0">Momentan keine Geräte-Verbindungen von dieser Box gemeldet.</p>
+  {% endif %}
+  {% endif %}
+</div>
+{% endfor %}

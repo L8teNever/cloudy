@@ -1,4 +1,4 @@
-"""Seiten (Übersicht, Geräte, Statistik, Schutz, VPN, Einstellungen) und ihre Live-Stücke unter /teil/<name>.
+"""Seiten (Übersicht, Geräte, Statistik, Schutz, VPN, FRITZ!Box, Einstellungen) und ihre Live-Stücke unter /teil/<name>.
 
 Jede Seite rendert beim ersten Aufruf alles. Danach holt das Skript in base.html nur die Stücke mit data-live
 regelmäßig neu – die Seite wird nie komplett neu geladen.
@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import access, blocklist, charts, db, stats, warp
+from . import access, blocklist, charts, db, fritz, stats, warp
 from .settings import Settings
 
 BASE_DIR = Path(__file__).parent
@@ -162,9 +162,20 @@ def _warp_ctx(request: Request) -> dict:
 
 
 def ctx_geraete(request: Request) -> dict:
+    s: Settings = request.app.state.settings
+    devices = db.devices()
+    try:
+        fritz_data = fritz.get_all_fritz_data(s)
+        fritz_conns = fritz_data.get("device_connections", {})
+        for d in devices:
+            mac = (d.get("mac") or "").strip().lower()
+            if mac in fritz_conns:
+                d["connection"] = fritz_conns[mac]
+    except Exception:
+        pass
     return {
-        "settings": request.app.state.settings,
-        "devices": db.devices(),
+        "settings": s,
+        "devices": devices,
         "online": online_ips(request),
         "isolated": db.isolated_macs(),
         **_warp_ctx(request),
@@ -172,7 +183,14 @@ def ctx_geraete(request: Request) -> dict:
 
 
 def ctx_geraet_kopf(request: Request, ip: str) -> dict:
+    s: Settings = request.app.state.settings
     device = db.device(ip) or {"ip": ip}
+    mac = (device.get("mac") or "").strip().lower()
+    if mac:
+        try:
+            device["connection"] = fritz.get_device_connection(s, mac)
+        except Exception:
+            pass
     current = db.current_sites().get(ip)
     return {
         "device": device,
@@ -225,6 +243,17 @@ def ctx_vpn(request: Request) -> dict:
     return {"settings": request.app.state.settings, **_warp_ctx(request)}
 
 
+def ctx_fritzbox(request: Request, fehler: str | None = None, erfolg: str | None = None) -> dict:
+    s: Settings = request.app.state.settings
+    return {
+        "fritz": fritz.get_all_fritz_data(s),
+        "routers": fritz.get_routers(s),
+        "settings": s,
+        "fehler": fehler,
+        "erfolg": erfolg,
+    }
+
+
 PARTS = {
     "status": ctx_status,
     "kpis": ctx_kpis,
@@ -237,8 +266,9 @@ PARTS = {
     "schutz": ctx_schutz,
     "weiterleitungen": ctx_weiterleitungen,
     "vpn": ctx_vpn,
+    "fritzbox": ctx_fritzbox,
 }
-PARAMS = {"ip", "zeitraum"}
+PARAMS = {"ip", "zeitraum", "fehler", "erfolg"}
 
 
 async def _build(request: Request, names: list[str], **params) -> dict:
@@ -291,6 +321,11 @@ async def schutz(request: Request):
 @router.get("/vpn", response_class=HTMLResponse, dependencies=[Depends(require_password)])
 async def vpn(request: Request):
     return await page(request, "seiten/vpn.html", "VPN", "/vpn", ["vpn"])
+
+
+@router.get("/fritzbox", response_class=HTMLResponse, dependencies=[Depends(require_password)])
+async def fritzbox_page(request: Request, fehler: str | None = None, erfolg: str | None = None):
+    return await page(request, "seiten/fritzbox.html", "FRITZ!Box", "/fritzbox", ["fritzbox"], fehler=fehler, erfolg=erfolg)
 
 
 def tunnel_ctx(request: Request) -> dict:

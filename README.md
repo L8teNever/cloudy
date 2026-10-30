@@ -23,6 +23,7 @@ Stufe 3:  Gerät ──alles──► Pi (misst) ──► Fritzbox ──► In
   Internet-Weg (normal / WARP / VPN) umstellen; andere Geräte sieht man dort nicht.
 - Die Geräteliste zeigt, **welches Gerät gerade online ist** (der Pi fragt alle bekannten Geräte alle 8 Sekunden aktiv per ARP ab;
   schaltet man am Handy das WLAN aus, steht innerhalb weniger Sekunden „offline“ da; über den Button „Prüfen“ im Dashboard auch sofort).
+- **FRITZ!Box-Integration:** Zeigt Modell, Online-Status, Sync-Geschwindigkeit, externe IPv4/IPv6 und WLAN-Netze an. In der Geräteliste sieht man, mit welchem WLAN (SSID) oder LAN-Port und welcher FRITZ!Box das Gerät verbunden ist (unterstützt 2 Boxen). Gastnetz und Haupt-WLAN lassen sich direkt im Dashboard ein-/ausschalten, dazu WAN-Reconnect (neue IP) und FRITZ!Box-Neustart.
 - Pro Gerät: Name, IP, MAC, alle aufgerufenen Domains, Datenmenge pro Domain (z. B. `youtube.com 1,2 GB`).
 - Inhalte von HTTPS-Seiten (welches Video, was getippt wurde) sieht man **nicht** – nur Domain und Datenmenge.
 - Die Daten bleiben auf dem Pi (`~/cloudy/data`), 30 Tage Statistik, max. 50 000 Einzel-Aufrufe.
@@ -145,97 +146,36 @@ Internetverkehr des Geräts läuft dann durch den WARP-Tunnel des gewählten Clo
 (und damit durch dessen Gateway-Regeln). Am Gerät selbst muss nichts installiert werden.
 
 ```
-Gerät ──► Pi ──► WARP-Container (Account 1) ══Tunnel══► Cloudflare ──► Internet
+Gerät ──► Pi ──► WARP-Container (Account 1) ════Tunnel════► Cloudflare ──► Internet
 ```
 
-Voraussetzung: Gateway-Modus ist an (Schritt 4).
-
-**Token holen (pro Account einmal):**
-1. [one.dash.cloudflare.com](https://one.dash.cloudflare.com) mit dem Account öffnen.
-2. Unter **Networks → Mesh** (früher „WARP Connector“, je nach Dashboard auch unter Networks → Connectors)
-   einen neuen Knoten anlegen, z. B. `cloudy-pi`. Cloudflare zeigt dann einen Befehl wie
-   `warp-cli connector new eyJh...` – **nur den langen Token** (`eyJh...`) kopieren.
-3. Im Geräteprofil des Knotens den **Split Tunnel** so lassen, dass `192.168.0.0/16` und `172.16.0.0/12`
-   ausgeschlossen sind (Standard). Sonst findet der Verkehr nicht zurück ins Heimnetz.
-
-**Im Dashboard:**
-1. Abschnitt **„Cloudflare WARP“** → Name eintragen (z. B. „Account Max“), Token einfügen → Speichern.
-   Nach ca. 10–30 Sekunden steht dort **„verbunden“**.
-2. Gerät in der Liste anklicken → **„Internet über“** → Account wählen → Übernehmen.
-3. Zweiten Account genauso im zweiten Profil anmelden.
-
-**Gut zu wissen:**
+- **WARP einrichten:** Im Dashboard auf **„VPN“** → Token des Accounts einfügen.
+- **Gerät zuordnen:** Auf der Startseite in der Tabelle unter „Internet über“ **WARP 1** oder **WARP 2** wählen.
+  Oder oben eine **Standard-Route** für alle Geräte ohne eigene Zuordnung einstellen.
 - **Fällt der Tunnel aus**, gehen die Geräte automatisch wieder normal über die Fritzbox. Soll das Gerät dann
-  lieber gar kein Internet haben: in `~/cloudy/.env` `WARP_KILLSWITCH=1`, dann `cloudy restart`.
-- **Tempo:** Ein Pi 3B+ schafft durch die Tunnel zusammen etwa 50–80 Mbit/s.
-- **DNS** fragt weiterhin der Pi (bei dir an `172.64.36.1`), das Dashboard zeigt also weiter alle Domains.
-- **Abmelden** im Dashboard trägt den Pi auch bei Cloudflare aus.
-- Die Anmeldung bleibt bei `cloudy update` und Neustarts erhalten (`~/cloudy/data/warp/`). Der Token ist ein
-  Zugangsschlüssel zu deinem Zero-Trust-Account – die Datei nicht weitergeben.
-- Status auf dem Pi: `cloudy status`, Logs: `cloudy logs warp1`.
+  gar kein Internet mehr haben (Kill-Switch), in `~/cloudy/.env` `WARP_KILLSWITCH=1` setzen.
 
-## 6. Einzelne Geräte durch Proton VPN (oder anderes WireGuard-VPN) schicken
+## 6. Einzelne Geräte durch ein normales WireGuard-VPN schicken (z. B. Proton VPN)
 
-Gleiches Prinzip wie bei WARP: Im Dashboard stehen **VPN 1** und **VPN 2**. Pro Gerät wählst du unter
-„Internet über“, ob es normal, über WARP oder über ein VPN ins Internet geht. Am Gerät muss nichts installiert werden.
+Wie bei WARP, aber mit einer beliebigen WireGuard-Konfigurationsdatei (z. B. von Proton VPN, Mullvad,
+NordVPN …). Zwei VPN-Plätze stehen bereit (`vpn1`, `vpn2`).
 
-```
-Gerät ──► Pi ──► VPN-Container (WireGuard) ══Tunnel══► Proton ──► Internet
-```
+1. Beim VPN-Anbieter eine WireGuard-Konfiguration herunterladen (`.conf`).
+2. Im Dashboard unter **„VPN“** bei **VPN 1** (oder VPN 2) auf **„Konfiguration bearbeiten“** klicken,
+   den Inhalt der `.conf`-Datei hineinkopieren und speichern.
+3. In der Geräteliste beim Gerät unter „Internet über“ den Slot wählen (z. B. **Proton NL**).
 
-**WireGuard-Datei bei Proton holen:**
-1. [account.protonvpn.com/downloads](https://account.protonvpn.com/downloads) → Abschnitt **WireGuard-Konfiguration**.
-2. Plattform **Router** (alternativ GNU/Linux) wählen, einen Namen geben (z. B. `cloudy`), einen **Server** wählen
-   (mit dem kostenlosen Tarif nur die Free-Server) und **Erstellen** → Datei herunterladen.
-3. Die Datei mit einem Texteditor öffnen und den **ganzen Inhalt** kopieren.
-
-**Im Dashboard:** Abschnitt „Cloudflare WARP & VPN“ → bei **VPN 1** den Inhalt einfügen → Speichern.
-Nach wenigen Sekunden steht dort **„verbunden“**. Danach beim Gerät „Internet über“ → VPN 1.
-
-**Gut zu wissen:**
-- Proton erlaubt pro Konfiguration nur **ein** Gerät gleichzeitig. Der Pi ist dabei ein Gerät, alle zugeordneten
-  Geräte teilen sich also die Verbindung. Eine zweite Datei (anderer Server) kommt in **VPN 2**.
-- Der kostenlose Tarif ist langsamer als Bezahltarife und hat wenige Länder. Auf dem Pi 3B+ sind etwa
-  **100 Mbit/s** durch WireGuard möglich.
 - **Fällt das VPN aus,** gehen die Geräte automatisch wieder normal ins Internet (über die Fritzbox).
-  Willst du das nicht, damit nichts am VPN vorbei geht: `WARP_KILLSWITCH=1` in `~/cloudy/.env`, dann `cloudy restart`.
-- Befehle in der Datei (`PostUp` …) und `DNS` werden ignoriert. DNS fragt weiterhin der Pi.
-- Die Datei enthält deinen privaten Schlüssel (liegt in `~/cloudy/data/warp/vpn1/`) – nicht weitergeben.
-- Status: `cloudy status`, Logs: `cloudy logs vpn1`.
+  Mit `WARP_KILLSWITCH=1` ist das Internet für sie gesperrt, bis das VPN wieder steht.
 
-## Alles auf einmal umschalten (ohne am PC etwas zu ändern)
+## FRITZ!Box-Steuerung & Topologie
 
-Alles läuft auf dem Pi, an den Geräten wird nichts eingestellt. In der Geräteliste steht oben
-**„Alle Geräte ohne eigene Einstellung gehen über: …“**. Wähl dort z. B. **VPN 1** – dann läuft der gesamte
-Internetverkehr aller Geräte durch Proton, auch von neuen Geräten. Bei einzelnen Geräten kannst du in der Spalte
-„Internet über“ etwas anderes wählen, z. B. **normal (Fritzbox)** für den Fernseher oder das NAS.
-Zurück auf normal: oben **„normal (Fritzbox)“** wählen. Es wirkt innerhalb weniger Sekunden, die Geräte brauchen
-kein WLAN aus/an. Voraussetzung ist der Gateway-Modus (Schritt 4).
-
-## Zurück zur Fritzbox (alles wie vorher)
-
-1. Auf dem Pi: `cloudy dhcp aus` (schaltet auch das Gateway aus)
-2. Fritzbox: Haken bei **„DHCP-Server aktivieren“** wieder setzen, „Lokaler DNS-Server“ auf `172.64.36.1`.
-3. Geräte kurz WLAN aus/an.
-
-Ist der Pi kaputt/aus: Schritt 2 und 3 reichen. War das Gateway an, haben die Geräte bis zum WLAN aus/an
-kein Internet – deshalb Schritt 3 nicht vergessen.
-
-## Befehle auf dem Pi
-
-| Befehl | Was passiert |
-|---|---|
-| `cloudy update` | Neueste Version von GitHub holen und neu starten |
-| `cloudy dhcp an` / `cloudy dhcp aus` | IP-Verteilung durch den Pi ein-/ausschalten |
-| `cloudy gateway an` / `cloudy gateway aus` | Gesamten Datenverkehr über den Pi leiten und messen |
-| `cloudy status` | Läuft alles? |
-| `cloudy logs` | Live-Logs |
-
-Updates passieren **nur**, wenn du `cloudy update` ausführst. Neue Versionen baut GitHub Actions bei
-jedem Push automatisch (`ghcr.io/l8tenever/cloudy`, für Pi und PC).
-
-Einstellungen (Upstream-DNS, DHCP-Bereich, Dashboard-Passwort …) stehen in `~/cloudy/.env`,
-danach `docker compose up -d` in `~/cloudy`.
+Unter dem Menüpunkt **FRITZ!Box** im Dashboard:
+- **Auslesen:** Modell, FRITZ!OS-Version, DSL/Kabel-Geschwindigkeiten, externe IPv4/IPv6, Uptime, WLAN-Status (2,4 GHz, 5 GHz, Gastzugang).
+- **Steuern:** Gastzugang ein-/ausschalten, Haupt-WLAN schalten, WAN-Neuverbindung (neue IP beziehen) und FRITZ!Box neu starten.
+- **Geräte-Erkennung:** In der Geräteliste und auf der Geräte-Detailseite wird für jedes Gerät angezeigt, wie es verbunden ist (z. B. `📶 WLAN (5 GHz · 450 Mbit/s) · SSID` oder `🔌 LAN`).
+- **Mehrere Boxen:** Unterstützt die Konfiguration von zwei FRITZ!Boxen (z. B. Hauptrouter + zweite Box / Repeater).
+- **Voraussetzung:** In der FRITZ!Box unter *Heimnetz → Netzwerk → Netzwerkeinstellungen* den Haken bei **„Zugriff für Anwendungen zulassen“** setzen.
 
 ## Domain-Weiterleitungen
 
