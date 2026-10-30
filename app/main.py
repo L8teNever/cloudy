@@ -902,7 +902,12 @@ def _parse_domains(text: str) -> tuple[list[str], list[str]]:
     ok: list[str] = []
     bad: list[str] = []
     for raw in re.split(r"[\s,;]+", text or ""):
+        # "*.netflix.com", ".netflix.com", "*netflix.com" = netflix.com – Subdomains sind ohnehin immer dabei.
+        raw = re.sub(r"^(\*\.?|\.)+", "", raw.strip())
         if not raw:
+            continue
+        if "*" in raw:
+            bad.append(raw)  # Platzhalter nur vorne möglich (dnsmasq kennt keine Muster in der Mitte)
             continue
         try:
             domain = normalize_source(raw)
@@ -916,7 +921,8 @@ def _parse_domains(text: str) -> tuple[list[str], list[str]]:
 
 def _domains_error(bad: list[str], saved: int) -> str:
     shown = ", ".join(bad[:5]) + (" …" if len(bad) > 5 else "")
-    return f"Ungültig: {shown}" + (f" ({saved} gespeichert)" if saved else "")
+    hint = " – * geht nur vorne, z. B. *.netflix.com" if any("*" in b for b in bad) else ""
+    return f"Ungültig: {shown}{hint}" + (f" ({saved} gespeichert)" if saved else "")
 
 
 @app.post("/seiten-routen/add", dependencies=[Depends(require_password)])

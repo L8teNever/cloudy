@@ -341,3 +341,10 @@ def test_site_routes_many_at_once(client):
     client.post(f"/gruppen/{gid}/seiten/add", data={"domain": "a.com, b.com", "slot": "warp1"})
     assert db.group_site_routes(gid) == {"a.com": "warp1", "b.com": "warp1"}
     assert "2 Seiten" in client.get(f"/gruppen/{gid}").text
+
+
+def test_site_routes_accept_wildcards(client):
+    client.post("/seiten-routen/add", data={"domain": "*.netflix.com, .max.com, *hulu.com", "slot": "vpn1"})
+    assert db.site_routes() == {"netflix.com": "vpn1", "max.com": "vpn1", "hulu.com": "vpn1"}
+    r = client.post("/seiten-routen/add", data={"domain": "net*flix.com", "slot": "vpn1"}, follow_redirects=False)
+    assert "fehler=" in r.headers["location"] and "vorne" in __import__("urllib.parse").parse.unquote(r.headers["location"])

@@ -4,7 +4,7 @@
 <form method="post" action="{{ action }}" class="site-add" data-ok="Gespeichert">
   {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
   <textarea name="domain" rows="2" required autocomplete="off" spellcheck="false"
-            placeholder="Eine oder mehrere Seiten, mit Komma getrennt – z. B. netflix.com, disneyplus.com, max.com"></textarea>
+            placeholder="Eine oder mehrere Seiten, mit Komma getrennt – z. B. netflix.com, *.disneyplus.com, max.com (Subdomains sind immer dabei)"></textarea>
   <div class="site-add-row">
     <select name="slot" aria-label="Profil">
       <option value="direct">Normal – direkt über die Fritzbox</option>
