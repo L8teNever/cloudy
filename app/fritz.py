@@ -126,6 +126,7 @@ def _fetch_single_router_data(router_cfg: dict[str, str]) -> dict[str, Any]:
         "uptime": "",
         "connection_status": "Getrennt",
         "is_connected": False,
+        "is_repeater": False,
         "external_ip": "",
         "external_ipv6": "",
         "max_down": "",
@@ -149,77 +150,111 @@ def _fetch_single_router_data(router_cfg: dict[str, str]) -> dict[str, Any]:
         from fritzconnection.lib.fritzwlan import FritzGuestWLAN, FritzWLAN
 
         fc = FritzConnection(address=ip, user=user or None, password=password, timeout=4.0)
-        fs = FritzStatus(fc)
-
         result["online"] = True
         result["model"] = getattr(fc, "modelname", "FRITZ!Box")
         result["software_version"] = getattr(fc, "system_version", "")
-        result["uptime"] = _format_uptime(getattr(fs, "device_uptime", None))
-        result["is_connected"] = bool(getattr(fs, "is_connected", False))
-        result["connection_status"] = "Verbunden" if result["is_connected"] else "Nicht verbunden"
-        result["external_ip"] = getattr(fs, "external_ip", "") or ""
-        result["external_ipv6"] = getattr(fs, "external_ipv6", "") or ""
 
-        bit_rate = getattr(fs, "max_bit_rate", (0, 0)) or (0, 0)
-        if isinstance(bit_rate, (tuple, list)) and len(bit_rate) >= 2:
-            result["max_down"] = _format_rate(bit_rate[0])
-            result["max_up"] = _format_rate(bit_rate[1])
+        # Status & Uptime abfragen
+        try:
+            fs = FritzStatus(fc)
 
-        result["update_available"] = bool(getattr(fs, "update_available", False))
+            # Geräte-Laufzeit (DeviceInfo1)
+            try:
+                result["uptime"] = _format_uptime(getattr(fs, "device_uptime", None))
+            except Exception as e:
+                logger.debug("Konnte Uptime für %s nicht lesen: %s", ip, e)
+
+            # WAN / Internet-Status (WANIPConnection) - schlägt bei Mesh-Repeater/IP-Client oft mit 401 fehl
+            try:
+                is_conn = bool(getattr(fs, "is_connected", False))
+                result["is_connected"] = is_conn
+                result["connection_status"] = "Verbunden" if is_conn else "Nicht verbunden"
+                result["external_ip"] = getattr(fs, "external_ip", "") or ""
+                result["external_ipv6"] = getattr(fs, "external_ipv6", "") or ""
+
+                bit_rate = getattr(fs, "max_bit_rate", (0, 0)) or (0, 0)
+                if isinstance(bit_rate, (tuple, list)) and len(bit_rate) >= 2:
+                    result["max_down"] = _format_rate(bit_rate[0])
+                    result["max_up"] = _format_rate(bit_rate[1])
+            except Exception as wan_err:
+                logger.info("FRITZ!Box %s (%s) hat kein eigenes WAN (Mesh-Repeater/IP-Client): %s", ip, name, wan_err)
+                result["is_repeater"] = True
+                result["is_connected"] = True
+                result["connection_status"] = "Mesh-Repeater / IP-Client"
+
+            # Update-Verfügbarkeit
+            try:
+                result["update_available"] = bool(getattr(fs, "update_available", False))
+            except Exception:
+                pass
+        except Exception as fs_err:
+            logger.info("FritzStatus für %s (%s) nicht vollständig abrufbar: %s", ip, name, fs_err)
+            result["is_repeater"] = True
+            result["is_connected"] = True
+            result["connection_status"] = "Mesh-Repeater / IP-Client"
 
         # WLAN Services (1 = 2.4 GHz, 2 = 5 GHz)
-        fw = FritzWLAN(fc)
-        for s_id in (1, 2):
-            try:
-                fw.service = s_id
-                info = {
-                    "service": s_id,
-                    "band": "2,4 GHz" if s_id == 1 else "5 GHz",
-                    "ssid": getattr(fw, "ssid", ""),
-                    "enabled": bool(getattr(fw, "is_enabled", False)),
-                    "channel": getattr(fw, "channel", None),
-                }
-                if s_id == 1:
-                    result["wlan_24"] = info
-                else:
-                    result["wlan_50"] = info
-
-                # Verbundene WLAN-Geräte
-                for dev in fw.get_hosts_info():
-                    mac = (dev.get("mac") or "").strip().lower()
-                    if not mac:
-                        continue
-                    signal = dev.get("signal")
-                    speed = dev.get("speed")
-                    signal_str = f"{signal} %" if signal is not None else ""
-                    speed_str = f"{speed} Mbit/s" if speed else ""
-                    band_str = "2,4 GHz" if s_id == 1 else "5 GHz"
-                    ssid_str = info["ssid"] or "WLAN"
-
-                    details_parts = [f"WLAN ({band_str})"]
-                    if ssid_str:
-                        details_parts.append(f"SSID: {ssid_str}")
-                    if speed_str:
-                        details_parts.append(speed_str)
-                    if signal_str:
-                        details_parts.append(f"Signal: {signal_str}")
-
-                    result["device_connections"][mac] = {
-                        "type": "WLAN",
-                        "router_name": name,
-                        "router_ip": ip,
-                        "ssid": ssid_str,
-                        "band": band_str,
-                        "speed": speed_str,
-                        "signal": signal_str,
-                        "port": "",
-                        "summary": f"{ssid_str} ({band_str}) · {name}" if name else ssid_str,
-                        "full_details": " · ".join(details_parts),
+        try:
+            fw = FritzWLAN(fc)
+            for s_id in (1, 2):
+                try:
+                    fw.service = s_id
+                    info = {
+                        "service": s_id,
+                        "band": "2,4 GHz" if s_id == 1 else "5 GHz",
+                        "ssid": getattr(fw, "ssid", ""),
+                        "enabled": bool(getattr(fw, "is_enabled", False)),
+                        "channel": getattr(fw, "channel", None),
                     }
-            except FritzServiceError:
-                pass
-            except Exception as e:
-                logger.debug("Fehler beim Lesen von WLAN-Service %s: %s", s_id, e)
+                    if s_id == 1:
+                        result["wlan_24"] = info
+                    else:
+                        result["wlan_50"] = info
+
+                    # Verbundene WLAN-Geräte
+                    try:
+                        hosts = fw.get_hosts_info()
+                    except Exception as err:
+                        logger.debug("Fehler bei get_hosts_info für WLAN-Service %s an %s: %s", s_id, ip, err)
+                        hosts = []
+
+                    for dev in hosts:
+                        mac = (dev.get("mac") or "").strip().lower()
+                        if not mac:
+                            continue
+                        signal = dev.get("signal")
+                        speed = dev.get("speed")
+                        signal_str = f"{signal} %" if signal is not None else ""
+                        speed_str = f"{speed} Mbit/s" if speed else ""
+                        band_str = "2,4 GHz" if s_id == 1 else "5 GHz"
+                        ssid_str = info["ssid"] or "WLAN"
+
+                        details_parts = [f"WLAN ({band_str})"]
+                        if ssid_str:
+                            details_parts.append(f"SSID: {ssid_str}")
+                        if speed_str:
+                            details_parts.append(speed_str)
+                        if signal_str:
+                            details_parts.append(f"Signal: {signal_str}")
+
+                        result["device_connections"][mac] = {
+                            "type": "WLAN",
+                            "router_name": name,
+                            "router_ip": ip,
+                            "ssid": ssid_str,
+                            "band": band_str,
+                            "speed": speed_str,
+                            "signal": signal_str,
+                            "port": "",
+                            "summary": f"{ssid_str} ({band_str}) · {name}" if name else ssid_str,
+                            "full_details": " · ".join(details_parts),
+                        }
+                except FritzServiceError:
+                    pass
+                except Exception as e:
+                    logger.debug("Fehler beim Lesen von WLAN-Service %s an %s: %s", s_id, ip, e)
+        except Exception as fw_err:
+            logger.debug("FritzWLAN für %s nicht abrufbar: %s", ip, fw_err)
 
         # Gast-WLAN
         try:
@@ -253,7 +288,7 @@ def _fetch_single_router_data(router_cfg: dict[str, str]) -> dict[str, Any]:
                         "full_details": f"LAN-Kabel an {name}",
                     }
         except Exception as e:
-            logger.debug("Fehler beim Lesen von Hosts: %s", e)
+            logger.debug("Fehler beim Lesen von Hosts für %s: %s", ip, e)
 
     except FritzSecurityError:
         result["error"] = "Anmeldung fehlgeschlagen: Benutzername oder Kennwort ungültig."
@@ -374,7 +409,7 @@ def reconnect_internet(settings: Settings, router_index: int) -> tuple[bool, str
         invalidate_cache()
         return True, "Internetverbindung wird neu aufgebaut (neue IP angefordert)."
     except Exception as e:
-        return False, f"Fehler beim Neuverbinden: {e}"
+        return False, f"Fehler beim Neuverbinden (ist diese Box ein Mesh-Repeater ohne WAN?): {e}"
 
 
 def reboot_fritzbox(settings: Settings, router_index: int) -> tuple[bool, str]:

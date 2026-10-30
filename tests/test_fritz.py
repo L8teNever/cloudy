@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -102,6 +102,54 @@ def test_fritz_data_with_mocked_connection():
     dev_conn = fritz.get_device_connection(s, "11:22:33:44:55:66")
     assert dev_conn is not None
     assert dev_conn["type"] == "WLAN"
+
+
+def test_fritz_mesh_repeater_without_wan():
+    """Prüft, dass eine FRITZ!Box im IP-Client / Repeater-Modus (UPnP 401 bei WAN) sauber als Mesh-Repeater erkannt wird."""
+    s = Settings.from_env()
+    fritz.save_routers([{"name": "Repeater 7490", "ip": "192.168.178.2", "user": "admin", "password": "secret"}])
+    fritz.invalidate_cache()
+
+    mock_fc = MagicMock()
+    mock_fc.modelname = "FRITZ!Box 7490 (UI)"
+    mock_fc.system_version = "7.62"
+
+    mock_fs = MagicMock()
+    mock_fs.device_uptime = 54000
+    # WAN schlägt fehl wie im Screenshot (UPnPError 401: Invalid Action)
+    type(mock_fs).is_connected = PropertyMock(side_effect=Exception("UPnPError: errorCode: 401 errorDescription: Invalid Action"))
+
+    mock_fw = MagicMock()
+    mock_fw.ssid = "WLAN-Mesh"
+    mock_fw.is_enabled = True
+    mock_fw.channel = 1
+    mock_fw.get_hosts_info.return_value = [
+        {"mac": "33:44:55:66:77:88", "signal": 88, "speed": 866}
+    ]
+
+    mock_fg = MagicMock()
+    mock_fg.ssid = "Gastnetz"
+    mock_fg.is_enabled = False
+
+    mock_fh = MagicMock()
+    mock_fh.get_hosts_info.return_value = []
+
+    with patch("fritzconnection.FritzConnection", return_value=mock_fc), \
+         patch("fritzconnection.lib.fritzstatus.FritzStatus", return_value=mock_fs), \
+         patch("fritzconnection.lib.fritzwlan.FritzWLAN", return_value=mock_fw), \
+         patch("fritzconnection.lib.fritzwlan.FritzGuestWLAN", return_value=mock_fg), \
+         patch("fritzconnection.lib.fritzhosts.FritzHosts", return_value=mock_fh):
+        data = fritz.get_all_fritz_data(s, force=True)
+
+    assert len(data["boxes"]) == 1
+    box = data["boxes"][0]
+    assert box["online"] is True
+    assert box["is_repeater"] is True
+    assert box["error"] is None  # Kein störender Fehler!
+    assert box["connection_status"] == "Mesh-Repeater / IP-Client"
+    assert box["model"] == "FRITZ!Box 7490 (UI)"
+    assert box["software_version"] == "7.62"
+    assert "33:44:55:66:77:88" in data["device_connections"]
 
 
 def test_fritz_actions_mocked():

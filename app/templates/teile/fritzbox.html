@@ -22,6 +22,9 @@
         {% else %}
         <span class="pill">Nicht eingerichtet</span>
         {% endif %}
+        {% if box.is_repeater %}
+        <span class="pill" style="font-weight:normal;font-size:.75rem">Mesh-Repeater</span>
+        {% endif %}
       </h2>
       <div class="muted small mono">IP: {{ box.ip }}{% if box.user %} · Benutzer: {{ box.user }}{% endif %}</div>
     </div>
@@ -40,10 +43,15 @@
   <div class="grid" style="grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:1rem;margin-bottom:1rem">
     <!-- Internet & Status -->
     <div style="background:var(--page);border:1px solid var(--line);border-radius:10px;padding:.85rem">
-      <h3 style="margin:0 0 .5rem;font-size:.95rem;color:var(--brand)">🌐 Internet & Verbindung</h3>
+      <h3 style="margin:0 0 .5rem;font-size:.95rem;color:var(--brand)">🌐 System & Verbindung</h3>
       <table style="font-size:.85rem">
         <tr><td><strong>Status</strong></td><td><span class="pill {{ 'on' if box.is_connected else 'bad' }}">{{ box.connection_status }}</span></td></tr>
-        <tr><td><strong>Externe IPv4</strong></td><td class="mono">{{ box.external_ip or '–' }}</td></tr>
+        {% if box.is_repeater %}
+        <tr><td><strong>Betriebsart</strong></td><td><span class="muted small">Mesh-Repeater / IP-Client</span></td></tr>
+        {% endif %}
+        {% if box.external_ip %}
+        <tr><td><strong>Externe IPv4</strong></td><td class="mono">{{ box.external_ip }}</td></tr>
+        {% endif %}
         {% if box.external_ipv6 %}
         <tr><td><strong>Externe IPv6</strong></td><td class="mono" style="font-size:.78rem">{{ box.external_ipv6 }}</td></tr>
         {% endif %}
@@ -54,10 +62,12 @@
         <tr><td><strong>FRITZ!OS</strong></td><td>{{ box.software_version or '–' }}{% if box.update_available %} <span class="pill warn">Update verfügbar</span>{% endif %}</td></tr>
       </table>
       <div style="margin-top:.75rem">
+        {% if not box.is_repeater and box.external_ip %}
         <form method="post" action="/fritzbox/reconnect" class="inline" style="margin-right:.5rem">
           <input type="hidden" name="router_index" value="{{ router_idx }}">
           <button class="secondary small" title="Fordert eine neue öffentliche IP-Adresse an">🔄 Neue IP beziehen</button>
         </form>
+        {% endif %}
         <form method="post" action="/fritzbox/reboot" class="inline" onsubmit="return confirm('Möchtest du {{ box.name }} wirklich neu starten? Dies dauert etwa 2 Minuten.');">
           <input type="hidden" name="router_index" value="{{ router_idx }}">
           <button class="danger small" style="opacity:.85">⚠️ Neu starten</button>
@@ -124,6 +134,9 @@
             </div>
           </td>
         </tr>
+        {% endif %}
+        {% if not box.wlan_24 and not box.wlan_50 and not box.guest_wlan %}
+        <tr><td colspan="2" class="muted small">WLAN-Schnittstellen nicht verfügbar oder deaktiviert.</td></tr>
         {% endif %}
       </table>
     </div>
