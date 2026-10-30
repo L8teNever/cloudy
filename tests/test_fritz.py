@@ -68,7 +68,7 @@ def test_fritz_data_with_mocked_connection():
 
     mock_fh = MagicMock()
     mock_fh.get_hosts_info.return_value = [
-        {"mac": "aa:bb:cc:dd:ee:ff", "interface_type": "Ethernet"}
+        {"mac": "aa:bb:cc:dd:ee:ff", "interface_type": "Ethernet", "status": True, "name": "Fernseher", "ip": "192.168.178.50"}
     ]
 
     with patch("fritzconnection.FritzConnection", return_value=mock_fc), \
@@ -242,3 +242,35 @@ def test_gleiche_zugangsdaten_und_retry(client):
 
     r = client.post("/fritzbox/retry", follow_redirects=False)
     assert r.status_code == 303
+
+
+def test_fritz_geraete_zusammenfuehren(client):
+    import time
+    from app import db
+    now = int(time.time())
+    # cloudy kennt das Handy per DHCP unter seinem Gerätenamen, mit Statistik unter einer alten IP ohne Lease
+    db.upsert_devices([("192.168.178.30", "aa:aa:aa:aa:aa:01", "iPhone")])
+    db.add_queries([(now, "192.168.178.30", "example.com", "A"), (now, "192.168.178.31", "example.org", "A")])
+    db.save_fritz_hosts([
+        {"mac": "aa:aa:aa:aa:aa:01", "ip": "192.168.178.30", "name": "Handy Max", "active": True, "interface": "802.11"},
+        # gleiches Gerät? nein: anderes Gerät, das gerade 192.168.178.31 hat -> Statistik wird ihm zugeordnet
+        {"mac": "aa:aa:aa:aa:aa:02", "ip": "192.168.178.31", "name": "Laptop", "active": True, "interface": "Ethernet"},
+        # nur in der FRITZ!Box bekannt, gerade aus
+        {"mac": "aa:aa:aa:aa:aa:03", "ip": "192.168.178.40", "name": "Drucker", "active": False, "interface": "Ethernet"},
+        {"mac": "aa:aa:aa:aa:aa:04", "ip": "192.168.178.41", "name": fritz._clean_name("PC-192-168-178-41"), "active": False},
+    ])
+    devs = {d["mac"]: d for d in db.devices()}
+    assert len(devs) == 4 and all(devs)
+    assert devs["aa:aa:aa:aa:aa:01"]["hostname"] == "Handy Max"
+    assert devs["aa:aa:aa:aa:aa:01"]["lease_name"] == "iPhone"
+    assert devs["aa:aa:aa:aa:aa:02"]["hits"] == 1
+    assert devs["aa:aa:aa:aa:aa:03"]["fritz_only"] and devs["aa:aa:aa:aa:aa:03"]["hostname"] == "Drucker"
+    assert devs["aa:aa:aa:aa:aa:04"]["hostname"] is None  # automatischer FRITZ!Box-Name wird ignoriert
+
+    # Neue IP fürs Handy (z. B. nach Neustart): bleibt ein Eintrag, Statistik zieht mit
+    db.save_fritz_hosts([{"mac": "aa:aa:aa:aa:aa:01", "ip": "192.168.178.35", "name": "Handy Max", "active": True}])
+    handy = [d for d in db.devices() if d["mac"] == "aa:aa:aa:aa:aa:01"]
+    assert len(handy) == 1 and handy[0]["ip"] == "192.168.178.35" and handy[0]["hits"] == 1
+
+    r = client.get("/geraete")
+    assert r.status_code == 200 and "Handy Max" in r.text and "Drucker" in r.text

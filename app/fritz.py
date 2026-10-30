@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -143,6 +144,50 @@ def test_router_connection(ip: str, user: str = "", password: str = "") -> tuple
         return False, f"Verbindungsfehler: {e}"
 
 
+# Namen, die die FRITZ!Box selbst vergibt, wenn sie keinen kennt (z. B. "PC-192-168-178-23")
+_AUTO_NAME = re.compile(r"^(PC|Ger[aä]t)-\d+-\d+-\d+-\d+$", re.IGNORECASE)
+
+
+def _clean_name(name: str | None) -> str | None:
+    name = (name or "").strip()
+    if not name or _AUTO_NAME.match(name):
+        return None
+    return name
+
+
+def _read_hosts(fc) -> list[dict[str, Any]]:
+    """Alle Geräte, die die Box kennt. Bevorzugt eine einzige Abfrage (Host-Liste als XML) statt einer pro Gerät."""
+    from fritzconnection.lib.fritzhosts import FritzHosts
+
+    fh = FritzHosts(fc)
+    hosts: list[dict[str, Any]] = []
+    try:
+        attrs = fh.get_hosts_attributes()
+        if isinstance(attrs, list):
+            for a in attrs:
+                hosts.append({
+                    "mac": (a.get("MACAddress") or "").strip().lower(),
+                    "ip": (a.get("IPAddress") or "").strip(),
+                    "name": _clean_name(a.get("HostName")),
+                    "active": bool(a.get("Active")),
+                    "interface": (a.get("InterfaceType") or "").strip(),
+                    "port": a.get("X_AVM-DE_Port") or 0,
+                })
+            return [h for h in hosts if h["mac"]]
+    except Exception as e:
+        logger.debug("Host-Liste (XML) nicht abrufbar, nehme Einzelabfragen: %s", e)
+    for h in fh.get_hosts_info():
+        hosts.append({
+            "mac": (h.get("mac") or "").strip().lower(),
+            "ip": (h.get("ip") or "").strip(),
+            "name": _clean_name(h.get("name")),
+            "active": bool(h.get("status")),
+            "interface": (h.get("interface_type") or "").strip(),
+            "port": 0,
+        })
+    return [h for h in hosts if h["mac"]]
+
+
 def _fetch_single_router_data(router_cfg: dict[str, str]) -> dict[str, Any]:
     ip = router_cfg.get("ip", "192.168.178.1")
     user = router_cfg.get("user", "")
@@ -171,6 +216,7 @@ def _fetch_single_router_data(router_cfg: dict[str, str]) -> dict[str, Any]:
         "wlan_50": None,
         "guest_wlan": None,
         "device_connections": {},  # mac -> info dict
+        "hosts": [],
     }
 
     if not password:
@@ -180,7 +226,6 @@ def _fetch_single_router_data(router_cfg: dict[str, str]) -> dict[str, Any]:
     try:
         from fritzconnection import FritzConnection
         from fritzconnection.core.exceptions import FritzConnectionException, FritzSecurityError, FritzServiceError
-        from fritzconnection.lib.fritzhosts import FritzHosts
         from fritzconnection.lib.fritzstatus import FritzStatus
         from fritzconnection.lib.fritzwlan import FritzGuestWLAN, FritzWLAN
 
@@ -301,15 +346,15 @@ def _fetch_single_router_data(router_cfg: dict[str, str]) -> dict[str, Any]:
         except Exception:
             pass
 
-        # LAN / Ethernet Hosts
+        # Alle bekannten Geräte (Namen, IPs) und LAN-Verbindungen
         try:
-            fh = FritzHosts(fc)
-            for h in fh.get_hosts_info():
-                mac = (h.get("mac") or "").strip().lower()
-                if not mac or mac in result["device_connections"]:
-                    continue  # Schon als WLAN erkannt
-                itype = (h.get("interface_type") or "").strip()
-                if itype.lower() in ("ethernet", "lan"):
+            result["hosts"] = _read_hosts(fc)
+            for h in result["hosts"]:
+                mac = h["mac"]
+                if mac in result["device_connections"] or not h["active"]:
+                    continue  # Schon als WLAN erkannt bzw. gerade nicht verbunden
+                if h["interface"].lower() in ("ethernet", "lan"):
+                    port = f"LAN {h['port']}" if h.get("port") else "LAN"
                     result["device_connections"][mac] = {
                         "type": "LAN",
                         "router_name": name,
@@ -318,9 +363,9 @@ def _fetch_single_router_data(router_cfg: dict[str, str]) -> dict[str, Any]:
                         "band": "",
                         "speed": "",
                         "signal": "",
-                        "port": "LAN",
-                        "summary": f"LAN · {name}",
-                        "full_details": f"LAN-Kabel an {name}",
+                        "port": port,
+                        "summary": f"{port} · {name}",
+                        "full_details": f"Kabel an {name} ({port})",
                     }
         except Exception as e:
             logger.debug("Fehler beim Lesen von Hosts für %s: %s", ip, e)
@@ -349,10 +394,24 @@ def _fetch_all_sync(settings: Settings) -> dict[str, Any]:
     else:
         boxes = [_fetch_single_router_data(r) for r in routers]
 
+    hosts: dict[str, dict[str, Any]] = {}
     for data in boxes:
         for mac, info in data.get("device_connections", {}).items():
             if mac not in all_device_connections or info.get("type") == "WLAN":
                 all_device_connections[mac] = info
+        # Mehrere Boxen kennen oft dieselben Geräte: aktive Einträge und vorhandene Namen gewinnen
+        for h in data.get("hosts", []):
+            prev = hosts.get(h["mac"])
+            if prev is None or (h["active"] and not prev["active"]):
+                hosts[h["mac"]] = {**h, "name": h["name"] or (prev or {}).get("name")}
+            elif not prev.get("name") and h["name"]:
+                prev["name"] = h["name"]
+
+    if hosts:
+        try:
+            db.save_fritz_hosts(list(hosts.values()))
+        except Exception as e:
+            logger.warning("FRITZ!Box-Geräteliste konnte nicht gespeichert werden: %s", e)
 
     now = time.time()
     return {

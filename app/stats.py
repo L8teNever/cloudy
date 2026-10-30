@@ -62,8 +62,8 @@ def device_usage(r: Range, limit: int = 20) -> list[dict]:
     with closing(db.connect()) as conn:
         rows = conn.execute(
             """
-            SELECT t.ip, d.hostname, SUM(t.bytes_down) AS bytes_down, SUM(t.bytes_up) AS bytes_up
-            FROM traffic_daily t LEFT JOIN devices d ON d.ip = t.ip
+            SELECT t.ip, COALESCE(f.name, d.hostname) AS hostname, SUM(t.bytes_down) AS bytes_down, SUM(t.bytes_up) AS bytes_up
+            FROM traffic_daily t LEFT JOIN devices d ON d.ip = t.ip LEFT JOIN fritz_hosts f ON f.mac = d.mac
             WHERE t.day >= ? GROUP BY t.ip ORDER BY SUM(t.bytes_down + t.bytes_up) DESC LIMIT ?
             """,
             (r.since_day, limit),
@@ -76,8 +76,8 @@ def device_hits(r: Range, limit: int = 20) -> list[dict]:
     with closing(db.connect()) as conn:
         rows = conn.execute(
             """
-            SELECT q.ip, d.hostname, SUM(q.hits) AS hits
-            FROM dns_daily q LEFT JOIN devices d ON d.ip = q.ip
+            SELECT q.ip, COALESCE(f.name, d.hostname) AS hostname, SUM(q.hits) AS hits
+            FROM dns_daily q LEFT JOIN devices d ON d.ip = q.ip LEFT JOIN fritz_hosts f ON f.mac = d.mac
             WHERE q.day >= ? GROUP BY q.ip ORDER BY SUM(q.hits) DESC LIMIT ?
             """,
             (r.since_day, limit),

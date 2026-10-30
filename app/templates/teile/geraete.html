@@ -6,7 +6,9 @@
 
 <div class="card">
   <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem">
-    <h2>Geräte im Heimnetz <span class="muted small" id="online-count">({{ online | length }} online)</span></h2>
+    {% set ns = namespace(n=0) %}
+    {% for d in devices %}{% if d.ip in online or d.fritz_active %}{% set ns.n = ns.n + 1 %}{% endif %}{% endfor %}
+    <h2>Geräte im Heimnetz <span class="muted small" id="online-count">({{ ns.n }} online · {{ devices | length }} bekannt)</span></h2>
     {% if warp %}
     <form method="post" action="/warp/default" class="inline">
       <label class="small muted">Standard-Route für alle Geräte:
@@ -40,14 +42,24 @@
         {% for d in devices %}
         <tr>
           <td>
-            {% if d.ip in online %}
+            {% if d.ip in online or d.fritz_active %}
             <span class="pill on">● online</span>
             {% else %}
             <span class="muted small">offline</span>
             {% endif %}
           </td>
           <td>
+            {% if d.ip %}
             <a href="/geraete/{{ d.ip | urlencode }}" data-nav style="font-weight:600">{{ d.hostname or d.ip }}</a>
+            {% else %}
+            <strong>{{ d.hostname or d.mac }}</strong>
+            {% endif %}
+            {% if d.fritz_name and d.lease_name and d.lease_name != d.fritz_name %}
+            <div class="muted small" title="Name, den das Gerät selbst meldet">{{ d.lease_name }}</div>
+            {% endif %}
+            {% if d.fritz_only %}
+            <div class="muted small">nur in der FRITZ!Box bekannt</div>
+            {% endif %}
             {% if d.connection %}
             <div style="margin-top:.2rem">
               <span class="pill {{ 'on' if d.connection.type == 'WLAN' else '' }}" style="font-size:.74rem;padding:.05rem .45rem" title="{{ d.connection.full_details }}">
@@ -64,7 +76,7 @@
               <span class="muted">–</span>
             {% endif %}
           </td>
-          <td class="mono small">{{ d.ip }}</td>
+          <td class="mono small">{{ d.ip or '–' }}</td>
           <td class="mono small">{{ d.mac or '–' }}</td>
           <td class="num">{{ d.bytes_down | bytes }}</td>
           <td class="num">{{ d.bytes_up | bytes }}</td>

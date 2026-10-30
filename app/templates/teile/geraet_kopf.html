@@ -17,7 +17,7 @@
         {% endif %}
       </h1>
       <div class="muted small mono">
-        IP: {{ device.ip }}{% if device.mac %} · MAC: {{ device.mac }}{% endif %}
+        IP: {{ device.ip }}{% if device.mac %} · MAC: {{ device.mac }}{% endif %}{% if device.fritz_name and device.lease_name and device.lease_name != device.fritz_name %} · meldet sich als {{ device.lease_name }}{% endif %}
       </div>
       {% if device.connection %}
       <div style="margin-top:.4rem">

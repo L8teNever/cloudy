@@ -122,6 +122,17 @@ def init() -> None:
                 added INTEGER NOT NULL
             );
 
+            -- Geräte, die die FRITZ!Box(en) kennen: eigener Name aus der FRITZ!Box, letzte IP, ob gerade aktiv.
+            -- Bleibt über Neustarts erhalten, damit Namen und Zuordnung sofort wieder da sind.
+            CREATE TABLE IF NOT EXISTS fritz_hosts (
+                mac TEXT PRIMARY KEY,
+                ip TEXT,
+                name TEXT,
+                active INTEGER NOT NULL DEFAULT 0,
+                interface TEXT,
+                last_seen INTEGER NOT NULL DEFAULT 0
+            );
+
             CREATE TABLE IF NOT EXISTS redirects (
                 source TEXT PRIMARY KEY,
                 target TEXT NOT NULL,
@@ -534,7 +545,7 @@ def devices() -> list[dict]:
     with closing(_connect()) as conn:
         rows = conn.execute(
             """
-            WITH ips AS (SELECT ip FROM domain_stats UNION SELECT ip FROM traffic),
+            WITH ips AS (SELECT ip FROM domain_stats UNION SELECT ip FROM traffic UNION SELECT ip FROM devices),
                  dns AS (SELECT ip, SUM(hits) AS hits, COUNT(*) AS domains, MAX(last_seen) AS ls
                          FROM domain_stats GROUP BY ip),
                  tr AS (SELECT ip, SUM(bytes_up) AS up, SUM(bytes_down) AS down, MAX(last_seen) AS ls
@@ -551,13 +562,17 @@ def devices() -> list[dict]:
             ORDER BY last_seen DESC
             """
         ).fetchall()
+        hosts = {r["mac"]: dict(r) for r in conn.execute("SELECT * FROM fritz_hosts")}
     sites = current_sites()
+    # IP -> MAC laut FRITZ!Box (nur aktive Geräte, deren Adresse also stimmt)
+    fritz_ip_mac = {h["ip"]: mac for mac, h in hosts.items() if h["active"] and h["ip"]}
     # Pro MAC nur eine Zeile (aktuelle Lease); Stats ohne MAC bleiben eigene Zeilen.
     by_mac: dict[str, dict] = {}
     plain: list[dict] = []
     for r in rows:
         d = {**dict(r), "current_site": sites.get(r["ip"])}
-        mac = (d.get("mac") or "").strip().lower()
+        mac = (d.get("mac") or "").strip().lower() or fritz_ip_mac.get(d["ip"], "")
+        d["mac"] = mac or None
         if not mac:
             plain.append(d)
             continue
@@ -580,6 +595,20 @@ def devices() -> list[dict]:
             "last_seen": max(keep["last_seen"], drop["last_seen"]),
             "current_site": site,
         }
+    # Geräte, die nur die FRITZ!Box kennt (z. B. gerade aus, fest eingestellte IP, eigenes DNS)
+    for mac, h in hosts.items():
+        if mac not in by_mac:
+            by_mac[mac] = {
+                "ip": h["ip"] or "", "mac": mac, "hostname": None, "hits": 0, "domains": 0,
+                "bytes_up": 0, "bytes_down": 0, "last_seen": h["last_seen"], "updated": 0,
+                "current_site": None, "fritz_only": True,
+            }
+    for mac, d in by_mac.items():
+        h = hosts.get(mac)
+        d["fritz_name"] = h["name"] if h else None
+        d["fritz_active"] = bool(h and h["active"])
+        d["lease_name"] = d.get("hostname")
+        d["hostname"] = d["fritz_name"] or d["hostname"]
     out = plain + list(by_mac.values())
     out.sort(key=lambda x: x["last_seen"], reverse=True)
     return out
@@ -587,7 +616,19 @@ def devices() -> list[dict]:
 
 def device(ip: str) -> dict | None:
     with closing(_connect()) as conn:
-        row = conn.execute("SELECT ip, mac, hostname FROM devices WHERE ip = ?", (ip,)).fetchone()
+        row = conn.execute(
+            """
+            SELECT d.ip, d.mac, COALESCE(f.name, d.hostname) AS hostname, d.hostname AS lease_name, f.name AS fritz_name
+            FROM devices d LEFT JOIN fritz_hosts f ON f.mac = d.mac WHERE d.ip = ?
+            """,
+            (ip,),
+        ).fetchone()
+        if row is None:
+            row = conn.execute(
+                "SELECT ip, mac, name AS hostname, NULL AS lease_name, name AS fritz_name FROM fritz_hosts WHERE ip = ?"
+                " ORDER BY active DESC, last_seen DESC LIMIT 1",
+                (ip,),
+            ).fetchone()
     res = dict(row) if row else {"ip": ip, "mac": None, "hostname": None}
     sites = current_sites()
     res["current_site"] = sites.get(ip)
@@ -611,14 +652,59 @@ def recent(limit: int = 100, ip: str | None = None) -> list[dict]:
     with closing(_connect()) as conn:
         rows = conn.execute(
             f"""
-            SELECT q.ts, q.ip, q.domain, q.qtype, d.hostname
-            FROM queries q LEFT JOIN devices d ON d.ip = q.ip
+            SELECT q.ts, q.ip, q.domain, q.qtype, COALESCE(f.name, d.hostname) AS hostname
+            FROM queries q LEFT JOIN devices d ON d.ip = q.ip LEFT JOIN fritz_hosts f ON f.mac = d.mac
             {where}
             ORDER BY q.id DESC LIMIT ?
             """,
             (*params, limit),
         ).fetchall()
     return [dict(r) for r in rows]
+
+def save_fritz_hosts(hosts: list[dict]) -> None:
+    """Geräteliste der FRITZ!Box(en) merken: [{mac, ip, name, active, interface}].
+
+    Aktive Geräte mit IPv4 kommen zusätzlich in die Geräteliste (Identität = MAC), so werden sie auch ohne
+    cloudy-DHCP-Lease erkannt und nach einem Neustart nicht doppelt geführt.
+    """
+    if not hosts:
+        return
+    now = int(time.time())
+    with closing(_connect()) as conn:
+        conn.executemany(
+            """
+            INSERT INTO fritz_hosts (mac, ip, name, active, interface, last_seen) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (mac) DO UPDATE SET
+                ip = COALESCE(excluded.ip, fritz_hosts.ip),
+                name = COALESCE(excluded.name, fritz_hosts.name),
+                active = excluded.active,
+                interface = COALESCE(excluded.interface, fritz_hosts.interface),
+                last_seen = MAX(fritz_hosts.last_seen, excluded.last_seen)
+            """,
+            [
+                (h["mac"], h.get("ip") or None, h.get("name") or None, int(bool(h.get("active"))),
+                 h.get("interface") or None, now if h.get("active") else 0)
+                for h in hosts if h.get("mac")
+            ],
+        )
+        conn.commit()
+    active = [(h["ip"], h["mac"], None) for h in hosts if h.get("active") and h.get("mac") and _is_ipv4(h.get("ip"))]
+    known = {(r["ip"], r["mac"]) for r in _rows("SELECT ip, mac FROM devices")}
+    # Nur schreiben, was neu ist: sonst würde jede Abfrage die Lease-Zeitstempel verschieben.
+    upsert_devices([a for a in active if (a[0], a[1]) not in known])
+
+
+def _rows(sql: str, params: tuple = ()) -> list[sqlite3.Row]:
+    with closing(_connect()) as conn:
+        return conn.execute(sql, params).fetchall()
+
+
+def _is_ipv4(val: str | None) -> bool:
+    try:
+        return ipaddress.ip_address(val or "").version == 4
+    except ValueError:
+        return False
+
 
 def redirects() -> list[dict]:
     with closing(_connect()) as conn:

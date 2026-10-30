@@ -135,7 +135,7 @@ def test_presence_parse_and_dashboard(client):
     assert set(db.known_ips()) == {"192.168.178.25", "192.168.178.26"}
     client.app.state.presence = SimpleNamespace(online=frozenset({"192.168.178.25"}))
     page = client.get("/").text
-    assert "(1 online)" in page and "● online" in page
+    assert "(1 online · " in page and "● online" in page
     api = {d["ip"]: d["online"] for d in client.get("/api/devices").json()}
     assert api == {"192.168.178.25": True, "192.168.178.26": False}
 
