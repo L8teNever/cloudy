@@ -7,7 +7,15 @@ REPO="${CLOUDY_REPO:-l8tenever/cloudy}"
 BRANCH="${CLOUDY_BRANCH:-main}"
 RAW="https://raw.githubusercontent.com/$REPO/$BRANCH"
 
-cd "$DIR"
+# Platzhalter nie wörtlich ausschreiben – beim Installieren wird er sonst auch hier ersetzt.
+PLACEHOLDER="__CLOUDY""_DIR__"
+if [ ! -f "$DIR/docker-compose.yml" ]; then
+  # Fehlerhaft installiert (Platzhalter nicht ersetzt) -> üblichen Ordner nehmen.
+  for d in "$HOME/cloudy" "$PWD"; do
+    if [ -f "$d/docker-compose.yml" ]; then DIR="$d"; break; fi
+  done
+fi
+cd "$DIR" || { echo "cloudy-Ordner nicht gefunden. Aufruf z. B.: CLOUDY_DIR=~/cloudy cloudy update" >&2; exit 1; }
 DOCKER="docker"
 docker info >/dev/null 2>&1 || DOCKER="sudo docker"
 
@@ -49,6 +57,40 @@ ensure_slots() {
   [ -f data/docker-compose.slots.yml ]
 }
 
+# Neue/gelöschte WARP-/VPN-Profile im Dashboard -> Container automatisch anlegen/entfernen.
+# systemd beobachtet data/docker-compose.slots.yml und ruft dann "cloudy slots" auf.
+install_watcher() {
+  command -v systemctl >/dev/null 2>&1 || return 0
+  local self path_unit service_unit
+  self="$(command -v cloudy || echo /usr/local/bin/cloudy)"
+  path_unit="[Unit]
+Description=cloudy: WARP-/VPN-Profile beobachten
+
+[Path]
+PathModified=$DIR/data/docker-compose.slots.yml
+Unit=cloudy-slots.service
+
+[Install]
+WantedBy=multi-user.target
+"
+  service_unit="[Unit]
+Description=cloudy: WARP-/VPN-Container an die Profile anpassen
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=CLOUDY_DIR=$DIR
+Environment=CLOUDY_QUIET_WATCHER=1
+ExecStart=$self slots
+"
+  if [ "$(cat /etc/systemd/system/cloudy-slots.path 2>/dev/null)" != "$path_unit" ]      || [ "$(cat /etc/systemd/system/cloudy-slots.service 2>/dev/null)" != "$service_unit" ]; then
+    printf '%s' "$path_unit" | sudo tee /etc/systemd/system/cloudy-slots.path >/dev/null
+    printf '%s' "$service_unit" | sudo tee /etc/systemd/system/cloudy-slots.service >/dev/null
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now cloudy-slots.path >/dev/null 2>&1       && echo "Neue WARP-/VPN-Profile starten ab jetzt automatisch."
+  fi
+}
+
 ask() {
   local answer
   read -r -p "$1 (j/n) " answer </dev/tty
@@ -76,7 +118,7 @@ case "${1:-}" in
     # Zuerst diesen Befehl selbst erneuern – ältere Versionen kennen die WARP-/VPN-Profile (Overlay) nicht
     # und löschen die Container beim Update als "orphans".
     if [ -z "${CLOUDY_SELF_UPDATED:-}" ] && curl -fsSL "$RAW/scripts/cloudy" -o /tmp/cloudy-cli.new; then
-      sed "s|__CLOUDY_DIR__|$DIR|" /tmp/cloudy-cli.new > /tmp/cloudy-cli
+      sed "s|$PLACEHOLDER|$DIR|" /tmp/cloudy-cli.new > /tmp/cloudy-cli
       self="$(command -v cloudy || echo /usr/local/bin/cloudy)"
       if ! cmp -s /tmp/cloudy-cli "$self"; then
         install -m 755 /tmp/cloudy-cli "$self" 2>/dev/null || sudo install -m 755 /tmp/cloudy-cli "$self"
@@ -110,12 +152,19 @@ case "${1:-}" in
       echo "WARNUNG: data/docker-compose.slots.yml fehlt – WARP-/VPN-Container bleiben unverändert. Danach: cloudy slots"
       compose up -d
     fi
+    install_watcher
     $DOCKER image prune -f >/dev/null
     echo "cloudy ist aktuell. Dashboard: http://$(grep '^LOCAL_NAME=' .env | cut -d= -f2)"
     ;;
   slots)
+    if [ -n "${CLOUDY_QUIET_WATCHER:-}" ]; then
+      # Vom Watcher aufgerufen: kein install_watcher (läuft als root ohne sudo-Rückfrage), nur Container anpassen.
+      [ -f data/docker-compose.slots.yml ] || exit 0
+      compose up -d --remove-orphans
+      exit 0
+    fi
     ensure_slots || { echo "Konnte data/docker-compose.slots.yml nicht erzeugen (cloudy logs cloudy)."; exit 1; }
-    compose pull
+    install_watcher
     compose up -d --remove-orphans
     compose ps
     echo "WARP-/VPN-Container sind an die Profile im Dashboard angepasst. Zustand: cloudy status"

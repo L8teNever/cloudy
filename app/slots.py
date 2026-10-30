@@ -172,9 +172,16 @@ def write_compose(data_dir: str, slots: list[Slot] | None = None) -> str:
             "",
         ]
     path = _path(data_dir, COMPOSE_FILE)
+    content = "\n".join(lines).rstrip() + "\n"
+    try:
+        with open(path, encoding="utf-8") as f:
+            if f.read() == content:
+                return path  # unverändert -> der Watcher auf dem Pi soll nicht unnötig anspringen
+    except OSError:
+        pass
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-        f.write("\n".join(lines).rstrip() + "\n")
+        f.write(content)
     os.replace(tmp, path)
     return path
 
@@ -187,6 +194,6 @@ def ensure(data_dir: str) -> list[Slot]:
 
 
 def try_apply(data_dir: str) -> str:
-    """Compose-Datei schreiben. Container startet der Host mit „cloudy slots“ (Docker-Socket bleibt draußen)."""
+    """Compose-Datei schreiben. Auf dem Pi beobachtet systemd (cloudy-slots.path) die Datei und startet die Container."""
     write_compose(data_dir)
-    return "Gespeichert. Auf dem Pi jetzt „cloudy slots“ ausführen, damit die Container starten oder verschwinden."
+    return "Gespeichert. Der Container startet in ein paar Sekunden automatisch (sonst auf dem Pi: cloudy slots)."

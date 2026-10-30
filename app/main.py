@@ -671,7 +671,7 @@ async def warp_logout(request: Request, slot: str):
 
 @app.post("/warp/neu", dependencies=[Depends(require_password)])
 async def warp_neu(request: Request, kind: str = Form("warp")):
-    """Neues WARP- oder VPN-Profil anlegen (Container per cloudy slots auf dem Pi)."""
+    """Neues WARP- oder VPN-Profil anlegen (Container startet der Watcher auf dem Pi automatisch)."""
     try:
         slot = await run_in_threadpool(slots.add, request.app.state.settings.data_dir, kind)
     except ValueError as exc:
