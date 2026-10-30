@@ -277,3 +277,43 @@ def test_direct_site_route_page(client):
     client.post("/seiten-routen/add", data={"domain": "bank.de", "slot": "direct"})
     assert db.site_routes() == {"bank.de": "direct"}
     assert "Normal (Fritzbox)" in client.get("/vpn").text
+
+
+def test_slot_allowlist_limits_routing():
+    s = Settings.from_env()
+    other = "aa:bb:cc:dd:ee:02"
+    allow = {"warp1": {MAC}}
+    plan = warp.build_plan(
+        s, {MAC: "warp1", other: "warp1"}, {"warp1": True}, default_slot="warp1",
+        site_routes={"netflix.com": "warp1"}, group_mac_slots=[(other, "warp1")], allow=allow,
+    )
+    text = [" ".join(r) for r in plan.mangle_rules]
+    # Nur das freigegebene Gerät wird markiert – weder Zuweisung, Gruppe, Seiten-Regel noch Standard greifen für andere.
+    assert not any(other in r for r in text)
+    assert not any("0x101" in r and "--mac-source" not in r and "--mark 0x0" in r for r in text)
+    assert any(MAC in r and "--mark 0x0" in r for r in text)  # Standard nur für das freigegebene Gerät
+    assert any(MAC in r and "--match-set" in r for r in text)  # Seiten-Regel nur für das freigegebene Gerät
+    # Niemand freigegeben -> keine Markierung für warp1
+    plan = warp.build_plan(s, {MAC: "warp1"}, {"warp1": True}, default_slot="warp1", allow={"warp1": set()})
+    assert not any("0x101" in " ".join(r) and "MARK" in r for r in plan.mangle_rules)
+
+
+def test_slot_allowlist_pages(client):
+    other = "aa:bb:cc:dd:ee:02"
+    db.upsert_devices([("testclient", MAC, "handy"), ("192.168.178.50", other, "tv")])
+    assert warp.slot_allowlist("warp1") is None
+    client.post("/warp/warp1/freigabe", data={"modus": "nur", "mac": [other]})
+    assert warp.slot_allowlist("warp1") == {other}
+    assert "nur 1 Gerät" in client.get("/vpn").text
+    # „Mein Gerät“ (testclient = MAC) sieht warp1 nicht und darf es nicht wählen
+    assert 'value="warp1"' not in client.get("/mein").text
+    r = client.post("/mein/warp", data={"slot": "warp1"}, follow_redirects=False)
+    assert r.headers["location"].startswith("/mein?fehler=")
+    # Admin weist direkt zu -> wird freigegeben
+    client.post("/devices/warp", data={"mac": MAC, "slot": "warp1"})
+    assert warp.slot_allowlist("warp1") == {MAC, other}
+    client.post("/warp/warp1/freigabe", data={"modus": "alle"})
+    assert warp.slot_allowlist("warp1") is None
+    client.post("/warp/warp1/freigabe", data={"modus": "nur"})
+    assert warp.slot_allowlist("warp1") == set()
+    assert "gesperrt" in client.get("/vpn").text

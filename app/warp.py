@@ -64,6 +64,51 @@ def mein_choice_ok(slot: str, current: str) -> bool:
     return allowed is None or (slot or STANDARD) in allowed or slot == current
 
 
+ALLOW_PREFIX = "slot_allow:"  # + Slot -> kommagetrennte MACs; fehlt/leer = alle Geräte dürfen
+
+
+def slot_allowlist(slot: str) -> set[str] | None:
+    """Welche Geräte (MAC) dürfen über dieses Profil? None = alle."""
+    value = db.get_setting(ALLOW_PREFIX + slot).strip()
+    if not value:
+        return None
+    return {m for m in value.split(",") if MAC_RE.match(m)}
+
+
+def slot_allowlists(slots: list[str]) -> dict[str, set[str]]:
+    """Nur eingeschränkte Profile: Slot -> erlaubte MACs."""
+    out = {}
+    for slot in slots:
+        allow = slot_allowlist(slot)
+        if allow is not None:
+            out[slot] = allow
+    return out
+
+
+def save_slot_allowlist(slot: str, only_selected: bool, macs: list[str]) -> None:
+    """only_selected=False -> alle dürfen. Sonst nur die MACs (leere Auswahl = niemand, Platzhalter "none")."""
+    if not only_selected:
+        db.set_setting(ALLOW_PREFIX + slot, "")
+        return
+    picked = sorted({m.strip().lower() for m in macs if MAC_RE.match(m.strip().lower())})
+    db.set_setting(ALLOW_PREFIX + slot, ",".join(picked) or "none")
+
+
+def allow_device(slot: str, mac: str) -> None:
+    """Gerät zur Freigabe eines eingeschränkten Profils hinzufügen (z. B. wenn der Admin es direkt zuweist)."""
+    allow = slot_allowlist(slot)
+    if allow is not None and mac not in allow:
+        save_slot_allowlist(slot, True, [*allow, mac])
+
+
+def may_use(mac: str, slot: str, allow: dict[str, set[str]] | None = None) -> bool:
+    """Darf dieses Gerät über das Profil? "direct"/Standard sind immer erlaubt."""
+    if not slot or slot in (DIRECT, STANDARD):
+        return True
+    allowed = slot_allowlist(slot) if allow is None else allow.get(slot)
+    return allowed is None or (mac or "").strip().lower() in allowed
+
+
 def site_set(index: int | str, v6: bool = False) -> str:
     """Name des ipset, in das dnsmasq die IPs der Seiten für dieses Profil einträgt ("direct" = immer normal)."""
     return f"cloudy_s{'d' if index == DIRECT else index}" + ("_6" if v6 else "")
@@ -179,12 +224,15 @@ def _mark_rules(
     s: Settings, assignments: dict[str, str], default_slot: str, index_of: dict[str, int], local_net: str,
     site_routes: dict[str, str] | None = None, v6: bool = False,
     group_mac_slots: list[tuple[str, str]] | None = None,
+    allow: dict[str, set[str]] | None = None,
 ) -> tuple[tuple[str, ...], ...]:
-    """Markierungen nach MAC. local_net: Ziele im eigenen Heimnetz (IPv4 oder IPv6) werden nie getunnelt."""
+    """Markierungen nach MAC. local_net: Ziele im eigenen Heimnetz (IPv4 oder IPv6) werden nie getunnelt.
+    allow: eingeschränkte Profile (Slot -> erlaubte MACs) – andere Geräte kommen dort nie hinein."""
+    allow = allow or {}
     rules = []
     # Gruppen-Seiten zuerst (nur Mitglieder): eigene Listen vor den globalen Regeln.
     for mac, slot in group_mac_slots or ():
-        if not MAC_RE.match(mac):
+        if not MAC_RE.match(mac) or not may_use(mac, slot, allow):
             continue
         if slot == DIRECT:
             rules.append((
@@ -206,13 +254,18 @@ def _mark_rules(
         # Seiten, die immer normal (über die Fritzbox) rausgehen sollen: nie markieren, egal was beim Gerät steht.
         rules.append(("-i", s.lan_interface, "-m", "set", "--match-set", site_set(DIRECT, v6), "dst", "-j", "RETURN"))
     for slot in sorted({sl for sl in (site_routes or {}).values() if sl in index_of}, key=index_of.get):
-        rules.append((
-            "-i", s.lan_interface, "-m", "set", "--match-set", site_set(index_of[slot], v6), "dst",
-            "!", "-d", local_net, "-j", "MARK", "--set-mark", mark(index_of[slot]),
-        ))
+        # Eingeschränktes Profil: Seiten-Regel nur für die freigegebenen Geräte.
+        who = [("-m", "mac", "--mac-source", m) for m in sorted(allow[slot])] if slot in allow else [()]
+        for match in who:
+            rules.append((
+                "-i", s.lan_interface, *match, "-m", "set", "--match-set", site_set(index_of[slot], v6), "dst",
+                "!", "-d", local_net, "-j", "MARK", "--set-mark", mark(index_of[slot]),
+            ))
         rules.append(("-i", s.lan_interface, "-m", "mark", "--mark", mark(index_of[slot]), "-j", "RETURN"))
     for mac in sorted(m for m in assignments if MAC_RE.match(m)):
         slot = assignments[mac]
+        if not may_use(mac, slot, allow):
+            continue  # nicht freigegeben -> wie ohne Zuweisung (Standard bzw. normal)
         if slot == DIRECT:
             # Nicht markieren und die Standard-Regel unten überspringen.
             rules.append(("-i", s.lan_interface, "-m", "mac", "--mac-source", mac, "-j", "RETURN"))
@@ -222,11 +275,13 @@ def _mark_rules(
                 "!", "-d", local_net, "-j", "MARK", "--set-mark", mark(index_of[slot]),
             ))
     if default_slot in index_of:
-        # Alle Geräte, die noch keine Markierung haben.
-        rules.append((
-            "-i", s.lan_interface, "-m", "mark", "--mark", "0x0",
-            "!", "-d", local_net, "-j", "MARK", "--set-mark", mark(index_of[default_slot]),
-        ))
+        # Alle Geräte, die noch keine Markierung haben (bei eingeschränktem Profil nur die freigegebenen).
+        who = [("-m", "mac", "--mac-source", m) for m in sorted(allow[default_slot])] if default_slot in allow else [()]
+        for match in who:
+            rules.append((
+                "-i", s.lan_interface, *match, "-m", "mark", "--mark", "0x0",
+                "!", "-d", local_net, "-j", "MARK", "--set-mark", mark(index_of[default_slot]),
+            ))
     return tuple(rules)
 
 
@@ -238,13 +293,14 @@ def build_plan(
     ipv6_ok: dict[str, bool] | None = None,
     site_routes: dict[str, str] | None = None,
     group_mac_slots: list[tuple[str, str]] | None = None,
+    allow: dict[str, set[str]] | None = None,
 ) -> Plan:
     """assignments: MAC -> Slot (oder "direct"). connected: Slot -> Tunnel verbunden? default_slot: für alle anderen.
     ipv6_ok: Slot -> Tunnel kann IPv6 (nur mit IPV6_ENABLED).
     group_mac_slots: (MAC, Slot) aus Gruppen-Seitenlisten – greifen nur für diese Geräte."""
     index_of = {slot: i for i, (slot, _) in enumerate(s.warp_slots, start=1)}
     rules = _mark_rules(
-        s, assignments, default_slot, index_of, str(s.lan_network), site_routes, False, group_mac_slots
+        s, assignments, default_slot, index_of, str(s.lan_network), site_routes, False, group_mac_slots, allow
     )
     routes = []
     for index, (slot, ip) in enumerate(s.warp_slots, start=1):
@@ -258,7 +314,7 @@ def build_plan(
     if not s.ipv6_enabled:
         return Plan(rules, tuple(routes))
     rules6 = _mark_rules(
-        s, assignments, default_slot, index_of, str(ipv6.prefix(s)), site_routes, True, group_mac_slots
+        s, assignments, default_slot, index_of, str(ipv6.prefix(s)), site_routes, True, group_mac_slots, allow
     )
     routes6 = []
     for index, (slot, ip) in enumerate(s.warp_slots, start=1):
@@ -412,6 +468,7 @@ class WarpRouter:
         self.apply(build_plan(
             self.s, policy.assignments(), connected, db.get_setting(DEFAULT_KEY), ipv6_ok,
             db.site_routes(), db.group_site_mac_slots(),
+            slot_allowlists([slot for slot, _ in self.s.warp_slots]),
         ))
 
     def start(self) -> None:

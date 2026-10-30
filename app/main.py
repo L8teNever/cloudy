@@ -472,6 +472,9 @@ async def mein_geraet(request: Request, ok: int | None = None, fehler: str | Non
     eff = await run_in_threadpool(policy.resolve, mac) if mac else policy.Effective("", "default")
     if allowed is not None:
         profiles = [w for w in profiles if w["slot"] in allowed or w["slot"] == current]
+    # Eingeschränkte Profile nur für freigegebene Geräte anzeigen.
+    allow = await run_in_threadpool(warp.slot_allowlists, [w["slot"] for w in profiles])
+    profiles = [w for w in profiles if warp.may_use(mac, w["slot"], allow)]
     labels = {w["slot"]: w["label"] for w in profiles}
     online = online_ips(request)
     return templates.TemplateResponse(
@@ -520,6 +523,10 @@ async def mein_set_warp(request: Request, slot: str = Form("")):
     current = (await run_in_threadpool(db.device_warp)).get(mac, "")
     if not await run_in_threadpool(warp.mein_choice_ok, slot, current):
         return RedirectResponse(f"/mein?fehler={quote('Diese Auswahl ist nicht freigegeben.')}", status_code=303)
+    if not await run_in_threadpool(warp.may_use, mac, slot):
+        return RedirectResponse(
+            f"/mein?fehler={quote('Dieses Gerät darf dieses Profil nicht nutzen.')}", status_code=303
+        )
     await run_in_threadpool(db.set_device_warp, mac, slot or None)
     return RedirectResponse("/mein?ok=1", status_code=303)
 
@@ -591,6 +598,8 @@ def _purge_slot_references(slot: str) -> None:
                 db.remove_group_site_route(g["id"], domain)
     if db.get_setting(warp.DEFAULT_KEY) == slot:
         db.set_setting(warp.DEFAULT_KEY, "")
+    # Freigabe gilt sonst für ein später neu angelegtes Profil mit gleichem Namen.
+    warp.save_slot_allowlist(slot, False, [])
 
 
 @app.post("/warp/{slot}/login", dependencies=[Depends(require_password)])
@@ -740,8 +749,20 @@ async def device_set_warp(request: Request, mac: str = Form(...), slot: str = Fo
         raise HTTPException(status_code=400, detail="Ungültige MAC-Adresse")
     if slot and slot != warp.DIRECT:
         _check_slot(request, slot)
+        # Der Admin weist ausdrücklich zu -> Gerät für ein eingeschränktes Profil freigeben.
+        await run_in_threadpool(warp.allow_device, slot, mac)
     await run_in_threadpool(db.set_device_warp, mac, slot or None)
     return RedirectResponse(f"/?ip={quote(ip)}" if ip else "/", status_code=303)
+
+
+@app.post("/warp/{slot}/freigabe", dependencies=[Depends(require_password)])
+async def warp_freigabe(
+    request: Request, slot: str, modus: str = Form("alle"), mac: list[str] = Form(default=[])
+):
+    """Wer darf über dieses Profil? modus=alle oder nur (dann nur die angehakten Geräte)."""
+    _check_slot(request, slot)
+    await run_in_threadpool(warp.save_slot_allowlist, slot, modus == "nur", mac)
+    return RedirectResponse(f"/vpn#freigabe-{slot}", status_code=303)
 
 
 def _group_slot_ok(request: Request, slot: str) -> str:

@@ -393,9 +393,30 @@ async def schutz(request: Request):
 
 @router.get("/vpn", response_class=HTMLResponse, dependencies=[Depends(require_password)])
 async def vpn(request: Request, fehler: str | None = None, erfolg: str | None = None):
+    freigabe = await run_in_threadpool(ctx_freigabe, request)
     return await page(
-        request, "seiten/vpn.html", "VPN", "/vpn", ["vpn", "seitenrouten"], fehler=fehler, erfolg=erfolg
+        request, "seiten/vpn.html", "VPN", "/vpn", ["vpn", "seitenrouten"], fehler=fehler, erfolg=erfolg,
+        freigabe=freigabe,
     )
+
+
+def ctx_freigabe(request: Request) -> dict:
+    """Für „Wer darf welches Profil?“: Profile mit Freigabe und alle bekannten Geräte (nach MAC)."""
+    s: Settings = request.app.state.settings
+    profiles = warp_profiles(s)
+    allow = warp.slot_allowlists([w["slot"] for w in profiles])
+    devices: dict[str, str] = {}
+    for row in db.devices():
+        mac = (row.get("mac") or "").strip().lower()
+        if warp.MAC_RE.match(mac) and mac not in devices:
+            devices[mac] = device_name(row)
+    for macs in allow.values():
+        for mac in macs:
+            devices.setdefault(mac, mac)
+    return {
+        "profiles": [{**w, "allow": allow.get(w["slot"])} for w in profiles],
+        "devices": sorted(devices.items(), key=lambda kv: kv[1].lower()),
+    }
 
 
 @router.get("/leistung", response_class=HTMLResponse, dependencies=[Depends(require_password)])
