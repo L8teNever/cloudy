@@ -72,44 +72,33 @@
         Internet läuft über {{ effective_label }}. Das kann nur der Admin unter Gruppen ändern.
       </div>
     </section>
-    {% elif warp or show_direct or show_standard %}
+    {% elif warp or show_direct %}
+    {# Kein „Standard“ mehr: ohne eigene Wahl ist das markiert, was gerade wirklich gilt. #}
+    {% set sel = current or effective.slot or (warp_default if warp_default in warp_names else 'direct') %}
     <section class="panel options-panel">
       <form method="post" action="/mein/warp" id="meinForm">
         <div role="radiogroup" aria-label="Internet für dieses Gerät" class="options-group">
-          {% if show_standard %}
-          <label class="option-card {{ 'active' if not current }}" data-slot="">
-            <input type="radio" name="slot" value="" {{ 'checked' if not current }}>
-            <div class="radio-circle"><div class="radio-dot"></div></div>
-            <div class="option-texts">
-              <div class="option-header-row">
-                <span class="option-title">Standard</span>
-                {% if not current %}<span class="active-badge">Aktiv</span>{% endif %}
-              </div>
-              <span class="option-sub">{{ warp_names.get(warp_default, 'normal über Fritzbox') if warp_default else 'normal über Fritzbox' }}</span>
-            </div>
-          </label>
-          {% endif %}
           {% if show_direct %}
-          <label class="option-card {{ 'active' if current == 'direct' }}" data-slot="direct">
-            <input type="radio" name="slot" value="direct" {{ 'checked' if current == 'direct' }}>
+          <label class="option-card {{ 'active' if sel == 'direct' }}" data-slot="direct">
+            <input type="radio" name="slot" value="direct" {{ 'checked' if sel == 'direct' }}>
             <div class="radio-circle"><div class="radio-dot"></div></div>
             <div class="option-texts">
               <div class="option-header-row">
                 <span class="option-title">Normal</span>
-                {% if current == 'direct' %}<span class="active-badge">Aktiv</span>{% endif %}
+                {% if sel == 'direct' %}<span class="active-badge">Aktiv</span>{% endif %}
               </div>
               <span class="option-sub">Direkt über die Fritzbox, ohne VPN/WARP</span>
             </div>
           </label>
           {% endif %}
           {% for w in warp %}
-          <label class="option-card {{ 'active' if current == w.slot }}" data-slot="{{ w.slot }}">
-            <input type="radio" name="slot" value="{{ w.slot }}" {{ 'checked' if current == w.slot }}>
+          <label class="option-card {{ 'active' if sel == w.slot }}" data-slot="{{ w.slot }}">
+            <input type="radio" name="slot" value="{{ w.slot }}" {{ 'checked' if sel == w.slot }}>
             <div class="radio-circle"><div class="radio-dot"></div></div>
             <div class="option-texts">
               <div class="option-header-row">
                 <span class="option-title">{{ w.label }}</span>
-                {% if current == w.slot %}<span class="active-badge">Aktiv</span>{% endif %}
+                {% if sel == w.slot %}<span class="active-badge">Aktiv</span>{% endif %}
               </div>
               <span class="option-sub">
                 {% if w.kind == 'vpn' %}Über VPN{% else %}Über Cloudflare WARP{% endif %}{% if not w.has_token %} · <span class="not-configured">noch nicht eingerichtet</span>{% endif %}

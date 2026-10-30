@@ -317,3 +317,12 @@ def test_slot_allowlist_pages(client):
     client.post("/warp/warp1/freigabe", data={"modus": "nur"})
     assert warp.slot_allowlist("warp1") == set()
     assert "gesperrt" in client.get("/vpn").text
+
+
+def test_mein_has_no_standard_option(client):
+    db.upsert_devices([("testclient", MAC, "handy")])
+    page = client.get("/mein").text
+    assert 'name="slot" value=""' not in page and ">Standard<" not in page
+    assert 'value="direct" checked' in page  # ohne eigene Wahl und ohne Standard-Profil: Normal ist markiert
+    db.set_setting(warp.DEFAULT_KEY, "warp1")
+    assert 'value="warp1" checked' in client.get("/mein").text
