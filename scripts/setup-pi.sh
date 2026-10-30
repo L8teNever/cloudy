@@ -9,10 +9,12 @@ BRANCH="${CLOUDY_BRANCH:-main}"
 DIR="${CLOUDY_DIR:-$HOME/cloudy}"
 RAW="https://raw.githubusercontent.com/$REPO/$BRANCH"
 
-PI_IP="${PI_IP:-192.168.178.2}"
-ROUTER_IP="${ROUTER_IP:-192.168.178.1}"
-UPSTREAM_DNS="${UPSTREAM_DNS:-172.64.36.1}"
-IFACE="${LAN_INTERFACE:-eth0}"
+# Bei erneutem Aufruf gelten die Werte aus der vorhandenen .env (erste Zeile), nicht die Standardwerte.
+env_value() { [ -f "$DIR/.env" ] && grep -m1 "^$1=" "$DIR/.env" | cut -d= -f2- || true; }
+PI_IP="${PI_IP:-$(env_value PI_IP)}"; PI_IP="${PI_IP:-192.168.178.2}"
+ROUTER_IP="${ROUTER_IP:-$(env_value ROUTER_IP)}"; ROUTER_IP="${ROUTER_IP:-192.168.178.1}"
+UPSTREAM_DNS="${UPSTREAM_DNS:-$(env_value UPSTREAM_DNS)}"; UPSTREAM_DNS="${UPSTREAM_DNS:-172.64.36.1}"
+IFACE="${LAN_INTERFACE:-$(env_value LAN_INTERFACE)}"; IFACE="${IFACE:-eth0}"
 
 # --- 1. Docker ---
 if ! command -v docker >/dev/null 2>&1; then
@@ -37,7 +39,10 @@ if [ ! -f .env ]; then
     -e "s|^LAN_INTERFACE=.*|LAN_INTERFACE=$IFACE|" \
     .env
 else
-  # Ältere Installation: neue Einstellungen ergänzen, vorhandene bleiben wie sie sind.
+  # Ältere Installation: doppelte Zeilen entfernen (erste gilt), neue Einstellungen ergänzen, vorhandene bleiben.
+  awk '/^[A-Za-z_][A-Za-z0-9_]*=/ { k = $0; sub(/=.*/, "", k); if (seen[k]++) next } { print }' .env > .env.tmp
+  cmp -s .env .env.tmp || { cp .env .env.bak; cat .env.tmp > .env; echo "Doppelte Einträge in .env entfernt (Sicherung: .env.bak)."; }
+  rm -f .env.tmp
   while IFS= read -r line; do
     case "$line" in ''|\#*) continue ;; esac
     key="${line%%=*}"

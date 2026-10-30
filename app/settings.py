@@ -6,6 +6,44 @@ from dataclasses import dataclass
 PI_IP_FILE = "pi_ip"  # im Dashboard gesetzte Pi-Adresse (hat Vorrang vor PI_IP aus .env)
 
 
+ENV_FILE = os.environ.get("CLOUDY_ENV_FILE", "/cloudy.env")  # ~/cloudy/.env, schreibgeschützt eingebunden
+
+
+def apply_env_file(path: str = ENV_FILE) -> list[str]:
+    """Deine Werte aus .env gewinnen: bei doppelten Einträgen gilt die ERSTE Zeile.
+
+    Ältere „cloudy update“-Versionen haben .env.example bei jedem Update unten an .env angehängt; Docker nimmt
+    bei env_file die letzte Zeile -> Standardwerte (GATEWAY_ENABLED=0, PI_IP=…2) hätten deine Einstellungen
+    überschrieben. Rückgabe: Namen, die korrigiert wurden.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return []
+    first: dict[str, str] = {}
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key.startswith("export "):
+            key = key[7:].strip()
+        if not key or key in first:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        first[key] = value
+    fixed = []
+    for key, value in first.items():
+        if os.environ.get(key) != value:
+            os.environ[key] = value
+            fixed.append(key)
+    return fixed
+
+
 def _flag(name: str, default: str) -> bool:
     return os.environ.get(name, default).strip().lower() in ("1", "true", "yes", "ja", "an", "on")
 
@@ -124,6 +162,9 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        fixed = apply_env_file()
+        if fixed:
+            print(f"cloudy: .env enthielt doppelte Einträge – deine (erste) Zeile gilt: {', '.join(sorted(fixed))}", flush=True)
         data_dir = os.environ.get("DATA_DIR", "/data")
         env_ip = os.environ.get("PI_IP", "192.168.178.2").strip()
         router_ip = os.environ.get("ROUTER_IP", "192.168.178.1").strip()

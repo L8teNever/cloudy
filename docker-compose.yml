@@ -13,8 +13,65 @@ services:
       TZ: Europe/Berlin
     volumes:
       - ./data:/data
-    # WARP-/VPN-Container: data/docker-compose.slots.yml (Dashboard legt Profile an).
-    # Nach dem Anlegen/Löschen im Dashboard: cloudy slots   (bzw. cloudy update)
+      # Damit bei doppelten Zeilen in .env deine (erste) gilt – siehe app/settings.py apply_env_file.
+      - ./.env:/cloudy.env:ro
+
+  # Die vier Standard-Profile stehen auch hier, damit ein Update sie nie als "orphans" löscht.
+  # Weitere Profile (warp3, vpn3 …) kommen aus data/docker-compose.slots.yml – nach dem Anlegen: cloudy slots
+  warp1: &warp
+    image: ghcr.io/l8tenever/cloudy:warp
+    container_name: cloudy-warp1
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv4.conf.all.src_valid_mark: "1"
+      net.ipv4.conf.all.rp_filter: "2"
+      net.ipv6.conf.all.disable_ipv6: "0"
+      net.ipv6.conf.default.disable_ipv6: "0"
+      net.ipv6.conf.all.forwarding: "1"
+    environment:
+      TZ: Europe/Berlin
+    volumes:
+      - ./data/warp/warp1:/cloudy
+    networks:
+      cloudy-warp:
+        ipv4_address: 172.29.86.11
+        ipv6_address: fd29:86::11
+
+  warp2:
+    <<: *warp
+    container_name: cloudy-warp2
+    volumes:
+      - ./data/warp/warp2:/cloudy
+    networks:
+      cloudy-warp:
+        ipv4_address: 172.29.86.12
+        ipv6_address: fd29:86::12
+
+  vpn1: &vpn
+    <<: *warp
+    image: ghcr.io/l8tenever/cloudy:vpn
+    container_name: cloudy-vpn1
+    volumes:
+      - ./data/warp/vpn1:/cloudy
+    networks:
+      cloudy-warp:
+        ipv4_address: 172.29.86.21
+        ipv6_address: fd29:86::21
+
+  vpn2:
+    <<: *vpn
+    container_name: cloudy-vpn2
+    volumes:
+      - ./data/warp/vpn2:/cloudy
+    networks:
+      cloudy-warp:
+        ipv4_address: 172.29.86.22
+        ipv6_address: fd29:86::22
 
 networks:
   cloudy-warp:

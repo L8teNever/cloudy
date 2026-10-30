@@ -375,3 +375,24 @@ def test_pi_ip_form(client, tmp_path):
     client.post("/einstellungen/pi-ip", data={"auto": "1"})
     assert S.read_pi_ip_override(str(tmp_path)) == ""
     assert "IP-Adresse des Pi" in client.get("/einstellungen").text
+
+
+def test_env_file_first_line_wins(tmp_path, monkeypatch):
+    from app import settings as S
+
+    env = tmp_path / "cloudy.env"
+    env.write_text(
+        "PI_IP=192.168.178.3\nGATEWAY_ENABLED=1\n# Kommentar\nPI_IP=192.168.178.2\nGATEWAY_ENABLED=0\nNEU='x'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PI_IP", "192.168.178.2")  # so setzt Docker es bei doppelten Zeilen (letzte gewinnt)
+    monkeypatch.setenv("GATEWAY_ENABLED", "0")
+    monkeypatch.delenv("NEU", raising=False)
+    fixed = S.apply_env_file(str(env))
+    import os
+
+    assert os.environ["PI_IP"] == "192.168.178.3"
+    assert os.environ["GATEWAY_ENABLED"] == "1"
+    assert os.environ["NEU"] == "x"
+    assert set(fixed) == {"PI_IP", "GATEWAY_ENABLED", "NEU"}
+    assert S.apply_env_file(str(tmp_path / "fehlt.env")) == []
