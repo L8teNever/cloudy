@@ -379,6 +379,7 @@ def localdomain_ctx(request: Request) -> dict:
     info = localdomain.cert_info(s)
     return {
         "domain": localdomain.domain(),
+        "dashboard": localdomain.dashboard_domain(),
         "email": db.get_setting(localdomain.EMAIL_KEY),
         "has_token": bool(db.get_setting(localdomain.TOKEN_KEY)),
         "cert": info,

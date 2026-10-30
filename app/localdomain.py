@@ -1,7 +1,10 @@
-"""Eigene echte Domain nur im Heimnetz (z. B. main.kulbarts.com) mit Let's-Encrypt-Zertifikat.
+"""Eigene echte Domains nur im Heimnetz mit Let's-Encrypt-Zertifikat.
+
+Zwei Namen sind einstellbar: einer für das ganze Dashboard (statt cloudy.lan, z. B. cloudy.kulbarts.com) und einer
+nur für „Mein Gerät“ (/mein, z. B. main.kulbarts.com). Beide bekommen zusammen ein Zertifikat.
 
 So funktioniert es:
-1. DNS: dnsmasq beantwortet die Domain im Heimnetz mit der IP des Pi. Von außen führt nichts hierher
+1. DNS: dnsmasq beantwortet die Domains im Heimnetz mit der IP des Pi. Von außen führt nichts hierher
    (der Tunnel-Hostname und der öffentliche DNS-Eintrag bei Cloudflare müssen dafür gelöscht sein).
 2. Zertifikat: Let's Encrypt per DNS-Challenge (ACME DNS-01). Dafür legt cloudy kurz einen TXT-Eintrag
    `_acme-challenge.<domain>` über die Cloudflare-API an. Port 80/443 müssen nicht aus dem Internet erreichbar sein.
@@ -28,7 +31,8 @@ from cryptography.x509.oid import NameOID
 from . import db
 from .settings import Settings
 
-DOMAIN_KEY = "local_domain"
+DOMAIN_KEY = "local_domain"  # nur „Mein Gerät“ (/mein)
+DASH_KEY = "local_domain_dashboard"  # das ganze Dashboard (wie cloudy.lan)
 TOKEN_KEY = "local_domain_cf_token"
 EMAIL_KEY = "local_domain_email"
 STATUS_KEY = "local_domain_status"
@@ -57,7 +61,18 @@ def normalize_domain(text: str) -> str:
 
 
 def domain() -> str:
+    """Domain nur für „Mein Gerät“ (/mein)."""
     return db.get_setting(DOMAIN_KEY)
+
+
+def dashboard_domain() -> str:
+    """Domain für das ganze Dashboard."""
+    return db.get_setting(DASH_KEY)
+
+
+def domains() -> list[str]:
+    """Alle eingestellten Domains (ohne Doppelte). Sie bekommen zusammen ein Zertifikat."""
+    return list(dict.fromkeys(d for d in (dashboard_domain(), domain()) if d))
 
 
 def paths(s: Settings) -> tuple[str, str]:
@@ -69,8 +84,8 @@ def account_key_path(s: Settings) -> str:
     return os.path.join(s.data_dir, "certs", "acme-konto.key")
 
 
-def dnsmasq_lines(name: str, pi_ip: str) -> list[str]:
-    return [f"address=/{name}/{pi_ip}"] if name else []
+def dnsmasq_lines(names: list[str], pi_ip: str) -> list[str]:
+    return [f"address=/{n}/{pi_ip}" for n in names]
 
 
 def cert_info(s: Settings) -> dict | None:
@@ -85,11 +100,11 @@ def cert_info(s: Settings) -> dict | None:
     return {"names": san.get_values_for_type(x509.DNSName), "expires": cert.not_valid_after_utc}
 
 
-def needs_issue(s: Settings, name: str) -> bool:
+def needs_issue(s: Settings, names: list[str]) -> bool:
     info = cert_info(s)
-    if not name:
+    if not names:
         return False
-    if info is None or name not in info["names"]:
+    if info is None or not set(names) <= set(info["names"]):
         return True
     left = info["expires"] - datetime.datetime.now(datetime.timezone.utc)
     return left < datetime.timedelta(days=RENEW_BEFORE_DAYS)
@@ -97,8 +112,7 @@ def needs_issue(s: Settings, name: str) -> bool:
 
 def sni_pair(s: Settings, host: str) -> tuple[str, str] | None:
     """Für den HTTPS-Server: Zertifikat + Schlüssel, wenn der Browser genau diese Domain aufruft."""
-    name = domain()
-    if not name or host.lower().rstrip(".") != name:
+    if host.lower().rstrip(".") not in domains():
         return None
     crt, key = paths(s)
     return (crt, key) if os.path.exists(crt) and os.path.exists(key) else None
@@ -231,14 +245,19 @@ class Acme:
             time.sleep(wait)
         raise AcmeError("Let's Encrypt: Zeitüberschreitung")
 
-    def issue(self, name: str, cf: Cloudflare, dns_wait: float = DNS_WAIT, wait: float = 2) -> tuple[str, str]:
-        """Zertifikat holen. Gibt (Zertifikatskette PEM, privater Schlüssel PEM) zurück."""
-        _, headers, raw = self.post(self.dir["newOrder"], {"identifiers": [{"type": "dns", "value": name}]})
+    def issue(self, names: list[str], cf: Cloudflare, dns_wait: float = DNS_WAIT, wait: float = 2) -> tuple[str, str]:
+        """Ein Zertifikat für alle Namen holen. Gibt (Zertifikatskette PEM, privater Schlüssel PEM) zurück."""
+        _, headers, raw = self.post(
+            self.dir["newOrder"], {"identifiers": [{"type": "dns", "value": n} for n in names]}
+        )
         order, order_url = json.loads(raw), headers["location"]
-        zone = cf.zone_id(name)
+        zones = {n: cf.zone_id(n) for n in names}
         for authz_url in order["authorizations"]:
             _, _, raw = self.post(authz_url, None)
-            challenge = next((c for c in json.loads(raw)["challenges"] if c["type"] == "dns-01"), None)
+            authz = json.loads(raw)
+            name = authz["identifier"]["value"]
+            zone = zones[name]
+            challenge = next((c for c in authz["challenges"] if c["type"] == "dns-01"), None)
             if challenge is None:
                 raise AcmeError("Let's Encrypt bietet keine DNS-Prüfung an")
             record = cf.add_txt(zone, f"_acme-challenge.{name}", dns_txt_value(challenge["token"], self.key))
@@ -254,8 +273,8 @@ class Acme:
         key = ec.generate_private_key(ec.SECP256R1())
         csr = (
             x509.CertificateSigningRequestBuilder()
-            .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)]))
-            .add_extension(x509.SubjectAlternativeName([x509.DNSName(name)]), critical=False)
+            .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, names[0])]))
+            .add_extension(x509.SubjectAlternativeName([x509.DNSName(n) for n in names]), critical=False)
             .sign(key, hashes.SHA256())
         )
         self.post(order["finalize"], {"csr": b64(csr.public_bytes(serialization.Encoding.DER))})
@@ -291,8 +310,8 @@ def _write_private(path: str, data: bytes) -> None:
 
 def issue_now(s: Settings, acme_factory=Acme) -> None:
     """Zertifikat für die eingestellte Domain holen und ablegen. Fehler landen als Status in der Datenbank."""
-    name, token = domain(), db.get_setting(TOKEN_KEY)
-    if not name or not token:
+    names, token = domains(), db.get_setting(TOKEN_KEY)
+    if not names or not token:
         return
     if not _issue_lock.acquire(blocking=False):
         return
@@ -300,7 +319,7 @@ def issue_now(s: Settings, acme_factory=Acme) -> None:
         db.set_setting(STATUS_KEY, f"{int(time.time())}|läuft|Zertifikat wird geholt …")
         acme = acme_factory(_account_key(s))
         acme.account(db.get_setting(EMAIL_KEY))
-        chain, key_pem = acme.issue(name, Cloudflare(token))
+        chain, key_pem = acme.issue(names, Cloudflare(token))
         crt, key = paths(s)
         with open(crt, "w", encoding="utf-8") as f:
             f.write(chain)
@@ -327,7 +346,7 @@ def renew_loop(s: Settings, stop: threading.Event) -> None:
     while True:
         wait = CHECK_EVERY
         try:
-            if domain() and db.get_setting(TOKEN_KEY) and needs_issue(s, domain()):
+            if domains() and db.get_setting(TOKEN_KEY) and needs_issue(s, domains()):
                 issue_now(s)
                 if status()["state"] == "fehler":
                     wait = RETRY_AFTER_ERROR

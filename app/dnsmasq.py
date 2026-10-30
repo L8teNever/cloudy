@@ -287,7 +287,7 @@ def sync_redirects_hosts(s: Settings) -> None:
 
     lines = ["# cloudy: Domain-Weiterleitungen (automatisch erzeugt, nicht von Hand ändern)"]
     lines += dnsmasq_lines([r["source"] for r in db.redirects()], s.pi_ip)
-    lines += localdomain.dnsmasq_lines(localdomain.domain(), s.pi_ip)
+    lines += localdomain.dnsmasq_lines(localdomain.domains(), s.pi_ip)
     os.makedirs(s.data_dir, exist_ok=True)
     tmp = s.redirects_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:

@@ -224,14 +224,14 @@ installierst. Sichere die Dateien nicht öffentlich.
 
 Ausschalten: in `~/cloudy/.env` `HTTPS_PORT=0`, dann `cloudy restart`.
 
-## Eigene Domain nur im Heimnetz (`https://main.kulbarts.com/mein`)
+## Eigene Domains nur im Heimnetz (z. B. `https://cloudy.kulbarts.com` und `https://main.kulbarts.com/mein`)
 
 „Mein Gerät“ (VPN an/aus) unter einer echten Domain mit gültigem Zertifikat – ohne CA-Installation auf den Geräten und
 ohne dass die Seite von außen erreichbar ist.
 
 1. Bei Cloudflare den **Tunnel-Hostnamen** und den **DNS-Eintrag** für die Domain löschen (sonst führt sie von außen zum Tunnel).
 2. Bei Cloudflare einen **API-Token** anlegen (Berechtigung: Zone → DNS → Bearbeiten, nur für diese Zone).
-3. Dashboard → **Einstellungen → Eigene Domain**: Domain und Token eintragen. Der Token liegt nur in der Datenbank (`data/`), nie im Repo.
+3. Dashboard → **Einstellungen → Eigene Domain**: Token und mindestens eine Domain eintragen – eine fürs **ganze Dashboard** (wie `cloudy.lan`), eine nur für **„Mein Gerät“** (`/mein`). Beide bekommen zusammen ein Zertifikat. Es müssen Unternamen einer Domain sein, die dir gehört. Der Token liegt nur in der Datenbank (`data/`), nie im Repo.
 
 Der Pi beantwortet die Domain im Heimnetz mit seiner IP, holt das Zertifikat bei Let's Encrypt per DNS-Challenge
 (kein offener Port nötig) und erneuert es automatisch. Unter dieser Domain ist nur `/mein` erreichbar.

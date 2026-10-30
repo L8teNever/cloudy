@@ -111,19 +111,22 @@
   {% set ld = params.lokal %}
   <h2>🔐 Eigene Domain nur im Heimnetz (z. B. main.kulbarts.com)</h2>
   <p class="small">
-    Der Pi beantwortet die Domain im Heimnetz selbst und zeigt dort <code>/mein</code> („Mein Gerät“: VPN an/aus).
+    Der Pi beantwortet die Domains im Heimnetz selbst: eine zeigt das ganze Dashboard, die andere nur <code>/mein</code> („Mein Gerät“: VPN an/aus).
     Das Zertifikat holt er sich bei Let's Encrypt per DNS-Challenge – auf den Geräten muss nichts installiert werden.
     Von außen ist die Seite nicht erreichbar. Der Token wird nur hier in der Datenbank gespeichert, nicht im Repo.
   </p>
   <div class="status-row" style="margin:.5rem 0 1rem">
-    <span class="pill {{ 'on' if ld.cert else ('warn' if ld.domain else '') }}">
-      Zertifikat: {{ ('gültig bis ' ~ ld.cert.expires.strftime('%d.%m.%Y')) if ld.cert else ('noch keins' if ld.domain else 'nicht eingerichtet') }}
+    <span class="pill {{ 'on' if ld.cert else ('warn' if (ld.domain or ld.dashboard) else '') }}">
+      Zertifikat: {{ ('gültig bis ' ~ ld.cert.expires.strftime('%d.%m.%Y')) if ld.cert else ('noch keins' if (ld.domain or ld.dashboard) else 'nicht eingerichtet') }}
     </span>
     {% if ld.status.state %}<span class="pill {{ 'warn' if ld.status.state == 'fehler' else '' }}">{{ ld.status.text }}</span>{% endif %}
   </div>
   <form method="post" action="/lokale-domain" style="display:grid;gap:.5rem;max-width:38rem">
-    <label class="small">Domain
-      <input name="name" autocomplete="off" style="width:100%" value="{{ ld.domain }}" placeholder="main.kulbarts.com (leer = ausschalten)">
+    <label class="small">Domain fürs ganze Dashboard (wie <code>cloudy.lan</code>)
+      <input name="dashboard" autocomplete="off" style="width:100%" value="{{ ld.dashboard }}" placeholder="cloudy.kulbarts.com (leer = aus)">
+    </label>
+    <label class="small">Domain nur für „Mein Gerät“ (VPN umstellen, nur <code>/mein</code>)
+      <input name="name" autocomplete="off" style="width:100%" value="{{ ld.domain }}" placeholder="main.kulbarts.com (leer = aus)">
     </label>
     <label class="small">Cloudflare-API-Token (nur Zone → DNS → Bearbeiten für diese Domain)
       <input name="cf_token" type="password" autocomplete="off" style="width:100%"
@@ -134,7 +137,7 @@
     </label>
     <div><button type="submit">Speichern &amp; Zertifikat holen</button></div>
   </form>
-  {% if ld.domain and ld.has_token %}
+  {% if (ld.domain or ld.dashboard) and ld.has_token %}
   <form method="post" action="/lokale-domain/neu" style="margin-top:.5rem"><button type="submit">Zertifikat jetzt neu holen</button></form>
   {% endif %}
   <div class="info small" style="margin-top:1rem">

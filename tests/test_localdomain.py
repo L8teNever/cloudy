@@ -38,6 +38,44 @@ def test_domain_only_shows_mein(client):
     assert client.get("/geraete", headers=h).status_code == 404
 
 
+def test_dashboard_domain_shows_everything_and_is_in_dns(client):
+    s = Settings.from_env()
+    db.set_setting(localdomain.DASH_KEY, "cloudy.kulbarts.com")
+    db.set_setting(localdomain.DOMAIN_KEY, "main.kulbarts.com")
+    sync_redirects_hosts(s)
+    conf = open(s.redirects_path, encoding="utf-8").read()
+    assert f"address=/cloudy.kulbarts.com/{s.pi_ip}" in conf and f"address=/main.kulbarts.com/{s.pi_ip}" in conf
+    h = {"host": "cloudy.kulbarts.com"}
+    assert client.get("/", headers=h, follow_redirects=False).status_code == 200
+    assert client.get("/einstellungen", headers=h).status_code == 200
+    assert client.get("/einstellungen", headers={"host": "main.kulbarts.com"}).status_code == 404
+
+
+def test_same_name_for_both_is_rejected(client, monkeypatch):
+    monkeypatch.setattr(localdomain, "start_in_background", lambda s: None)
+    r = client.post("/lokale-domain", data={"name": "a.kulbarts.com", "dashboard": "a.kulbarts.com"})
+    assert r.status_code == 400
+
+
+def test_cert_covers_both_names(client):
+    s = Settings.from_env()
+    db.set_setting(localdomain.DASH_KEY, "cloudy.kulbarts.com")
+    db.set_setting(localdomain.DOMAIN_KEY, "main.kulbarts.com")
+    db.set_setting(localdomain.TOKEN_KEY, "t")
+    seen = {}
+
+    class Two(FakeAcme):
+        def issue(self, names, cf, **kw):
+            seen["names"] = names
+            return "CHAIN", "KEY"
+
+    localdomain.issue_now(s, acme_factory=Two)
+    assert seen["names"] == ["cloudy.kulbarts.com", "main.kulbarts.com"]
+    crt, key = localdomain.paths(s)
+    assert localdomain.sni_pair(s, "cloudy.kulbarts.com") == (crt, key)
+    assert localdomain.sni_pair(s, "main.kulbarts.com") == (crt, key)
+
+
 def test_settings_form_saves_and_rejects(client, monkeypatch):
     monkeypatch.setattr(localdomain, "start_in_background", lambda s: None)
     assert client.post("/lokale-domain", data={"name": "cloudy.lan"}).status_code == 400
@@ -122,7 +160,8 @@ def test_full_acme_flow_with_fake_servers():
         if url.endswith("/authz/1"):
             ch = [{"type": "dns-01", "token": "TOKEN", "url": f"{base}/chall/1"}]
             status = "valid" if state.get("answered") else "pending"
-            return 200, h, json.dumps({"status": status, "challenges": ch}).encode()
+            ident = {"type": "dns", "value": "main.kulbarts.com"}
+            return 200, h, json.dumps({"status": status, "identifier": ident, "challenges": ch}).encode()
         if url.endswith("/chall/1"):
             state["answered"] = True
             return 200, h, b"{}"
@@ -138,7 +177,7 @@ def test_full_acme_flow_with_fake_servers():
     key = ec.generate_private_key(ec.SECP256R1())
     acme = localdomain.Acme(key, directory="https://acme.test/directory", http=http)
     acme.account("a@b.de")
-    chain, key_pem = acme.issue("main.kulbarts.com", localdomain.Cloudflare("tok", http=http), dns_wait=0, wait=0)
+    chain, key_pem = acme.issue(["main.kulbarts.com"], localdomain.Cloudflare("tok", http=http), dns_wait=0, wait=0)
     assert chain == "PEMCHAIN"
     assert state["txt"] == localdomain.dns_txt_value("TOKEN", key)
     assert ("DELETE", f"{localdomain.CF_API}/zones/Z/dns_records/R") in calls

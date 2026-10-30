@@ -179,6 +179,12 @@ async def redirect_middleware(request: Request, call_next):
     raw_host = request.headers.get("host", "").split(":")[0].strip().lower()
     settings = getattr(request.app.state, "settings", None)
     own_domain = await run_in_threadpool(localdomain.domain)
+    dash_domain = await run_in_threadpool(localdomain.dashboard_domain)
+    if dash_domain and raw_host == dash_domain and request.url.scheme == "http" and not from_tunnel(request):
+        # Dashboard unter der eigenen Domain: Passwort und Daten nur verschlüsselt, sobald das Zertifikat da ist.
+        if settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
+            port = "" if settings.https_port == 443 else f":{settings.https_port}"
+            return RedirectResponse(f"https://{dash_domain}{port}{request.url.path}" + (f"?{request.url.query}" if request.url.query else ""), status_code=302)
     if own_domain and raw_host == own_domain:
         # Eigene Domain nur im Heimnetz (z. B. main.kulbarts.com): zeigt ausschließlich „Mein Gerät“.
         path = request.url.path
@@ -193,8 +199,7 @@ async def redirect_middleware(request: Request, call_next):
             return Response("Nicht gefunden.", status_code=404)
         return await call_next(request)
     own_hosts = {"localhost", "127.0.0.1"}
-    if own_domain:
-        own_hosts.add(own_domain)
+    own_hosts.update(d for d in (own_domain, dash_domain) if d)
     if settings:
         own_hosts.add(settings.pi_ip.lower())
         if settings.local_name:
@@ -507,12 +512,17 @@ async def tunnel_logout(request: Request):
 
 
 @app.post("/lokale-domain", dependencies=[Depends(require_password)])
-async def lokale_domain_set(request: Request, name: str = Form(""), cf_token: str = Form(""), email: str = Form("")):
-    """Eigene Domain nur im Heimnetz einrichten und das Let's-Encrypt-Zertifikat holen."""
+async def lokale_domain_set(
+    request: Request, name: str = Form(""), dashboard: str = Form(""), cf_token: str = Form(""), email: str = Form("")
+):
+    """Eigene Domains nur im Heimnetz einrichten (Dashboard und/oder „Mein Gerät“) und das Let's-Encrypt-Zertifikat holen."""
     try:
         name = localdomain.normalize_domain(name) if name.strip() else ""
+        dashboard = localdomain.normalize_domain(dashboard) if dashboard.strip() else ""
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if name and name == dashboard:
+        raise HTTPException(status_code=400, detail="Dashboard und „Mein Gerät“ brauchen verschiedene Namen")
     cf_token = cf_token.strip()
     if cf_token and (len(cf_token) > 512 or any(ch.isspace() for ch in cf_token)):
         raise HTTPException(status_code=400, detail="Ungültiger API-Token")
@@ -520,13 +530,14 @@ async def lokale_domain_set(request: Request, name: str = Form(""), cf_token: st
     if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         raise HTTPException(status_code=400, detail="Ungültige E-Mail-Adresse")
     await run_in_threadpool(db.set_setting, localdomain.DOMAIN_KEY, name)
+    await run_in_threadpool(db.set_setting, localdomain.DASH_KEY, dashboard)
     await run_in_threadpool(db.set_setting, localdomain.EMAIL_KEY, email)
     if cf_token:
         await run_in_threadpool(db.set_setting, localdomain.TOKEN_KEY, cf_token)
-    if not name:
+    if not name and not dashboard:
         await run_in_threadpool(db.set_setting, localdomain.TOKEN_KEY, "")
-    await run_in_threadpool(_apply_redirects, request)  # schreibt auch die DNS-Zeile für die Domain
-    if name:
+    await run_in_threadpool(_apply_redirects, request)  # schreibt auch die DNS-Zeilen für die Domains
+    if name or dashboard:
         localdomain.start_in_background(request.app.state.settings)
     return RedirectResponse("/einstellungen#lokale-domain", status_code=303)
 
