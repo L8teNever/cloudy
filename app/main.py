@@ -533,11 +533,18 @@ async def mein_geraet(request: Request, ok: int | None = None, fehler: str | Non
     profiles = [w for w in profiles if warp.may_use(mac, w["slot"], allow)]
     labels = {w["slot"]: w["label"] for w in profiles}
     online = online_ips(request)
+    hub_href = "/hub"
+    hubs = await run_in_threadpool(localdomain.hub_domains)
+    if hubs and request.url.hostname not in hubs:
+        hub_base = await run_in_threadpool(_local_base, hubs[0], settings)
+        if hub_base:
+            hub_href = f"{hub_base}/hub"
     return templates.TemplateResponse(
         request,
         "seiten/mein.html",
         {
             "title": "Mein Gerät",
+            "hub_href": hub_href,
             "ip": ip,
             "device": device,
             "online": online,
