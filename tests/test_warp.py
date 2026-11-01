@@ -348,3 +348,16 @@ def test_site_routes_accept_wildcards(client):
     assert db.site_routes() == {"netflix.com": "vpn1", "max.com": "vpn1", "hulu.com": "vpn1"}
     r = client.post("/seiten-routen/add", data={"domain": "net*flix.com", "slot": "vpn1"}, follow_redirects=False)
     assert "fehler=" in r.headers["location"] and "vorne" in __import__("urllib.parse").parse.unquote(r.headers["location"])
+
+
+def test_mein_order_set_by_admin(client):
+    db.upsert_devices([("testclient", MAC, "handy")])
+    default = client.get("/mein").text
+    assert default.index('value="direct"') < default.index('value="vpn1"')
+    all_choices = ["standard", "direct", "warp1", "warp2", "vpn1", "vpn2"]
+    client.post("/mein-auswahl", data={"choice": all_choices, "order": ["vpn2", "direct", "warp1", "kaputt", "vpn2"]})
+    assert warp.mein_order() == ["vpn2", "direct", "warp1"]  # ungültige und doppelte fliegen raus
+    page = client.get("/mein").text
+    assert page.index('value="vpn2"') < page.index('value="direct"') < page.index('value="warp1"')
+    assert page.index('value="warp1"') < page.index('value="vpn1"')  # nicht genannte Profile kommen hinten
+    assert 'name="order" value="vpn2"' in client.get("/vpn").text

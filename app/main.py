@@ -525,6 +525,11 @@ async def mein_geraet(request: Request, ok: int | None = None, fehler: str | Non
     allow = await run_in_threadpool(warp.slot_allowlists, [w["slot"] for w in profiles])
     profiles = [w for w in profiles if warp.may_use(mac, w["slot"], allow)]
     labels = {w["slot"]: w["label"] for w in profiles}
+    show_direct = allowed is None or warp.DIRECT in allowed or current == warp.DIRECT
+    # „Normal“ und die Profile in der Reihenfolge, die der Admin festgelegt hat (Standard: Normal zuerst).
+    options = warp.sort_mein(
+        ([{"slot": warp.DIRECT, "kind": "direct", "label": "Normal", "has_token": True}] if show_direct else []) + profiles
+    )
     online = online_ips(request)
     hub_href = "/hub"
     hubs = await run_in_threadpool(localdomain.hub_domains)
@@ -542,11 +547,12 @@ async def mein_geraet(request: Request, ok: int | None = None, fehler: str | Non
             "device": device,
             "online": online,
             "warp": profiles,
+            "options": options,
             "warp_names": labels,
             "warp_by_mac": warp_by_mac,
             "warp_default": warp_default,
             "show_standard": allowed is None or warp.STANDARD in allowed or not current,
-            "show_direct": allowed is None or warp.DIRECT in allowed or current == warp.DIRECT,
+            "show_direct": show_direct,
             "settings": settings,
             "ok": bool(ok),
             "fehler": fehler,
@@ -938,11 +944,12 @@ async def device_set_isolate(request: Request, mac: str = Form(...), isolated: i
 
 
 @app.post("/mein-auswahl", dependencies=[Depends(require_password)])
-async def mein_auswahl(request: Request, choice: list[str] = Form(default=[])):
-    """Admin: Was darf jeder auf „Mein Gerät“ auswählen (Standard, Normal, einzelne Profile)?"""
+async def mein_auswahl(request: Request, choice: list[str] = Form(default=[]), order: list[str] = Form(default=[])):
+    """Admin: Was darf jeder auf „Mein Gerät“ auswählen (Standard, Normal, einzelne Profile) und in welcher Reihenfolge?"""
     s = request.app.state.settings
     valid = {warp.STANDARD, warp.DIRECT} | {name for name, _ in s.warp_slots} | set(dnsprofile.names(s.data_dir))
     await run_in_threadpool(warp.save_mein_allowed, choice, valid)
+    await run_in_threadpool(warp.save_mein_order, order, valid)
     return RedirectResponse("/vpn#mein-auswahl", status_code=303)
 
 

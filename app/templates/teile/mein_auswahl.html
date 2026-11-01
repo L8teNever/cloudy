@@ -8,11 +8,31 @@
   <form method="post" action="/mein-auswahl">
     <div class="choices" style="display:grid;gap:.4rem;margin:.75rem 0">
       <label><input type="checkbox" name="choice" value="standard" {{ 'checked' if mein_allowed is none or 'standard' in mein_allowed }}> Standard (wie bei allen anderen eingestellt)</label>
-      <label><input type="checkbox" name="choice" value="direct" {{ 'checked' if mein_allowed is none or 'direct' in mein_allowed }}> Normal – direkt über die Fritzbox</label>
-      {% for w in mein_profiles %}
-      <label><input type="checkbox" name="choice" value="{{ w.slot }}" {{ 'checked' if mein_allowed is none or w.slot in mein_allowed }}> {{ w.label }}{{ '' if w.has_token else ' (nicht eingerichtet)' }}</label>
+    </div>
+    <p class="muted small">Reihenfolge auf „Mein Gerät“: mit den Pfeilen nach oben oder unten schieben. Ohne Haken wird der Eintrag dort nicht angezeigt.</p>
+    <div class="choices" id="mein-order" style="display:grid;gap:.4rem;margin:.75rem 0">
+      {% for w in mein_rows %}
+      <div class="mein-row" style="display:flex;align-items:center;gap:.5rem">
+        <input type="hidden" name="order" value="{{ w.slot }}">
+        <label style="flex:1"><input type="checkbox" name="choice" value="{{ w.slot }}" {{ 'checked' if mein_allowed is none or w.slot in mein_allowed }}> {{ w.label }}{{ '' if w.has_token else ' (nicht eingerichtet)' }}</label>
+        <button type="button" data-move="-1" aria-label="Nach oben" title="Nach oben">↑</button>
+        <button type="button" data-move="1" aria-label="Nach unten" title="Nach unten">↓</button>
+      </div>
       {% endfor %}
     </div>
     <button>Speichern</button>
   </form>
 </div>
+<script>
+  (function () {
+    var box = document.getElementById("mein-order");
+    if (!box) return;
+    box.addEventListener("click", function (e) {
+      var btn = e.target.closest("button[data-move]");
+      if (!btn) return;
+      var row = btn.closest(".mein-row");
+      if (btn.dataset.move === "-1" && row.previousElementSibling) box.insertBefore(row, row.previousElementSibling);
+      if (btn.dataset.move === "1" && row.nextElementSibling) box.insertBefore(row.nextElementSibling, row);
+    });
+  })();
+</script>

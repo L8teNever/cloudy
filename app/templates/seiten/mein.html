@@ -113,20 +113,7 @@
     <section class="panel options-panel">
       <form method="post" action="/mein/warp" id="meinForm">
         <div role="radiogroup" aria-label="Internet für dieses Gerät" class="options-group">
-          {% if show_direct %}
-          <label class="option-card {{ 'active' if sel == 'direct' }}" data-slot="direct">
-            <input type="radio" name="slot" value="direct" {{ 'checked' if sel == 'direct' }}>
-            <div class="radio-circle"><div class="radio-dot"></div></div>
-            <div class="option-texts">
-              <div class="option-header-row">
-                <span class="option-title">Normal</span>
-                {% if sel == 'direct' %}<span class="active-badge">Aktiv</span>{% endif %}
-              </div>
-              <span class="option-sub">Direkt über die Fritzbox, ohne VPN/WARP</span>
-            </div>
-          </label>
-          {% endif %}
-          {% for w in warp %}
+          {% for w in options %}
           <label class="option-card {{ 'active' if sel == w.slot }}" data-slot="{{ w.slot }}">
             <input type="radio" name="slot" value="{{ w.slot }}" {{ 'checked' if sel == w.slot }}>
             <div class="radio-circle"><div class="radio-dot"></div></div>
@@ -136,7 +123,7 @@
                 {% if sel == w.slot %}<span class="active-badge">Aktiv</span>{% endif %}
               </div>
               <span class="option-sub">
-                {% if w.kind == 'vpn' %}Über VPN{% elif w.kind == 'dns' %}Internet normal, DNS-Filter über Cloudflare{% else %}Über Cloudflare WARP{% endif %}{% if not w.has_token %} · <span class="not-configured">noch nicht eingerichtet</span>{% endif %}
+                {% if w.kind == 'direct' %}Direkt über die Fritzbox, ohne VPN/WARP{% elif w.kind == 'vpn' %}Über VPN{% elif w.kind == 'dns' %}Internet normal, DNS-Filter über Cloudflare{% else %}Über Cloudflare WARP{% endif %}{% if not w.has_token %} · <span class="not-configured">noch nicht eingerichtet</span>{% endif %}
               </span>
             </div>
           </label>

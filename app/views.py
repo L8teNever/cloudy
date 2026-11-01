@@ -357,6 +357,10 @@ def ctx_seitenrouten(request: Request) -> dict:
         **site_hints(list(db.site_routes())),
         "site_profiles": warp_profiles(s, dns=False),
         "mein_profiles": warp_profiles(s),
+        # Normal + Profile in der Reihenfolge von „Mein Gerät“ (Admin kann sie dort umsortieren)
+        "mein_rows": warp.sort_mein(
+            [{"slot": warp.DIRECT, "label": "Normal – direkt über die Fritzbox", "has_token": True}, *warp_profiles(s)]
+        ),
         "site_gateway": s.gateway_enabled,
         "mein_allowed": warp.mein_allowed(),
     }

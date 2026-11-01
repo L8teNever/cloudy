@@ -63,6 +63,30 @@ def save_mein_allowed(choices: list[str], valid: set[str]) -> None:
     db.set_setting(MEIN_KEY, "all" if picked and set(picked) == valid else (",".join(picked) or "none"))
 
 
+MEIN_ORDER_KEY = "mein_order"
+
+
+def mein_order() -> list[str]:
+    """Reihenfolge der Auswahl auf „Mein Gerät“ (Slots und "direct"), wie vom Admin gespeichert."""
+    return [v for v in db.get_setting(MEIN_ORDER_KEY).split(",") if v]
+
+
+def save_mein_order(order: list[str], valid: set[str]) -> None:
+    seen: list[str] = []
+    for v in order:
+        v = (v or "").strip()
+        if v in valid and v != STANDARD and v not in seen:
+            seen.append(v)
+    db.set_setting(MEIN_ORDER_KEY, ",".join(seen))
+
+
+def sort_mein(items: list[dict]) -> list[dict]:
+    """Einträge (mit Schlüssel "slot") nach der gespeicherten Reihenfolge. Unbekannte (z. B. neue Profile) kommen
+    unverändert hinten dran."""
+    pos = {s: i for i, s in enumerate(mein_order())}
+    return sorted(items, key=lambda x: pos.get(x["slot"], len(pos)))
+
+
 def mein_choice_ok(slot: str, current: str) -> bool:
     """Darf der Nutzer diese Auswahl treffen? Die aktuell gesetzte bleibt immer erlaubt (sonst wäre „Übernehmen“ gesperrt)."""
     allowed = mein_allowed()
