@@ -1,13 +1,14 @@
-"""Auto-Wechsel: Der Pi leitet per HTTP 307 auf die VPN-Wechselseite um (wie Cloudflare-DNS).
+"""Auto-Wechsel: Ruft ein Gerät eine bestimmte Seite auf, wechselt es still im Hintergrund aufs VPN.
 
-Ablauf:
-1. DNS zeigt die Ziel-Domain auf den Pi (nur im Heimnetz).
-2. Pi antwortet mit HTTP 307 → Wechselseite (cloudy.lan oder konfigurierte Domain).
-   Kein Fake-HTTPS auf der Ziel-Domain → keine Zertifikats-Nachfrage.
-3. Auf der Wechselseite: Countdown, VPN umstellen, zurück zur echten Seite.
-4. Nach Idle: zurück auf Standard.
+Ablauf (ohne Anzeige, nichts auf den Geräten installieren):
+1. Das Gerät fragt per DNS z. B. aniworld.to an.
+2. Festes Profil: Die Seite läuft per Seiten-Regel (ipset) schon beim ersten Aufruf übers VPN, zusätzlich
+   wird das ganze Gerät aufs Profil gestellt (CDNs, Nachlade-Domains).
+   „auto“: im Hintergrund wird das erste verbundene VPN gesucht, das die Seite erreicht.
+3. Nach der Wartezeit ohne Aufruf: zurück auf Standard.
 
-VPN-Wechsel nur über status_for (Wechselseite), nicht schon bei DNS.
+Eine Wechselseite gibt es nur noch über eigene Wechsel-Domains (z. B. per Cloudflare), denn bei HTTPS/HSTS-Seiten
+kann der Pi ohne installiertes Zertifikat keine Seite anzeigen.
 """
 
 from __future__ import annotations
@@ -16,7 +17,6 @@ import json
 import subprocess
 import threading
 import time
-from urllib.parse import quote
 
 from . import db, dienste, policy, warp
 
@@ -24,7 +24,7 @@ RULES_KEY = "auto_rules"  # JSON: {"domain": "slot"| "auto", …}
 MINUTES_KEY = "auto_minutes"
 STATE_KEY = "auto_state"  # JSON: {mac: {"slot", "seen", "since", "host"?}}
 NORMAL_KEY = "auto_normal_slot"  # "" = Standard (Fritzbox), "direct", oder Slot
-PASS_KEY = "auto_pass"  # JSON: {domain: {"slot", "prev"}} – DNS-Hijack aus, site_route aktiv
+PASS_KEY = "auto_pass"  # JSON: {domain: {"slot", "prev"}} – Seiten-Regel für „auto“/normal aktiv
 AUTO = "auto"
 DEFAULT_MINUTES = 5
 MIN_MINUTES, MAX_MINUTES = 1, 240
@@ -132,7 +132,7 @@ def _save_pass(data: dict[str, dict]) -> None:
 
 
 def set_pass(domain: str, slot: str) -> bool:
-    """DNS-Hijack für domain aussetzen und Seiten-Regel setzen. True wenn sich etwas geändert hat."""
+    """Seiten-Regel für domain setzen. True wenn sich etwas geändert hat."""
     domain = domain.strip().lower()
     slot = (slot or warp.DIRECT).strip().lower() or warp.DIRECT
     current = pass_map()
@@ -170,35 +170,9 @@ def managed_domains() -> list[str]:
     return sorted(load_rules())
 
 
-def hijack_domains() -> list[str]:
-    """Domains, deren DNS auf den Pi zeigt (nur für den Redirect zur Wechselseite, bis Durchlass aktiv)."""
-    passed = set(pass_map())
-    return [d for d in managed_domains() if d not in passed]
-
-
-def switch_bounce_url(
-    host: str,
-    switch_hosts: list[str] | None = None,
-    *,
-    target_url: str = "",
-    local_name: str = "",
-    pi_ip: str = "",
-    https: bool = False,
-) -> str | None:
-    """HTTP(S)-URL der Wechselseite inkl. cf_request_host und target_url (wie Cloudflare-URL-Umleitung)."""
-    host = (host or "").lower().rstrip(".")
-    if not host:
-        return None
-    scheme = "https" if https else "http"
-    target_param = f"&target_url={quote(target_url, safe='')}" if target_url else ""
-    if switch_hosts:
-        return f"{scheme}://{switch_hosts[0]}/?cf_request_host={host}{target_param}"
-    local = (local_name or "").strip().lower().rstrip(".")
-    if not local and pi_ip:
-        local = pi_ip.strip()
-    if local:
-        return f"{scheme}://{local}/vpn-wechsel?cf_request_host={host}{target_param}"
-    return None
+def fixed_routes() -> dict[str, str]:
+    """Regeln mit festem Profil als Seiten-Regeln – greifen schon beim ersten DNS-Aufruf (ipset)."""
+    return {d: s for d, s in load_rules().items() if s and s != AUTO}
 
 
 def match_rule(domain: str) -> tuple[str, str] | None:
@@ -220,7 +194,7 @@ def covers_host(host: str) -> bool:
 
 
 def is_passed(host: str) -> bool:
-    """DNS-Durchlass aktiv (kein Hijack mehr) für diesen Host?"""
+    """Seiten-Regel aus dem Auto-Wechsel aktiv für diesen Host?"""
     host = (host or "").lower().rstrip(".")
     for domain in pass_map():
         if _covers(domain, host):
@@ -299,13 +273,15 @@ class AutoSwitcher:
     def __init__(self, tick: float = TICK, settings=None):
         self.tick_seconds = tick
         self.settings = settings
-        self.on_dns_change = None  # wird gesetzt, wenn DNS-Hijack/Seiten-Regel neu geschrieben werden muss
+        self.on_dns_change = None  # wird gesetzt, wenn Seiten-Regeln neu geschrieben werden müssen
         self._lock = threading.RLock()
         self._rules: list[tuple[str, str]] = []
         self._rules_at = 0.0
         self._rules_gen = -1
         self._ip_mac: dict[str, tuple[float, str]] = {}
         self._probe_cache: dict[tuple[str, str], tuple[float, bool]] = {}
+        self._picking: set[str] = set()  # MACs, für die gerade ein VPN gesucht wird
+        self.async_auto = True
         self._stopping = threading.Event()
         try:
             state = json.loads(db.get_setting(STATE_KEY) or "{}")
@@ -352,8 +328,6 @@ class AutoSwitcher:
         if cb:
             try:
                 cb()
-                # Kurz warten, damit dnsmasq die Hijack-Zeilen weg hat, bevor der Browser neu auflöst.
-                time.sleep(0.4)
             except Exception as exc:  # noqa: BLE001
                 print(f"cloudy: Auto-Wechsel DNS-Update: {exc}", flush=True)
 
@@ -381,24 +355,67 @@ class AutoSwitcher:
             self._save()
 
     def on_query(self, ip: str, domain: str, now: float | None = None) -> None:
-        """DNS-Anfrage: nur „zuletzt gesehen“ pflegen.
-
-        Den VPN-Wechsel macht erst die Wechselseite über status_for – sonst wechselt das Gerät
-        schon beim DNS-Lookup und die echte Seite lädt, bevor man die Wechselseite sieht.
-        """
+        """DNS-Anfrage für eine Auto-Wechsel-Seite: Gerät still im Hintergrund aufs VPN stellen."""
         now = now if now is not None else time.time()
-        if not self.match(domain, now):
+        slot = self.match(domain, now)
+        if not slot:
             return
         mac = self._mac_for(ip, now)
-        if not mac or not warp.MAC_RE.match(mac):
+        if not mac or not warp.MAC_RE.match(mac) or policy.locked_for(mac):
             return
+        apex = rule_apex(domain) or domain.lower().rstrip(".")
         with self._lock:
             st = self.state.get(mac)
-            if not st:
-                return
-            apex = rule_apex(domain) or domain.lower().rstrip(".")
-            if st.get("host") == apex or _covers(st.get("host") or "", domain):
+            if st and (st.get("host") == apex or _covers(st.get("host") or "", domain) or st["slot"] == slot):
                 self._touch(mac, now)
+                return
+            if slot == AUTO:
+                if mac in self._picking:
+                    return
+                self._picking.add(mac)
+            else:
+                if not warp.may_use(mac, slot):
+                    return
+                if st is None and db.device_warp().get(mac, "") == slot:
+                    return  # schon von Hand auf diesem Profil – nicht zurückstellen
+                db.set_device_warp(mac, slot)
+                self.state[mac] = {"slot": slot, "seen": now, "since": now, "host": apex}
+                self._save()
+                return
+        # „auto“: VPN-Suche dauert (Probe übers VPN) – nicht im DNS-Log-Thread warten.
+        if self.async_auto:
+            threading.Thread(target=self._auto_switch, args=(mac, domain, apex), daemon=True).start()
+        else:
+            self._auto_switch(mac, domain, apex)
+
+    def _auto_switch(self, mac: str, host: str, apex: str) -> None:
+        try:
+            now = time.time()
+            host = host.lower().rstrip(".")
+            picked = None
+            current = db.device_warp().get(mac, "")
+            if (
+                self.settings and current and warp.kind(current) == "vpn" and warp.may_use(mac, current)
+                and warp.read_status(self.settings, current, now).connected and self._probe(current, host, now)
+            ):
+                picked = current
+            if not picked:
+                picked = self._pick_vpn(mac, host, now)
+            if not picked:
+                print(f"cloudy: Auto-Wechsel: kein VPN erreicht {host}", flush=True)
+                return
+            with self._lock:
+                db.set_device_warp(mac, picked)
+                self.state[mac] = {"slot": picked, "seen": now, "since": now, "host": apex}
+                self._save()
+                changed = set_pass(apex, picked)
+            if changed:
+                self._dns_changed()
+        except Exception as exc:  # noqa: BLE001 – darf den DNS-Log nie stoppen
+            print(f"cloudy: Auto-Wechsel: {exc}", flush=True)
+        finally:
+            with self._lock:
+                self._picking.discard(mac)
 
     def _pick_vpn(self, mac: str, host: str, now: float) -> str | None:
         settings = self.settings

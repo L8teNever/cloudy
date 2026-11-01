@@ -2,7 +2,6 @@ import os
 import re
 import secrets
 import socket
-import ssl
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -154,10 +153,6 @@ async def lifespan(app: FastAPI):
                 own = localdomain.sni_pair(_s, name)
                 if own:
                     return own
-                # Auto-Wechsel: kein Fake-HTTPS (wie Cloudflare-DNS-Redirect über HTTP).
-                # Handshake abbrechen → Browser kann per HTTP die Wechselseite laden („Nicht sicher“, ohne Nachfrage).
-                if autoswitch.covers_host(name):
-                    raise ssl.SSLError("auto-wechsel nur per HTTP")
                 rule = find_rule(name, db.redirect_map())
                 return certs.ensure_domain_cert(_s, rule[0]) if rule else None
 
@@ -248,36 +243,6 @@ async def redirect_middleware(request: Request, call_next):
         ) and not path.startswith("/static/"):
             request.scope["path"] = "/vpn-wechsel"
         return await call_next(request)
-    # Auto-Wechsel wie Cloudflare: HTTP 307 auf die Wechselseite (nicht die Zielseite umschreiben).
-    if raw_host and await run_in_threadpool(autoswitch.covers_host, raw_host):
-        path = request.url.path
-        if path in (
-            "/healthz", "/favicon.ico", "/vpn-wechsel/status", "/vpn-wechsel/normal", "/vpn-wechsel/ping"
-        ) or path.startswith("/static/"):
-            return await call_next(request)
-        local = (settings.local_name if settings else "") or ""
-        pi_ip = (settings.pi_ip if settings else "") or ""
-        scheme = request.url.scheme or "http"
-        full_path = request.url.path
-        if request.url.query:
-            full_path += f"?{request.url.query}"
-        target_url = f"{scheme}://{raw_host}{full_path}"
-        bounce = autoswitch.switch_bounce_url(
-            raw_host,
-            list(switch_hosts),
-            target_url=target_url,
-            local_name=local,
-            pi_ip=pi_ip,
-            https=False,
-        )
-        if not bounce:
-            return Response(
-                "VPN-Wechselseite fehlt. Unter Einstellungen → Lokale Domain eine Wechselseite "
-                "eintragen oder LOCAL_NAME (z. B. cloudy.lan) setzen.",
-                status_code=503,
-                media_type="text/plain; charset=utf-8",
-            )
-        return RedirectResponse(bounce, status_code=307)
     if raw_host in hub_hosts:
         # Hub-Domain: Startseite mit Links – Aufruf ohne Pfad landet auf /hub.
         path = request.url.path

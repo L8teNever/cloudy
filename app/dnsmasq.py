@@ -419,15 +419,13 @@ def sync_redirects_hosts(s: Settings) -> None:
     lines = ["# cloudy: Domain-Weiterleitungen (automatisch erzeugt, nicht von Hand ändern)"]
     lines += dnsmasq_lines([r["source"] for r in db.redirects()], s.pi_ip)
     lines += localdomain.dnsmasq_lines(localdomain.domains(), s.pi_ip)
-    # Auto-Wechsel: Ziel-Domain → Pi, der nur auf die Wechselseite weiterleitet (kein Seiten-Inhalt).
-    hijack = autoswitch.hijack_domains()
-    if hijack:
-        lines.append("# Auto-Wechsel: DNS auf Pi → Redirect zur VPN-Wechselseite")
-        lines += dnsmasq_lines(hijack, s.pi_ip)
     if ipset_supported():
         merged: dict[str, set[str]] = {d: {sl} for d, sl in db.site_routes().items()}
         for domain, slots in db.all_group_site_domains().items():
             merged.setdefault(domain, set()).update(slots)
+        # Auto-Wechsel mit festem Profil: Seite läuft schon beim ersten Aufruf übers VPN.
+        for domain, slot in autoswitch.fixed_routes().items():
+            merged.setdefault(domain, set()).add(slot)
         from .dienste import expand
 
         # Zugehörige Domains (z. B. nflxvideo.net zu netflix.com) laufen automatisch mit.

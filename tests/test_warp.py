@@ -380,14 +380,11 @@ def test_autoswitch_switches_and_returns(client, monkeypatch):
     now = time.time()
     a.on_query("192.168.178.50", "example.org", now)  # andere Seite: nichts
     assert db.device_warp() == {}
-    a.on_query("192.168.178.50", "www.aniworld.com", now)  # DNS allein schaltet nicht mehr
-    assert db.device_warp() == {}
-    # Wechselseite (status_for) stellt um
-    assert a.status_for("192.168.178.50", "www.aniworld.com", now)["state"] == "wait"
+    a.on_query("192.168.178.50", "www.aniworld.com", now)  # DNS-Aufruf stellt still um
     assert db.device_warp() == {MAC: "vpn1"}
     a.tick(now + 4 * 60)  # noch keine 5 Minuten
     assert db.device_warp() == {MAC: "vpn1"}
-    a.on_query("192.168.178.50", "aniworld.com", now + 4 * 60)  # DNS verlängert nur „gesehen“
+    a.on_query("192.168.178.50", "aniworld.com", now + 4 * 60)  # erneuter Aufruf verlängert
     a.tick(now + 8 * 60)
     assert db.device_warp() == {MAC: "vpn1"}
     a.tick(now + 10 * 60)  # 6 Minuten ohne Aufruf -> zurück auf Standard
