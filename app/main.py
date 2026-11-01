@@ -17,7 +17,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import adblock, blocklist, certs, db, fritz, localdomain, policy, slots, stats, views, warp
+from . import adblock, blocklist, certs, db, dnsprofile, fritz, localdomain, policy, slots, stats, views, warp
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -313,23 +313,7 @@ async def ca_install_bat(request: Request):
 
 
 def warp_profiles(settings: Settings) -> list[dict]:
-    labels = db.warp_labels()
-    count: dict[str, int] = {}
-    profiles = []
-    for slot, _ in settings.warp_slots:
-        k = warp.kind(slot)
-        count[k] = count.get(k, 0) + 1
-        profiles.append((slot, k, f"{'VPN' if k == 'vpn' else 'WARP'} {count[k]}"))
-    return [
-        {
-            "slot": slot,
-            "kind": k,
-            "label": labels.get(slot) or default_label,
-            "has_token": warp.has_token(settings, slot),
-            "status": warp.read_status(settings, slot),
-        }
-        for slot, k, default_label in profiles
-    ]
+    return views.warp_profiles(settings)
 
 
 def online_ips(request: Request) -> frozenset[str]:
@@ -643,10 +627,20 @@ async def api_recent(limit: int = 100, ip: str | None = None):
 
 
 def _check_slot(request: Request, slot: str) -> Settings:
+    """WARP-, VPN- oder DNS-Profil, das es gibt – sonst 404."""
     settings = request.app.state.settings
-    if slot not in {name for name, _ in settings.warp_slots}:
-        raise HTTPException(status_code=404, detail="Unbekanntes WARP-Profil")
-    return settings
+    if slot in {name for name, _ in settings.warp_slots}:
+        return settings
+    if dnsprofile.is_dns(slot) and slot in dnsprofile.names(settings.data_dir):
+        return settings
+    raise HTTPException(status_code=404, detail="Unbekanntes Profil")
+
+
+def _check_tunnel_slot(request: Request, slot: str) -> Settings:
+    """Für Seiten-Regeln: nur Profile mit Tunnel (ein DNS-Profil leitet keinen Verkehr um)."""
+    if dnsprofile.is_dns(slot):
+        raise HTTPException(status_code=400, detail="Seiten-Regeln gehen nur mit WARP- oder VPN-Profilen")
+    return _check_slot(request, slot)
 
 
 def _reload_warp_slots(request: Request) -> str:
@@ -686,6 +680,17 @@ async def warp_login(
 ):
     settings = _check_slot(request, slot)
     token = token.strip()
+    if dnsprofile.is_dns(slot):
+        # DNS-Profil: im Feld "token" steht die DoH-Adresse des Cloudflare-DNS-Standorts.
+        if token:
+            try:
+                url = dnsprofile.normalize_url(token)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            await run_in_threadpool(dnsprofile.set_url, settings.data_dir, slot, url)
+        if label.strip():
+            await run_in_threadpool(db.set_warp_label, slot, label.strip()[:40])
+        return RedirectResponse("/vpn", status_code=303)
     if warp.kind(slot) == "vpn":
         if config.strip():
             try:
@@ -705,13 +710,23 @@ async def warp_login(
 @app.post("/warp/{slot}/logout", dependencies=[Depends(require_password)])
 async def warp_logout(request: Request, slot: str):
     settings = _check_slot(request, slot)
+    if dnsprofile.is_dns(slot):
+        await run_in_threadpool(dnsprofile.set_url, settings.data_dir, slot, "")
+        return RedirectResponse("/vpn", status_code=303)
     await run_in_threadpool(warp.remove_token, settings, slot)
     return RedirectResponse("/vpn", status_code=303)
 
 
 @app.post("/warp/neu", dependencies=[Depends(require_password)])
 async def warp_neu(request: Request, kind: str = Form("warp")):
-    """Neues WARP- oder VPN-Profil anlegen (Container startet der Watcher auf dem Pi automatisch)."""
+    """Neues WARP- oder VPN-Profil anlegen (Container startet der Watcher auf dem Pi automatisch) – oder DNS-Profil."""
+    if kind == "dns":
+        try:
+            name = await run_in_threadpool(dnsprofile.add, request.app.state.settings.data_dir)
+        except ValueError as exc:
+            return RedirectResponse(f"/vpn?fehler={quote(str(exc))}", status_code=303)
+        msg = f"{name} angelegt. Jetzt die DoH-Adresse des Cloudflare-DNS-Standorts eintragen."
+        return RedirectResponse(f"/vpn?erfolg={quote(msg)}", status_code=303)
     try:
         slot = await run_in_threadpool(slots.add, request.app.state.settings.data_dir, kind)
     except ValueError as exc:
@@ -723,6 +738,10 @@ async def warp_neu(request: Request, kind: str = Form("warp")):
 @app.post("/warp/{slot}/loeschen", dependencies=[Depends(require_password)])
 async def warp_loeschen(request: Request, slot: str):
     settings = _check_slot(request, slot)
+    if dnsprofile.is_dns(slot):
+        await run_in_threadpool(dnsprofile.remove, settings.data_dir, slot)
+        await run_in_threadpool(_purge_slot_references, slot)
+        return RedirectResponse(f"/vpn?erfolg={quote(f'{slot} gelöscht.')}", status_code=303)
     try:
         await run_in_threadpool(slots.remove, settings.data_dir, slot)
     except ValueError as exc:
@@ -921,7 +940,8 @@ async def device_set_isolate(request: Request, mac: str = Form(...), isolated: i
 @app.post("/mein-auswahl", dependencies=[Depends(require_password)])
 async def mein_auswahl(request: Request, choice: list[str] = Form(default=[])):
     """Admin: Was darf jeder auf „Mein Gerät“ auswählen (Standard, Normal, einzelne Profile)?"""
-    valid = {warp.STANDARD, warp.DIRECT} | {name for name, _ in request.app.state.settings.warp_slots}
+    s = request.app.state.settings
+    valid = {warp.STANDARD, warp.DIRECT} | {name for name, _ in s.warp_slots} | set(dnsprofile.names(s.data_dir))
     await run_in_threadpool(warp.save_mein_allowed, choice, valid)
     return RedirectResponse("/vpn#mein-auswahl", status_code=303)
 
@@ -973,7 +993,7 @@ async def site_route_add(
     domain darf mehrere Seiten enthalten (mit Komma getrennt)."""
     back = _site_route_back(next, "/vpn#seitenrouten")
     if slot != warp.DIRECT:
-        _check_slot(request, slot)
+        _check_tunnel_slot(request, slot)
     domains, bad = _parse_domains(domain)
     for d in domains:
         await run_in_threadpool(db.set_site_route, d, slot)
@@ -1002,7 +1022,7 @@ async def group_site_route_add(
     if not await run_in_threadpool(db.group, group_id):
         raise HTTPException(status_code=404, detail="Gruppe nicht gefunden")
     if slot != warp.DIRECT:
-        _check_slot(request, slot)
+        _check_tunnel_slot(request, slot)
     domains, bad = _parse_domains(domain)
     for d in domains:
         await run_in_threadpool(db.set_group_site_route, group_id, d, slot)

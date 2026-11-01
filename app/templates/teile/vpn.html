@@ -9,6 +9,12 @@
     Beliebig viele Profile: unten anlegen und Token/.conf speichern – der Container startet automatisch im Hintergrund
     (gelöschte verschwinden). Klappt das nicht, einmal auf dem Pi <code>cloudy update</code>.
   </p>
+  <p class="muted small">
+    <b>DNS-Profil</b> = Cloudflare Zero Trust „DNS-Standort“: Nur die DNS-Anfragen des Geräts gehen an deinen Standort
+    (dort greifen deine DNS-Richtlinien), das Internet läuft normal über die Fritzbox. In Cloudflare unter
+    <i>Netzwerke → Ressourcen → DNS-Standorte</i> einen Standort anlegen und dessen <b>DoH-Adresse</b> hier eintragen.
+    Funktioniert auch ohne Gateway-Modus. Der cloudy-Werbeblocker gilt für diese Geräte nicht – das übernimmt Cloudflare.
+  </p>
   <div style="margin-bottom:1rem;display:flex;flex-wrap:wrap;gap:.75rem;align-items:center">
     <form method="post" action="/warp/default" class="inline">
       <label class="small"><b>Standard-Verbindung für alle nicht zugewiesenen Geräte:</b>
@@ -30,6 +36,10 @@
       <input type="hidden" name="kind" value="vpn">
       <button type="submit" class="secondary" style="padding:.3rem .6rem;font-size:.85rem">+ VPN-Profil</button>
     </form>
+    <form method="post" action="/warp/neu" class="inline">
+      <input type="hidden" name="kind" value="dns">
+      <button type="submit" class="secondary" style="padding:.3rem .6rem;font-size:.85rem">+ DNS-Profil</button>
+    </form>
   </div>
 
   <div class="table-wrap">
@@ -48,7 +58,8 @@
         <tr>
           <td>
             <strong>{{ w.label }}</strong><br>
-            <span class="muted small">{{ w.slot }} · {{ 'WireGuard' if w.kind == 'vpn' else 'Cloudflare Zero Trust' }}</span>
+            <span class="muted small">{{ w.slot }} · {{ {'vpn': 'WireGuard', 'dns': 'Cloudflare DNS-Standort'}.get(w.kind, 'Cloudflare Zero Trust') }}</span>
+            {% if w.kind == 'dns' and w.url %}<br><span class="muted small mono" title="{{ w.url }}">{{ w.url | replace('https://', '') | truncate(44, True, '…') }}</span>{% endif %}
           </td>
           <td>
             {% if w.has_token %}
@@ -63,7 +74,10 @@
           <td>
             <form method="post" action="/warp/{{ w.slot }}/login" class="inline" style="gap:.35rem">
               <input name="label" value="{{ w.label }}" size="12" placeholder="Bezeichnung" aria-label="Name">
-              {% if w.kind == 'vpn' %}
+              {% if w.kind == 'dns' %}
+              <input name="token" inputmode="url" autocomplete="off" size="26" spellcheck="false"
+                     placeholder="{{ 'Neue DoH-Adresse (leer = behalten)' if w.has_token else 'https://….cloudflare-gateway.com/dns-query' }}">
+              {% elif w.kind == 'vpn' %}
               <textarea name="config" rows="2" cols="26" autocomplete="off" spellcheck="false"
                         placeholder="{{ 'Neue .conf (leer = behalten)' if w.has_token else 'WireGuard .conf einfügen' }}"></textarea>
               {% else %}
@@ -74,12 +88,12 @@
             </form>
             {% if w.has_token %}
             <form method="post" action="/warp/{{ w.slot }}/logout" class="inline" style="margin-left:.35rem">
-              <button class="secondary" style="padding:.25rem .5rem;font-size:.82rem">Abmelden</button>
+              <button class="secondary" style="padding:.25rem .5rem;font-size:.82rem">{{ 'Ausschalten' if w.kind == 'dns' else 'Abmelden' }}</button>
             </form>
             {% endif %}
           </td>
           <td>
-            {% if warp | length > 1 %}
+            {% if w.kind == 'dns' or warp | rejectattr('kind', 'equalto', 'dns') | list | length > 1 %}
             <form method="post" action="/warp/{{ w.slot }}/loeschen" onsubmit="return confirm('Profil {{ w.slot }} wirklich löschen?');">
               <button type="submit" class="danger" style="padding:.25rem .5rem;font-size:.78rem">Löschen</button>
             </form>

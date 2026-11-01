@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import blocklist, charts, db, fritz, localdomain, policy, stats, system_info, warp
+from . import blocklist, charts, db, dnsprofile, fritz, localdomain, policy, stats, system_info, warp
 from .settings import Settings
 
 BASE_DIR = Path(__file__).parent
@@ -82,7 +82,8 @@ def back(request: Request, default: str = "/", **params: str) -> RedirectRespons
     return RedirectResponse(url, status_code=303)
 
 
-def warp_profiles(settings: Settings) -> list[dict]:
+def warp_profiles(settings: Settings, dns: bool = True) -> list[dict]:
+    """Alle Profile für Auswahllisten: WARP, VPN und (mit dns=True) DNS-Profile (Cloudflare-DNS-Standorte)."""
     labels = db.warp_labels()
     count: dict[str, int] = {}
     profiles = []
@@ -99,7 +100,17 @@ def warp_profiles(settings: Settings) -> list[dict]:
             "status": warp.read_status(settings, slot),
         }
         for slot, k, default_label in profiles
-    ]
+    ] + ([
+        {
+            "slot": p["name"],
+            "kind": "dns",
+            "label": labels.get(p["name"]) or f"DNS {i}",
+            "has_token": bool(p["url"]),
+            "url": p["url"],
+            "status": dnsprofile.read_status(settings, p["name"]),
+        }
+        for i, p in enumerate(dnsprofile.load(settings.data_dir), start=1)
+    ] if dns else [])
 
 
 def online_ips(request: Request) -> frozenset[str]:
@@ -232,7 +243,7 @@ def ctx_gruppe(request: Request, group_id: int) -> dict:
         "group_site_routes": db.group_site_routes(group_id),
         "site_routes": db.site_routes(),
         **site_hints([*db.group_site_routes(group_id), *db.site_routes()]),
-        "site_profiles": warp_profiles(s),
+        "site_profiles": warp_profiles(s, dns=False),
         "site_gateway": s.gateway_enabled,
         **_warp_ctx(request),
     }
@@ -344,7 +355,8 @@ def ctx_seitenrouten(request: Request) -> dict:
     return {
         "site_routes": db.site_routes(),
         **site_hints(list(db.site_routes())),
-        "site_profiles": warp_profiles(s),
+        "site_profiles": warp_profiles(s, dns=False),
+        "mein_profiles": warp_profiles(s),
         "site_gateway": s.gateway_enabled,
         "mein_allowed": warp.mein_allowed(),
     }

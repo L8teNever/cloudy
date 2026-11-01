@@ -136,7 +136,7 @@
                 {% if sel == w.slot %}<span class="active-badge">Aktiv</span>{% endif %}
               </div>
               <span class="option-sub">
-                {% if w.kind == 'vpn' %}Über VPN{% else %}Über Cloudflare WARP{% endif %}{% if not w.has_token %} · <span class="not-configured">noch nicht eingerichtet</span>{% endif %}
+                {% if w.kind == 'vpn' %}Über VPN{% elif w.kind == 'dns' %}Internet normal, DNS-Filter über Cloudflare{% else %}Über Cloudflare WARP{% endif %}{% if not w.has_token %} · <span class="not-configured">noch nicht eingerichtet</span>{% endif %}
               </span>
             </div>
           </label>

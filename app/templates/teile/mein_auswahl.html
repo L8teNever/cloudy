@@ -9,7 +9,7 @@
     <div class="choices" style="display:grid;gap:.4rem;margin:.75rem 0">
       <label><input type="checkbox" name="choice" value="standard" {{ 'checked' if mein_allowed is none or 'standard' in mein_allowed }}> Standard (wie bei allen anderen eingestellt)</label>
       <label><input type="checkbox" name="choice" value="direct" {{ 'checked' if mein_allowed is none or 'direct' in mein_allowed }}> Normal – direkt über die Fritzbox</label>
-      {% for w in site_profiles %}
+      {% for w in mein_profiles %}
       <label><input type="checkbox" name="choice" value="{{ w.slot }}" {{ 'checked' if mein_allowed is none or w.slot in mein_allowed }}> {{ w.label }}{{ '' if w.has_token else ' (nicht eingerichtet)' }}</label>
       {% endfor %}
     </div>

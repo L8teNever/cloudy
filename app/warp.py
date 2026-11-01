@@ -35,6 +35,11 @@ RULE_PRIORITY_BASE = 1000
 STATUS_MAX_AGE = 60  # Sekunden; der Container schreibt alle paar Sekunden
 IPV6_MAX_AGE = 120  # Der Container prüft IPv6 etwa alle 30 Sekunden
 MAC_RE = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
+DNS_SLOT_RE = re.compile(r"^dns[1-9][0-9]?$")  # DNS-Profile (siehe dnsprofile.py): Verkehr normal, nur DNS anders
+
+
+def is_dns_slot(slot: str) -> bool:
+    return bool(slot and DNS_SLOT_RE.match(slot))
 
 
 def mark(index: int) -> str:
@@ -266,8 +271,8 @@ def _mark_rules(
         slot = assignments[mac]
         if not may_use(mac, slot, allow):
             continue  # nicht freigegeben -> wie ohne Zuweisung (Standard bzw. normal)
-        if slot == DIRECT:
-            # Nicht markieren und die Standard-Regel unten überspringen.
+        if slot == DIRECT or is_dns_slot(slot):
+            # Nicht markieren und die Standard-Regel unten überspringen (DNS-Profil: Verkehr geht normal raus).
             rules.append(("-i", s.lan_interface, "-m", "mac", "--mac-source", mac, "-j", "RETURN"))
         elif slot in index_of:
             rules.append((

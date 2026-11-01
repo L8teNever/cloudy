@@ -223,6 +223,7 @@ class DnsmasqRunner:
         self.flush_interval = flush_interval
         self.proc: subprocess.Popen | None = None
         self.adblock = None
+        self.dns_profiles = None
         self._stopping = threading.Event()
         self._restart_lock = threading.Lock()
 
@@ -250,6 +251,23 @@ class DnsmasqRunner:
         self._spawn()
         threading.Thread(target=self._flush_loop, daemon=True).start()
         self._start_adblock()
+        self._start_dns_profiles()
+
+    def _start_dns_profiles(self) -> None:
+        """Cloudflare-DNS-Standorte als Profile (eigener dnsmasq + DoH pro Profil), siehe dnsprofile.py."""
+        from . import dnsprofile
+
+        def feed(name: str, line: str) -> None:
+            # Anfrage-Nummern pro Profil verschieben (Werbeblocker nutzt schon +1e9).
+            line = shift_serial(line, (2 + dnsprofile.index(name)) * 1_000_000_000)
+            if not self.collector.feed(line) and not any(n in line for n in NOISY):
+                print(line, end="", flush=True)
+
+        try:
+            self.dns_profiles = dnsprofile.DnsProfiles(self.settings, build_config(self.settings), feed)
+            self.dns_profiles.start()
+        except Exception as exc:  # noqa: BLE001 – ohne DNS-Profile läuft DNS normal weiter
+            print(f"cloudy: DNS-Profile nicht verfügbar: {exc}", file=sys.stderr, flush=True)
 
     def _start_adblock(self) -> None:
         from . import adblock
@@ -292,10 +310,14 @@ class DnsmasqRunner:
                 self._spawn()
         if self.adblock and not self._stopping.is_set():
             threading.Thread(target=self.adblock.restart, daemon=True).start()
+        if self.dns_profiles and not self._stopping.is_set():
+            threading.Thread(target=self.dns_profiles.restart, args=(build_config(self.settings),), daemon=True).start()
 
     def reload_hosts(self) -> None:
         if self.adblock:
             self.adblock.reload_hosts()
+        if self.dns_profiles:
+            self.dns_profiles.reload_hosts()
         if self.proc and self.proc.poll() is None:
             sighup = getattr(signal, "SIGHUP", None)
             if sighup is not None:
@@ -332,6 +354,8 @@ class DnsmasqRunner:
         self._stopping.set()
         if self.adblock:
             self.adblock.stop()
+        if self.dns_profiles:
+            self.dns_profiles.stop()
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:
