@@ -4,9 +4,9 @@
   <p class="muted small">
     Ruft ein Gerät eine dieser Seiten auf (z. B. <code>aniworld.com</code>, inkl. Subdomains und zugehöriger Dienst-Domains), wechselt
     <b>das ganze Gerät</b> automatisch auf das gewählte WARP-/VPN-Profil. Fragt es danach
-    <b>{{ auto_minutes }} Minuten</b> lang keine dieser Seiten mehr ab, geht es zurück auf das, was vorher für das Gerät eingestellt war
-    (eigenes Profil oder Standard). Geräte, die eine Gruppe festlegt, und von Hand geänderte Geräte bleiben unberührt.
-    Das klappt nur, wenn das Gerät den Pi als DNS nutzt (kein „Sicheres DNS“ im Browser).
+    <b>{{ auto_minutes }} Minuten</b> lang keine dieser Seiten mehr ab, geht es immer zurück auf <b>Standard</b> (die Standard-Verbindung für alle nicht
+    zugewiesenen Geräte, oben auf dieser Seite eingestellt). Geräte, die eine Gruppe festlegt, und von Hand geänderte Geräte bleiben unberührt.
+    Das gilt für alle Geräte. Das klappt nur, wenn das Gerät den Pi als DNS nutzt (kein „Sicheres DNS“ im Browser).
   </p>
   {% if params.fehler %}<div class="info small">{{ params.fehler }}</div>{% endif %}
 

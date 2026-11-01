@@ -1,6 +1,6 @@
 """Auto-Wechsel: Ruft ein Gerät eine bestimmte Seite auf (z. B. aniworld.com), wechselt das ganze Gerät automatisch auf ein
-WARP-/VPN-Profil. Fragt es X Minuten lang keine dieser Seiten mehr ab, geht es zurück auf das, was vorher eingestellt war
-(eigenes Profil oder „Standard“).
+WARP-/VPN-Profil. Fragt es X Minuten lang keine dieser Seiten mehr ab, geht es immer zurück auf „Standard“ (die Standard-
+Verbindung für alle nicht zugewiesenen Geräte, wie auf der VPN-Seite eingestellt).
 
 Auslöser sind die DNS-Anfragen des Geräts (der Collector meldet jede Anfrage). Zugehörige Domains eines Dienstes
 (siehe dienste.py) zählen mit. Gruppen mit festgelegtem Profil und manuelle Änderungen werden respektiert.
@@ -16,7 +16,7 @@ from . import db, dienste, policy, warp
 
 RULES_KEY = "auto_rules"  # JSON: {"domain": "slot", …}
 MINUTES_KEY = "auto_minutes"
-STATE_KEY = "auto_state"  # JSON: {mac: {"slot", "prev", "seen"}} – übersteht einen Neustart
+STATE_KEY = "auto_state"  # JSON: {mac: {"slot", "seen"}} – übersteht einen Neustart
 DEFAULT_MINUTES = 5
 MIN_MINUTES, MAX_MINUTES = 1, 240
 TICK = 15.0  # Sekunden zwischen den Prüfungen auf „lange nichts mehr“
@@ -145,9 +145,8 @@ class AutoSwitcher:
                 return  # steht ohnehin schon so (vom Admin) – nicht anfassen, nicht zurückwechseln
             if not warp.may_use(mac, slot):
                 return
-            prev = st["prev"] if st else current  # beim Wechsel zwischen zwei Regeln den Ursprung behalten
             db.set_device_warp(mac, slot)
-            self.state[mac] = {"slot": slot, "prev": prev, "seen": now}
+            self.state[mac] = {"slot": slot, "seen": now}
             self._save()
 
     # -- Zurückwechseln
@@ -164,7 +163,7 @@ class AutoSwitcher:
                     del self.state[mac]  # jemand hat das Profil inzwischen selbst geändert – in Ruhe lassen
                     changed = True
                 elif now - st["seen"] >= limit:
-                    db.set_device_warp(mac, st.get("prev") or None)
+                    db.set_device_warp(mac, None)  # zurück auf Standard
                     del self.state[mac]
                     changed = True
             if changed:

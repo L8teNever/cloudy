@@ -390,12 +390,13 @@ def test_autoswitch_switches_and_returns(client):
     assert db.device_warp() == {}
     assert autoswitch.AutoSwitcher().state == {}
 
-    # Vorher eingestelltes Profil kommt zurück; manuelle Änderung wird nicht überschrieben.
+    # Es geht immer auf Standard zurück (auch wenn vorher ein anderes Profil gesetzt war);
+    # manuelle Änderung wird nicht überschrieben.
     db.set_device_warp(MAC, "warp1")
     a.on_query("192.168.178.50", "aniworld.com", now)
     assert db.device_warp() == {MAC: "vpn1"}
     a.tick(now + 10 * 60)
-    assert db.device_warp() == {MAC: "warp1"}
+    assert db.device_warp() == {}
     a.on_query("192.168.178.50", "aniworld.com", now)
     db.set_device_warp(MAC, "vpn2")
     a.tick(now + 10 * 60)
