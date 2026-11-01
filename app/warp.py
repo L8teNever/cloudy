@@ -314,6 +314,28 @@ def _mark_rules(
     return tuple(rules)
 
 
+def mirror_rules(
+    rules: tuple[tuple[str, ...], ...], lan: str, iface: str, mac_ips: dict[str, str]
+) -> tuple[tuple[str, ...], ...]:
+    """Dieselben Markierungen für Geräte hinter einer zweiten Schnittstelle (Tunnel von unterwegs): dort gibt es
+    keine MAC – die Ersatz-MAC wird durch die feste Tunnel-IP ersetzt."""
+    out = []
+    for rule in rules:
+        if rule[:2] != ("-i", lan):
+            continue
+        rest = list(rule[2:])
+        if "--mac-source" in rest:
+            i = rest.index("--mac-source")
+            ip = mac_ips.get(rest[i + 1])
+            if not ip or rest[i - 2:i] != ["-m", "mac"]:
+                continue
+            del rest[i - 2:i + 2]
+            out.append(("-i", iface, "-s", ip, *rest))
+        else:
+            out.append(("-i", iface, *rest))
+    return tuple(out)
+
+
 def build_plan(
     s: Settings,
     assignments: dict[str, str],
@@ -323,6 +345,7 @@ def build_plan(
     site_routes: dict[str, str] | None = None,
     group_mac_slots: list[tuple[str, str]] | None = None,
     allow: dict[str, set[str]] | None = None,
+    tunnel: tuple[str, dict[str, str]] | None = None,
 ) -> Plan:
     """assignments: MAC -> Slot (oder "direct"). connected: Slot -> Tunnel verbunden? default_slot: für alle anderen.
     ipv6_ok: Slot -> Tunnel kann IPv6 (nur mit IPV6_ENABLED).
@@ -331,6 +354,9 @@ def build_plan(
     rules = _mark_rules(
         s, assignments, default_slot, index_of, str(s.lan_network), site_routes, False, group_mac_slots, allow
     )
+    if tunnel:
+        # Tunnel von unterwegs (nur IPv4): Geräte bekommen dieselben Profile wie im WLAN.
+        rules += mirror_rules(rules, s.lan_interface, *tunnel)
     routes = []
     for index, (slot, ip) in enumerate(s.warp_slots, start=1):
         table = str(TABLE_BASE + index)
@@ -498,7 +524,13 @@ class WarpRouter:
             self.s, policy.assignments(), connected, db.get_setting(DEFAULT_KEY), ipv6_ok,
             db.site_routes(), db.group_site_mac_slots(),
             slot_allowlists([slot for slot, _ in self.s.warp_slots]),
+            self._tunnel(),
         ))
+
+    def _tunnel(self) -> tuple[str, dict[str, str]] | None:
+        from . import tunnel
+
+        return (tunnel.IFACE, tunnel.mac_ips()) if tunnel.enabled() else None
 
     def start(self) -> None:
         try:

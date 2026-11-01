@@ -401,6 +401,21 @@ def ctx_leistung(request: Request) -> dict:
     return {"system": system_info.get_system_metrics()}
 
 
+def ctx_tunnel(request: Request) -> dict:
+    from . import tunnel
+
+    cfg = tunnel.load()
+    shakes = tunnel.handshakes() if cfg["enabled"] else {}
+    peers = [
+        {**p, "online": tunnel.online(p["public_key"], shakes), "seen": shakes.get(p["public_key"], 0)}
+        for p in tunnel.peers()
+    ]
+    return {"tunnel": {
+        "enabled": cfg["enabled"], "port": cfg["port"], "endpoint": cfg["endpoint"],
+        "detected": cfg.get("detected", ""), "peers": peers, "net": tunnel.NET,
+    }}
+
+
 PARTS = {
     "status": ctx_status,
     "kpis": ctx_kpis,
@@ -414,6 +429,7 @@ PARTS = {
     "weiterleitungen": ctx_weiterleitungen,
     "vpn": ctx_vpn,
     "seitenrouten": ctx_seitenrouten,
+    "tunnel": ctx_tunnel,
     "fritzbox": ctx_fritzbox,
     "leistung": ctx_leistung,
     "gruppen": ctx_gruppen,
@@ -487,7 +503,7 @@ async def schutz(request: Request):
 async def vpn(request: Request, fehler: str | None = None, erfolg: str | None = None):
     freigabe = await run_in_threadpool(ctx_freigabe, request)
     return await page(
-        request, "seiten/vpn.html", "VPN", "/vpn", ["vpn", "seitenrouten"], fehler=fehler, erfolg=erfolg,
+        request, "seiten/vpn.html", "VPN", "/vpn", ["vpn", "seitenrouten", "tunnel"], fehler=fehler, erfolg=erfolg,
         freigabe=freigabe,
     )
 

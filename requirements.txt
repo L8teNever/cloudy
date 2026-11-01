@@ -5,3 +5,4 @@ cryptography>=42
 python-multipart>=0.0.9
 fritzconnection>=1.14,<2
 psutil>=5.9,<7
+segno>=1.6,<2

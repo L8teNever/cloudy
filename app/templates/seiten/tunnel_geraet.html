@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+{% set p = params.peer %}
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>{{ p.name }} – von unterwegs verbinden</h2>
+      <div class="muted small">
+        1. App <b>WireGuard</b> installieren (iPhone, Android, Windows, Mac).<br>
+        2. „Tunnel hinzufügen“ → „QR-Code scannen“ und diesen Code scannen.<br>
+        3. Tunnel einschalten – fertig, alles läuft wie zu Hause.
+      </div>
+    </div>
+  </div>
+  {% if not params.endpoint %}
+  <div class="info small">
+    Die Adresse von außen ist noch unbekannt – trag sie unter <a href="/vpn#tunnel">VPN → Von unterwegs</a> ein
+    (z. B. deine MyFRITZ-Adresse), sonst kann sich das Gerät nicht verbinden.
+  </div>
+  {% endif %}
+  <div style="display:flex;justify-content:center;padding:1rem;background:#fff;border-radius:12px;max-width:22rem;margin:.8rem auto">
+    {{ params.qr | safe }}
+  </div>
+  <div class="actions" style="justify-content:center">
+    <a class="pill" href="/tunnel/geraet/{{ p.ip }}/conf" download>Als Datei herunterladen (Laptop)</a>
+    <form method="get" action="/vpn"><button type="submit" class="secondary">Zurück</button></form>
+  </div>
+  <div class="muted small" style="margin-top:.6rem">
+    Der Code enthält den geheimen Schlüssel dieses Geräts – nicht weitergeben. Wird ein Gerät verloren, entferne es
+    unter VPN → Von unterwegs.
+  </div>
+</section>
+{% endblock %}

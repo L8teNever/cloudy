@@ -184,6 +184,21 @@ danach auf dem Pi `cloudy slots`, damit die Container starten. Löschen geht dor
 - **Fällt das VPN aus,** gehen die Geräte automatisch wieder normal ins Internet (über die Fritzbox).
   Mit `WARP_KILLSWITCH=1` ist das Internet für sie gesperrt, bis das VPN wieder steht.
 
+## 7. Von unterwegs nach Hause (WireGuard-Server)
+
+cloudy kann selbst WireGuard-Server sein: Handy oder Laptop verbinden sich unterwegs mit dem Pi, und alles läuft
+wie im WLAN zu Hause (Werbeblocker, Sperren, VPN-Profile, Auto-Wechsel, Zugriff aufs Heimnetz).
+
+1. Dashboard → **„VPN“** → **„Von unterwegs nach Hause“** → einschalten und speichern.
+   cloudy holt sich die MyFRITZ-Adresse (bzw. öffentliche IP) und richtet die Portfreigabe (UDP 51820 → Pi) in der
+   Fritzbox ein. Klappt das nicht, in der Fritzbox beim Pi „Selbstständige Portfreigaben erlauben“ einschalten oder
+   die Freigabe selbst anlegen.
+2. **„Gerät hinzufügen“** → QR-Code in der App **WireGuard** scannen (Laptop: Datei herunterladen).
+3. Jedes Tunnel-Gerät erscheint unter **Geräte** und kann wie jedes andere Gerät Profile und Gruppen bekommen.
+
+- Braucht WireGuard im Kernel des Pi (Raspberry Pi OS hat es) und `GATEWAY_ENABLED=1` für die VPN-Profile.
+- Ohne öffentliche IPv4 (DS-Lite) ist der Pi von außen meist nicht erreichbar.
+
 ## FRITZ!Box-Steuerung & Topologie
 
 Unter dem Menüpunkt **FRITZ!Box** im Dashboard:

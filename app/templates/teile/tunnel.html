@@ -1,0 +1,80 @@
+{% set tn = tunnel %}
+<section class="card" id="tunnel" data-refresh-box>
+  <div class="card-head">
+    <div class="card-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9 21v-6h6v6"/></svg>
+    </div>
+    <div>
+      <h2>Von unterwegs nach Hause (WireGuard)</h2>
+      <div class="muted small">
+        Handy oder Laptop verbinden sich unterwegs mit dem Pi – dann ist alles wie im WLAN zu Hause:
+        Werbeblocker, Sperren, VPN-Profile, Auto-Wechsel und Zugriff auf alle Geräte im Heimnetz.
+        In der App <b>WireGuard</b> einfach den QR-Code scannen.
+      </div>
+    </div>
+  </div>
+
+  <form method="post" action="/tunnel/einstellungen" data-noajax style="display:grid;gap:.6rem">
+    <label class="small" style="display:flex;align-items:center;gap:.5rem">
+      <input type="checkbox" name="enabled" value="1" {{ 'checked' if tn.enabled }}> Tunnel von unterwegs einschalten
+    </label>
+    <div style="display:grid;gap:.6rem;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
+      <label class="small">UDP-Port
+        <input type="number" name="port" min="1024" max="65535" value="{{ tn.port }}">
+      </label>
+      <label class="small">Adresse von außen (leer = automatisch)
+        <input type="text" name="endpoint" value="{{ tn.endpoint }}" placeholder="{{ tn.detected or 'z. B. abc123.myfritz.net' }}"
+               autocomplete="off" spellcheck="false">
+      </label>
+    </div>
+    <div class="muted small">
+      {% if tn.endpoint or tn.detected %}
+      Geräte verbinden sich mit <code>{{ tn.endpoint or tn.detected }}:{{ tn.port }}</code>.
+      {% else %}
+      Beim Einschalten fragt cloudy die Fritzbox nach der MyFRITZ-Adresse bzw. der öffentlichen IP.
+      {% endif %}
+      Die Portfreigabe (UDP {{ tn.port }} → Pi) richtet cloudy beim Speichern in der Fritzbox ein.
+    </div>
+    <div class="actions"><button type="submit">Speichern</button></div>
+  </form>
+
+  {% if tn.enabled %}
+  <form method="post" action="/tunnel/portfreigabe" data-noajax class="actions" style="margin-top:.4rem">
+    <button type="submit" class="secondary">Portfreigabe &amp; Adresse neu prüfen</button>
+  </form>
+
+  <h3 style="margin-top:1rem">Geräte</h3>
+  {% if tn.peers %}
+  <div style="display:grid;gap:.4rem">
+    {% for p in tn.peers %}
+    <div class="field-group" style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
+      <span class="fg-title">{{ p.name }}</span>
+      <span class="muted small mono">{{ p.ip }}</span>
+      {% if p.online %}<span class="pill on" style="margin:0">verbunden</span>
+      {% elif p.seen %}<span class="pill" style="margin:0">nicht verbunden</span>
+      {% else %}<span class="pill warn" style="margin:0">noch nie verbunden</span>{% endif %}
+      <span style="flex:1"></span>
+      <form method="get" action="/tunnel/geraet/{{ p.ip }}" style="display:inline">
+        <button type="submit" class="secondary small">QR-Code</button>
+      </form>
+      <form method="post" action="/tunnel/geraet/{{ p.ip }}/entfernen" data-ok="Entfernt" style="display:inline"
+            data-confirm="Gerät entfernen? Es kann sich danach nicht mehr verbinden.">
+        <button type="submit" class="danger">Entfernen</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="muted small">Noch kein Gerät eingerichtet.</div>
+  {% endif %}
+
+  <form method="post" action="/tunnel/geraete" data-noajax style="margin-top:.6rem;display:flex;gap:.5rem;flex-wrap:wrap">
+    <input type="text" name="name" placeholder="Name, z. B. Handy Max" maxlength="40" required style="flex:1;min-width:12rem">
+    <button type="submit">Gerät hinzufügen</button>
+  </form>
+  <div class="muted small" style="margin-top:.4rem">
+    Jedes Gerät erscheint danach auch unter <a href="/geraete">Geräte</a> – dort kannst du ihm wie jedem anderen
+    Gerät ein VPN-Profil, eine Gruppe oder Sperren geben.
+  </div>
+  {% endif %}
+</section>

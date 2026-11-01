@@ -94,6 +94,11 @@ def build_config(s: Settings) -> str:
         f"addn-hosts={s.blocklist_path}",
         f"conf-file={s.redirects_path}",
     ]
+    from . import tunnel
+
+    if tunnel.enabled():
+        # Geräte im Tunnel von unterwegs fragen den Pi (10.77.0.1) – wie zu Hause.
+        lines.insert(1, f"interface={tunnel.IFACE}")
     if s.local_name:
         # Name des Dashboards im Heimnetz, z. B. http://cloudy.lan
         lines.append(f"address=/{s.local_name}/{s.pi_ip}")

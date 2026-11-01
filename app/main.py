@@ -17,7 +17,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import adblock, autoswitch, blocklist, certs, db, dnsprofile, fritz, localdomain, policy, slots, stats, views, warp, zertwechsel
+from . import adblock, autoswitch, blocklist, certs, db, dnsprofile, fritz, localdomain, policy, slots, stats, tunnel, views, warp, zertwechsel
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -175,6 +175,7 @@ async def lifespan(app: FastAPI):
             print(f"cloudy: HTTPS nicht verfügbar: {exc}", flush=True)
     renew_stop = threading.Event()
     if "PYTEST_CURRENT_TEST" not in os.environ:
+        threading.Thread(target=tunnel.start, args=(settings,), daemon=True).start()
         threading.Thread(target=localdomain.renew_loop, args=(settings, renew_stop), daemon=True).start()
         threading.Thread(target=fritz.retry_loop, args=(settings, renew_stop), daemon=True).start()
     yield
@@ -1263,6 +1264,100 @@ async def auto_switch_remove(request: Request, domain: str = Form(...)):
     await run_in_threadpool(autoswitch.remove_rule, domain)
     await run_in_threadpool(_apply_redirects, request)
     return RedirectResponse("/vpn#auto-wechsel", status_code=303)
+
+
+def _tunnel_back(msg: str = "", ok: bool = True) -> RedirectResponse:
+    query = f"?{'erfolg' if ok else 'fehler'}={quote(msg)}" if msg else ""
+    return RedirectResponse(f"/vpn{query}#tunnel", status_code=303)
+
+
+def _tunnel_apply(request: Request) -> str:
+    settings = request.app.state.settings
+    state = tunnel.apply(settings)
+    warp_router = getattr(request.app.state, "warp_router", None)
+    if warp_router and hasattr(warp_router, "tick"):
+        try:
+            warp_router.tick()  # Profile sofort auch für Tunnel-Geräte
+        except Exception as exc:  # noqa: BLE001
+            print(f"cloudy: WARP-Routing nach Tunnel-Änderung: {exc}", flush=True)
+    return state
+
+
+@app.post("/tunnel/einstellungen", dependencies=[Depends(require_password)])
+async def tunnel_settings(
+    request: Request, enabled: str = Form(""), port: int = Form(tunnel.DEFAULT_PORT), endpoint: str = Form("")
+):
+    """Tunnel von unterwegs ein/aus, Port und Adresse von außen."""
+    was = await run_in_threadpool(tunnel.enabled)
+    cfg = await run_in_threadpool(tunnel.update, bool(enabled), port, endpoint)
+    state = await run_in_threadpool(_tunnel_apply, request)
+    if cfg["enabled"] != was:
+        await run_in_threadpool(_apply_redirects, request)  # dnsmasq soll auch im Tunnel antworten
+    if not cfg["enabled"]:
+        return _tunnel_back("Tunnel von unterwegs ist aus.")
+    if state != "an":
+        return _tunnel_back(state, ok=False)
+    settings = request.app.state.settings
+    await run_in_threadpool(tunnel.refresh_endpoint, settings)
+    ok, msg = await run_in_threadpool(tunnel.ensure_port_forward, settings)
+    return _tunnel_back(("Tunnel an. " if ok else "Tunnel an, aber: ") + msg, ok=ok)
+
+
+@app.post("/tunnel/portfreigabe", dependencies=[Depends(require_password)])
+async def tunnel_port_forward(request: Request):
+    settings = request.app.state.settings
+    found = await run_in_threadpool(tunnel.refresh_endpoint, settings)
+    ok, msg = await run_in_threadpool(tunnel.ensure_port_forward, settings)
+    if not found:
+        return _tunnel_back(msg + " Adresse von außen unbekannt – bitte selbst eintragen.", ok=False)
+    return _tunnel_back(f"{msg} Adresse: {found}", ok=ok)
+
+
+@app.post("/tunnel/geraete", dependencies=[Depends(require_password)])
+async def tunnel_add(request: Request, name: str = Form("")):
+    try:
+        peer = await run_in_threadpool(tunnel.add_peer, name)
+    except ValueError as exc:
+        return _tunnel_back(str(exc), ok=False)
+    await run_in_threadpool(_tunnel_apply, request)
+    return RedirectResponse(f"/tunnel/geraet/{peer['ip']}", status_code=303)
+
+
+def _tunnel_peer(ip: str) -> dict:
+    peer = tunnel.peer(ip)
+    if not peer:
+        raise HTTPException(status_code=404, detail="Tunnel-Gerät nicht gefunden")
+    return peer
+
+
+@app.get("/tunnel/geraet/{ip}", response_class=HTMLResponse, dependencies=[Depends(require_password)])
+async def tunnel_peer_page(request: Request, ip: str):
+    peer = await run_in_threadpool(_tunnel_peer, ip)
+    endpoint = await run_in_threadpool(tunnel.endpoint)
+    conf = await run_in_threadpool(tunnel.client_config, peer, endpoint)
+    qr = await run_in_threadpool(tunnel.qr_svg, conf)
+    return await views.page(
+        request, "seiten/tunnel_geraet.html", "Von unterwegs", "/vpn", [], peer=peer, qr=qr, endpoint=endpoint
+    )
+
+
+@app.get("/tunnel/geraet/{ip}/conf", dependencies=[Depends(require_password)])
+async def tunnel_peer_conf(ip: str):
+    peer = await run_in_threadpool(_tunnel_peer, ip)
+    conf = await run_in_threadpool(tunnel.client_config, peer, await run_in_threadpool(tunnel.endpoint))
+    name = re.sub(r"[^A-Za-z0-9_-]+", "-", peer["name"]).strip("-")[:30] or "cloudy"
+    return Response(
+        conf, media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="cloudy-{name}.conf"', "Cache-Control": "no-store"},
+    )
+
+
+@app.post("/tunnel/geraet/{ip}/entfernen", dependencies=[Depends(require_password)])
+async def tunnel_remove(request: Request, ip: str):
+    peer = await run_in_threadpool(_tunnel_peer, ip)
+    await run_in_threadpool(tunnel.remove_peer, ip)
+    await run_in_threadpool(_tunnel_apply, request)
+    return _tunnel_back(f"{peer['name']} entfernt.")
 
 
 @app.post("/auto-wechsel/minuten", dependencies=[Depends(require_password)])
