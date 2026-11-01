@@ -435,3 +435,20 @@ def test_hub_ha_status_is_checked_by_pi(client, monkeypatch):
     monkeypatch.setattr(m, "_ha_online", lambda url: True)
     assert client.get("/hub/ha-status").json() == {"online": True}
     assert "homeassistant.local" not in client.get("/hub").text.split("<script>")[-1]
+
+
+def test_block_domain_shows_blocked_page(client, monkeypatch):
+    monkeypatch.setattr(localdomain, "start_in_background", lambda s: None)
+    r = client.post("/lokale-domain", data={"gesperrt": "gesperrt.kulbarts.com"}, follow_redirects=False)
+    assert r.status_code == 303 and localdomain.block_domains() == ["gesperrt.kulbarts.com"]
+    assert "gesperrt.kulbarts.com" in localdomain.domains()  # bekommt Zertifikat und lokale DNS-Antwort
+    h = {"host": "gesperrt.kulbarts.com"}
+    for path in ("/", "/irgendwas"):
+        page = client.get(path + "?cf_request_host=aniworld.com", headers=h)
+        assert page.status_code == 200 and "Diese Seite ist gesperrt" in page.text and "aniworld.com" in page.text
+    assert "<script" not in client.get("/?cf_request_host=%3Cscript%3E", headers=h).text
+    assert client.get("/static/cloudy.svg", headers=h).status_code == 200
+    # Dashboard bleibt über diese Domain unerreichbar (statt Sperrseite erscheint kein Admin-Inhalt)
+    assert "Einstellungen" not in client.get("/einstellungen", headers=h).text
+    assert client.post("/lokale-domain", data={"gesperrt": "a.kulbarts.com", "hub": "a.kulbarts.com"}).status_code == 400
+    assert "gesperrt.kulbarts.com" in client.get("/einstellungen").text

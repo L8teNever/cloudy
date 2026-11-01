@@ -2,7 +2,7 @@
 {% block content %}
 {% set ld = params.lokal %}
 {% set local = settings.local_name or 'cloudy.lan' %}
-{% set any_domain = ld.domains or ld.dashboards or ld.hubs %}
+{% set any_domain = ld.domains or ld.dashboards or ld.hubs or ld.blocks %}
 
 <div class="page-head">
   <div>
@@ -96,6 +96,18 @@
         </div>
         <button type="button" class="secondary add-btn" onclick="document.getElementById('mein-domains').append(document.getElementById('tpl-mein').content.cloneNode(true))">+ weitere</button>
         <template id="tpl-mein"><div class="field-row"><input name="name" data-keep autocomplete="off" placeholder="main.kulbarts.com"><span class="suffix">/mein</span></div></template>
+      </div>
+
+      <div class="field-group">
+        <div class="fg-title">Sperrseite</div>
+        <div class="fg-hint">Zeigt „Diese Seite ist gesperrt“ – als Ziel der Cloudflare-Sperre eintragen (Blockierungsseite → URL-Umleitung).</div>
+        <div id="block-domains" style="display:grid;gap:.35rem">
+          {% for d in ld.blocks or [''] %}
+          <div class="field-row"><input name="gesperrt" data-keep autocomplete="off" value="{{ d }}" placeholder="gesperrt.kulbarts.com"></div>
+          {% endfor %}
+        </div>
+        <button type="button" class="secondary add-btn" onclick="document.getElementById('block-domains').append(document.getElementById('tpl-block').content.cloneNode(true))">+ weitere</button>
+        <template id="tpl-block"><div class="field-row"><input name="gesperrt" data-keep autocomplete="off" placeholder="gesperrt.kulbarts.com"></div></template>
       </div>
 
       <div class="field-group">

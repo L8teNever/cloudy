@@ -188,8 +188,13 @@ async def static_cache_middleware(request: Request, call_next):
 async def redirect_middleware(request: Request, call_next):
     raw_host = request.headers.get("host", "").split(":")[0].strip().lower()
     settings = getattr(request.app.state, "settings", None)
-    mein_hosts, dash_hosts, hub_hosts = await run_in_threadpool(
-        lambda: (localdomain.mein_domains(), localdomain.dashboard_domains(), localdomain.hub_domains())
+    mein_hosts, dash_hosts, hub_hosts, block_hosts = await run_in_threadpool(
+        lambda: (
+            localdomain.mein_domains(),
+            localdomain.dashboard_domains(),
+            localdomain.hub_domains(),
+            localdomain.block_domains(),
+        )
     )
     if raw_host in dash_hosts and request.url.scheme == "http":
         # Dashboard unter der eigenen Domain: Passwort und Daten nur verschlüsselt, sobald das Zertifikat da ist.
@@ -200,6 +205,18 @@ async def redirect_middleware(request: Request, call_next):
                 + (f"?{request.url.query}" if request.url.query else ""),
                 status_code=302,
             )
+    if raw_host in block_hosts:
+        # Sperrseite: jeder Aufruf der Domain zeigt „Diese Seite ist gesperrt“ (Cloudflare hängt ?cf_request_host=… an).
+        path = request.url.path
+        if request.url.scheme == "http" and settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
+            port = "" if settings.https_port == 443 else f":{settings.https_port}"
+            return RedirectResponse(
+                f"https://{raw_host}{port}{path}" + (f"?{request.url.query}" if request.url.query else ""),
+                status_code=302,
+            )
+        if path not in ("/healthz", "/favicon.ico") and not path.startswith("/static/"):
+            request.scope["path"] = "/gesperrt"
+        return await call_next(request)
     if raw_host in hub_hosts:
         # Hub-Domain: Startseite mit Links – Aufruf ohne Pfad landet auf /hub.
         path = request.url.path
@@ -234,6 +251,7 @@ async def redirect_middleware(request: Request, call_next):
     own_hosts.update(mein_hosts)
     own_hosts.update(dash_hosts)
     own_hosts.update(hub_hosts)
+    own_hosts.update(block_hosts)
     if settings:
         own_hosts.add(settings.pi_ip.lower())
         if settings.local_name:
@@ -343,6 +361,13 @@ def _local_base(host: str, settings) -> str:
         port = "" if settings.https_port == 443 else f":{settings.https_port}"
         return f"https://{host}{port}"
     return f"http://{host}"
+
+
+@app.get("/gesperrt", response_class=HTMLResponse)
+async def gesperrt_page(request: Request, cf_request_host: str = ""):
+    """Öffentliche Sperrseite (Ziel der Cloudflare-Sperre): zeigt, dass die Seite gesperrt ist."""
+    host = re.sub(r"[^a-z0-9.\-]", "", cf_request_host.lower())[:120]
+    return templates.TemplateResponse(request, "seiten/gesperrt.html", {"title": "Gesperrt", "host": host})
 
 
 @app.get("/hub", response_class=HTMLResponse)
@@ -795,6 +820,7 @@ async def lokale_domain_set(
     name: list[str] = Form(default=[]),
     dashboard: list[str] = Form(default=[]),
     hub: list[str] = Form(default=[]),
+    gesperrt: list[str] = Form(default=[]),
     ha_url: str = Form(""),
     cf_token: str = Form(""),
     email: str = Form(""),
@@ -804,16 +830,19 @@ async def lokale_domain_set(
         mein = [localdomain.normalize_domain(n) for n in name if n.strip()]
         dash = [localdomain.normalize_domain(n) for n in dashboard if n.strip()]
         hubs = [localdomain.normalize_domain(n) for n in hub if n.strip()]
+        blocks = [localdomain.normalize_domain(n) for n in gesperrt if n.strip()]
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     mein = list(dict.fromkeys(mein))
     dash = list(dict.fromkeys(dash))
     hubs = list(dict.fromkeys(hubs))
-    overlap = (set(mein) & set(dash)) | (set(mein) & set(hubs)) | (set(dash) & set(hubs))
+    blocks = list(dict.fromkeys(blocks))
+    groups = [set(mein), set(dash), set(hubs), set(blocks)]
+    overlap = {n for i, a in enumerate(groups) for b in groups[i + 1:] for n in a & b}
     if overlap:
         raise HTTPException(
             status_code=400,
-            detail=f"Dashboard, Hub und „Mein Gerät“ brauchen verschiedene Namen ({', '.join(sorted(overlap))})",
+            detail=f"Dashboard, Hub, Sperrseite und „Mein Gerät“ brauchen verschiedene Namen ({', '.join(sorted(overlap))})",
         )
     cf_token = cf_token.strip()
     if cf_token and (len(cf_token) > 512 or any(ch.isspace() for ch in cf_token)):
@@ -827,6 +856,7 @@ async def lokale_domain_set(
     await run_in_threadpool(localdomain.set_mein_domains, mein)
     await run_in_threadpool(localdomain.set_dashboard_domains, dash)
     await run_in_threadpool(localdomain.set_hub_domains, hubs)
+    await run_in_threadpool(localdomain.set_block_domains, blocks)
     await run_in_threadpool(db.set_setting, localdomain.HA_URL_KEY, ha)
     await run_in_threadpool(db.set_setting, localdomain.EMAIL_KEY, email)
     if cf_token:
