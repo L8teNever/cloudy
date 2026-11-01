@@ -2,20 +2,21 @@
 <div class="card" id="auto-wechsel">
   <h2>Automatisch aufs VPN wechseln, wenn eine Seite aufgerufen wird</h2>
   <p class="muted small">
-    Ruft ein Gerät eine dieser Seiten auf (z. B. <code>aniworld.com</code>, inkl. Subdomains und zugehöriger Dienst-Domains),
-    fängt <b>cloudy die Anfrage lokal ab</b> (DNS zeigt auf den Pi – vor Cloudflare) und zeigt die VPN-Wechselseite.
-    Bei <b>Automatisch</b> probiert cloudy der Reihe nach alle <b>verbundenen VPN-Profile</b> (nicht WARP/Cloudflare),
-    bis eines die Seite erreicht; sonst erscheint „kein VPN gefunden“ mit der Option, bestätigt über
-    <b>normales Internet</b> weiterzugehen. Ein festes Profil wechselt das Gerät direkt dorthin.
-    Nach <b>{{ auto_minutes }} Minuten</b> ohne Aufruf geht das Gerät zurück auf <b>Standard</b>.
-    Geräte mit Gruppen-Profil und von Hand geänderte bleiben unberührt. Braucht den Pi als DNS (kein „Sicheres DNS“)
-    und die cloudy-CA auf dem Gerät (wie bei Domain-Weiterleitungen).
+    Wie eine <b>Cloudflare-DNS-Umleitung</b>, nur lokal auf dem Pi – Cloudflare braucht dafür nicht.
+    Ruft ein Gerät z. B. <code>aniworld.to</code> auf, zeigt DNS auf den Pi; der Pi antwortet per
+    <b>HTTP</b> mit der VPN-Wechselseite (Browser: „Nicht sicher“, aber <b>keine</b> Zertifikats-Nachfrage).
+    Dort: VPN umstellen (bei <b>Automatisch</b> Profile durchprobieren), 5 Sekunden Countdown, dann zur echten Seite.
+    Nach <b>{{ auto_minutes }} Minuten</b> ohne Aufruf zurück auf <b>Standard</b>.
+  </p>
+  <p class="muted small">
+    Kein Zertifikat auf den Geräten nötig. Seiten mit strengem <b>HSTS</b> (nur HTTPS) können den HTTP-Aufruf
+    blocken – dann hilft nur Cloudflare-DNS oder einmal die <a href="/ca.crt">cloudy-CA</a>.
   </p>
   {% if params.fehler %}<div class="info small">{{ params.fehler }}</div>{% endif %}
 
   <form method="post" action="/auto-wechsel/add" class="site-add" data-ok="Gespeichert">
     <textarea name="domain" rows="2" required autocomplete="off" spellcheck="false"
-              placeholder="Eine oder mehrere Seiten, mit Komma getrennt – z. B. aniworld.com, s.to"></textarea>
+              placeholder="Eine oder mehrere Seiten, mit Komma getrennt – z. B. aniworld.to, s.to"></textarea>
     <div class="site-add-row">
       <select name="slot" aria-label="Profil">
         <option value="auto">Automatisch – verbundene VPN-Profile durchprobieren</option>

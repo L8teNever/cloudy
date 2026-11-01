@@ -1,14 +1,13 @@
-"""Auto-Wechsel: Ruft ein Gerät eine bestimmte Seite auf (z. B. aniworld.com), landet zuerst auf der
-VPN-Wechselseite; erst dort wird das VPN umgestellt (Countdown), danach Weiterleitung zur echten Seite.
+"""Auto-Wechsel: Der Pi zeigt die VPN-Wechselseite per HTTP (wie Cloudflare-DNS mit URL-Umleitung).
 
-Zwei Arten von Regeln:
-- festes Profil (warp1, vpn2 …): Wechselseite schaltet auf dieses Profil
-- „auto“: nur echte VPN-Profile (vpn1, vpn2 …), die gerade verbunden sind; cloudy prüft der Reihe nach, ob die
-  Seite darüber erreichbar ist, und nimmt das erste passende. Schlägt keines an, kann der Nutzer bestätigt über
-  „normales Internet“ (einstellbares Profil, z. B. Fritzbox/WARP) weitergehen.
+Ablauf:
+1. DNS zeigt die Ziel-Domain auf den Pi (nur im Heimnetz).
+2. Aufruf per HTTP: Pi liefert die Wechselseite unter diesem Host
+   (Browser zeigt „Nicht sicher“, aber keine Zertifikats-Nachfrage – wie bei Cloudflare).
+3. Kein Fake-HTTPS / keine cloudy-CA nötig. HTTPS-Handshake für Auto-Wechsel-Hosts wird abgelehnt.
+4. Countdown, VPN umstellen, zurück zur echten Seite. Nach Idle: zurück auf Standard.
 
-Lokal: Domains zeigen per DNS auf den Pi → Wechselseite. VPN-Wechsel passiert nur über status_for (Seite offen),
-nicht schon bei der DNS-Anfrage. Nach der Wartezeit ohne Aufruf: zurück auf Standard.
+VPN-Wechsel nur über status_for (Wechselseite), nicht schon bei DNS.
 """
 
 from __future__ import annotations
@@ -171,9 +170,19 @@ def managed_domains() -> list[str]:
 
 
 def hijack_domains() -> list[str]:
-    """Domains, die lokal auf den Pi zeigen (Wechselseite) – nicht die mit aktivem Durchlass."""
+    """Domains, deren DNS auf den Pi zeigt (nur für den Redirect zur Wechselseite, bis Durchlass aktiv)."""
     passed = set(pass_map())
     return [d for d in managed_domains() if d not in passed]
+
+
+def switch_bounce_url(host: str, switch_hosts: list[str], https: bool = True) -> str | None:
+    """URL der Wechselseite inkl. cf_request_host – oder None, wenn keine Wechselseite konfiguriert ist."""
+    host = (host or "").lower().rstrip(".")
+    if not host or not switch_hosts:
+        return None
+    target = switch_hosts[0]
+    scheme = "https" if https else "http"
+    return f"{scheme}://{target}/?cf_request_host={host}"
 
 
 def match_rule(domain: str) -> tuple[str, str] | None:

@@ -112,7 +112,7 @@ def block_domains() -> list[str]:
 
 
 def switch_domains() -> list[str]:
-    """Domains für die Wechselseite – Ziel einer Cloudflare-Sperre, die aufs VPN wechselt und zurückleitet."""
+    """Domains für die Wechselseite – Ziel des Pi-Redirects beim Auto-Wechsel (VPN umstellen, zurückleiten)."""
     return _setting_hosts(SWITCH_KEY)
 
 

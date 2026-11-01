@@ -2,6 +2,7 @@ import os
 import re
 import secrets
 import socket
+import ssl
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -153,8 +154,10 @@ async def lifespan(app: FastAPI):
                 own = localdomain.sni_pair(_s, name)
                 if own:
                     return own
-                if autoswitch.covers_host(name):
-                    return certs.ensure_domain_cert(_s, autoswitch.rule_apex(name))
+                # Auto-Wechsel: kein Fake-HTTPS (wie Cloudflare-DNS-Redirect über HTTP).
+                # Handshake abbrechen → Browser kann per HTTP die Wechselseite laden („Nicht sicher“, ohne Nachfrage).
+                if autoswitch.covers_host(name) and not autoswitch.is_passed(name):
+                    raise ssl.SSLError("auto-wechsel nur per HTTP")
                 rule = find_rule(name, db.redirect_map())
                 return certs.ensure_domain_cert(_s, rule[0]) if rule else None
 
@@ -232,7 +235,7 @@ async def redirect_middleware(request: Request, call_next):
             request.scope["path"] = "/gesperrt"
         return await call_next(request)
     if raw_host in switch_hosts:
-        # Wechselseite: jeder Aufruf zeigt „ich verbinde dich übers VPN“ (Cloudflare hängt ?cf_request_host=… an).
+        # Wechselseite: jeder Aufruf zeigt „ich verbinde dich übers VPN“ (?cf_request_host=… vom Pi-Redirect).
         path = request.url.path
         if request.url.scheme == "http" and settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
             port = "" if settings.https_port == 443 else f":{settings.https_port}"
@@ -245,19 +248,24 @@ async def redirect_middleware(request: Request, call_next):
         ) and not path.startswith("/static/"):
             request.scope["path"] = "/vpn-wechsel"
         return await call_next(request)
-    # Auto-Wechsel lokal: Ziel-Domain zeigt auf den Pi → immer Wechselseite (auch nach Durchlass,
-    # falls der Browser die Pi-IP noch gecacht hat – sonst landet man auf 404/„kein Internet“).
+    # Auto-Wechsel wie Cloudflare-DNS-URL-Redirect: per HTTP die Wechselseite zeigen
+    # (Browser: „Nicht sicher“, aber keine Zertifikats-Nachfrage). Kein Fake-HTTPS als Zielseite.
     if raw_host and await run_in_threadpool(autoswitch.covers_host, raw_host):
-        path = request.url.path
-        if path not in (
-            "/healthz", "/favicon.ico", "/vpn-wechsel/status", "/vpn-wechsel/normal", "/vpn-wechsel/ping"
-        ) and not path.startswith("/static/"):
-            q = request.url.query
-            if "cf_request_host=" not in q:
-                extra = f"cf_request_host={raw_host}"
-                request.scope["query_string"] = (extra if not q else f"{q}&{extra}").encode()
-            request.scope["path"] = "/vpn-wechsel"
-        return await call_next(request)
+        if not await run_in_threadpool(autoswitch.is_passed, raw_host):
+            path = request.url.path
+            if path not in (
+                "/healthz", "/favicon.ico", "/vpn-wechsel/status", "/vpn-wechsel/normal", "/vpn-wechsel/ping"
+            ) and not path.startswith("/static/"):
+                request.scope["path"] = "/vpn-wechsel"
+                # Host der Zielseite mitgeben (entspricht cf_request_host bei Cloudflare).
+                raw_qs = (request.scope.get("query_string") or b"").decode()
+                if "cf_request_host=" not in raw_qs:
+                    extra = f"cf_request_host={quote(raw_host, safe='')}"
+                    request.scope["query_string"] = f"{raw_qs}&{extra}".encode() if raw_qs else extra.encode()
+                    # Starlette cached_property neu aufbauen lassen
+                    request.__dict__.pop("query_params", None)
+                    request.__dict__.pop("url", None)
+            return await call_next(request)
     if raw_host in hub_hosts:
         # Hub-Domain: Startseite mit Links – Aufruf ohne Pfad landet auf /hub.
         path = request.url.path
@@ -418,10 +426,10 @@ def _switch_host(text: str) -> str:
 
 @app.get("/vpn-wechsel", response_class=HTMLResponse)
 async def vpn_wechsel_page(request: Request, cf_request_host: str = ""):
-    """Wechselseite: lokal (DNS→Pi) oder als Ziel einer Cloudflare-Sperre – wechselt aufs VPN und leitet zurück."""
+    """Wechselseite: per HTTP unter der Ziel-Domain (Auto-Wechsel) oder unter cloudy-vpn.… / Cloudflare."""
     host = _switch_host(cf_request_host)
     if not host:
-        raw = request.headers.get("host", "").split(":")[0].strip().lower()
+        raw = (request.headers.get("host") or "").split(":")[0].strip().lower()
         if await run_in_threadpool(autoswitch.covers_host, raw):
             host = _switch_host(raw)
     return templates.TemplateResponse(

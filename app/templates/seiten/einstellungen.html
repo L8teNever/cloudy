@@ -112,7 +112,7 @@
 
       <div class="field-group">
         <div class="fg-title">VPN-Wechselseite</div>
-        <div class="fg-hint">Optional als Ziel einer Cloudflare-Sperre. Neu: unter VPN → Automatisch wechselt cloudy Domains auch lokal ab (DNS→Pi), ohne Cloudflare – mit VPN-Durchprobieren und Fallback „normales Internet“.</div>
+        <div class="fg-hint">Eigene Domain (z. B. cloudy-vpn.kulbarts.com) – Ziel einer Cloudflare-DNS-URL-Umleitung (?cf_request_host=…). Auto-Wechsel auf dem Pi braucht das nicht (der zeigt die Wechselseite direkt per HTTP).</div>
         <div id="switch-domains" style="display:grid;gap:.35rem">
           {% for d in ld.switches or [''] %}
           <div class="field-row"><input name="wechsel" data-keep autocomplete="off" value="{{ d }}" placeholder="vpn.kulbarts.com"></div>
