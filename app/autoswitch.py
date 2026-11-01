@@ -16,6 +16,7 @@ import json
 import subprocess
 import threading
 import time
+from urllib.parse import quote
 
 from . import db, dienste, policy, warp
 
@@ -179,19 +180,24 @@ def switch_bounce_url(
     host: str,
     switch_hosts: list[str] | None = None,
     *,
+    target_url: str = "",
     local_name: str = "",
+    pi_ip: str = "",
     https: bool = False,
 ) -> str | None:
-    """HTTP(S)-URL der Wechselseite inkl. cf_request_host (wie Cloudflare-URL-Umleitung)."""
+    """HTTP(S)-URL der Wechselseite inkl. cf_request_host und target_url (wie Cloudflare-URL-Umleitung)."""
     host = (host or "").lower().rstrip(".")
     if not host:
         return None
     scheme = "https" if https else "http"
+    target_param = f"&target_url={quote(target_url, safe='')}" if target_url else ""
     if switch_hosts:
-        return f"{scheme}://{switch_hosts[0]}/?cf_request_host={host}"
+        return f"{scheme}://{switch_hosts[0]}/?cf_request_host={host}{target_param}"
     local = (local_name or "").strip().lower().rstrip(".")
+    if not local and pi_ip:
+        local = pi_ip.strip()
     if local:
-        return f"{scheme}://{local}/vpn-wechsel?cf_request_host={host}"
+        return f"{scheme}://{local}/vpn-wechsel?cf_request_host={host}{target_param}"
     return None
 
 

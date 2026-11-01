@@ -73,6 +73,7 @@
   <script>
     (function () {
       var host = {{ host | tojson }};
+      var targetUrl = {{ target_url | tojson }};
       var panel = document.getElementById("swPanel");
       var titel = document.getElementById("swTitel");
       var text = document.getElementById("swText");
@@ -80,12 +81,28 @@
       var countEl = document.getElementById("swCount");
       var btn = document.getElementById("swBtn");
       var normalBtn = document.getElementById("swNormal");
-      var ziel = host ? "https://" + host + "/" : "";
+      var ziel = targetUrl || (host ? "https://" + host + "/" : "");
       var start = Date.now();
       var MAX_MS = 120000;
       var COUNTDOWN_S = 5;
       var countdownLauft = false;
       var label = "";
+
+      function zurZielseite() {
+        if (!ziel) return;
+        try {
+          window.location.href = ziel;
+        } catch (e) {
+          location.replace(ziel);
+        }
+      }
+
+      btn.addEventListener("click", function (e) {
+        if (ziel) {
+          e.preventDefault();
+          zurZielseite();
+        }
+      });
 
       function ende(art, t, msg, showNormal) {
         panel.className = "panel sw-panel " + art;
@@ -93,16 +110,17 @@
         text.textContent = msg;
         status.textContent = "";
         countEl.hidden = true;
-        if (ziel) { btn.href = ziel; btn.style.display = "block"; }
-        else { btn.style.display = "none"; }
+        if (ziel) {
+          btn.href = ziel;
+          btn.textContent = "Seite öffnen";
+          btn.style.display = "block";
+        } else {
+          btn.style.display = "none";
+        }
         normalBtn.style.display = showNormal ? "block" : "none";
       }
 
-      if (!host) { return ende("fehler", "Gesperrt", "Diese Seite ist gesperrt.", false); }
-
-      function zurZielseite() {
-        location.replace(ziel + (ziel.indexOf("?") >= 0 ? "&" : "?") + "_=" + Date.now());
-      }
+      if (!host && !ziel) { return ende("fehler", "Gesperrt", "Diese Seite ist gesperrt.", false); }
 
       // Exakt 5 Sekunden Countdown, dann zur richtigen Seite – immer, auch wenn VPN schon an war.
       function starteCountdown() {
@@ -110,8 +128,13 @@
         countdownLauft = true;
         panel.classList.add("fertig");
         titel.textContent = "Verbunden";
-        text.textContent = "Gleich geht’s weiter zu " + host + ".";
+        text.textContent = "Gleich geht’s weiter zu " + (host || "deiner Seite") + ".";
         countEl.hidden = false;
+        if (ziel) {
+          btn.href = ziel;
+          btn.textContent = "Jetzt zur Seite";
+          btn.style.display = "block";
+        }
         var endeAt = Date.now() + COUNTDOWN_S * 1000;
 
         function tick() {

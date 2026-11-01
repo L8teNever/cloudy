@@ -21,6 +21,14 @@ def test_bounce_url():
     assert autoswitch.switch_bounce_url("aniworld.to", local_name="cloudy.lan") == (
         "http://cloudy.lan/vpn-wechsel?cf_request_host=aniworld.to"
     )
+    assert autoswitch.switch_bounce_url("aniworld.to", pi_ip="192.168.178.50") == (
+        "http://192.168.178.50/vpn-wechsel?cf_request_host=aniworld.to"
+    )
+    assert autoswitch.switch_bounce_url(
+        "aniworld.to", local_name="cloudy.lan", target_url="http://aniworld.to/anime/stream?ep=1"
+    ) == (
+        "http://cloudy.lan/vpn-wechsel?cf_request_host=aniworld.to&target_url=http%3A%2F%2Faniworld.to%2Fanime%2Fstream%3Fep%3D1"
+    )
     assert autoswitch.switch_bounce_url("x") is None
 
 
@@ -43,6 +51,23 @@ def test_pi_redirects_to_wechsel_page(client):
     assert "aniworld.to/?" not in r.headers["location"]
     assert "/vpn-wechsel" in r.headers["location"] or "cloudy" in r.headers["location"]
 
+
+def test_pi_redirects_preserves_path_and_query(client):
+    """Originale URL von davor inklusive Pfad und Query bleibt für die Wechselseite erhalten."""
+    autoswitch.set_rule("aniworld.to", autoswitch.AUTO)
+    r = client.get("/anime/stream?ep=42", headers={"host": "aniworld.to"}, follow_redirects=False)
+    assert r.status_code == 307
+    loc = r.headers["location"]
+    assert "cf_request_host=aniworld.to" in loc
+    assert "target_url=http%3A%2F%2Faniworld.to%2Fanime%2Fstream%3Fep%3D42" in loc
+
+
+def test_vpn_wechsel_page_target_url(client):
+    """Wechselseite übernimmt target_url in das Script und auf den Button."""
+    target = "http://aniworld.to/anime/stream?ep=42"
+    r = client.get(f"/vpn-wechsel?cf_request_host=aniworld.to&target_url={target}")
+    assert r.status_code == 200
+    assert target in r.text
 
 
 def test_dns_query_does_not_switch_vpn(client):
@@ -90,4 +115,3 @@ def test_normal_setting_form(client):
     assert client.post("/auto-wechsel/add", data={"domain": "example.com", "slot": "auto"}, follow_redirects=False).status_code == 303
     page = client.get("/vpn").text
     assert "Wechselseite" in page and "HTTP 307" in page
-
