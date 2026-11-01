@@ -144,8 +144,9 @@ def read_leases(path: str) -> list[tuple[str, str, str | None]]:
 class Collector:
     """Sammelt Anfragen aus dnsmasq, fasst doppelte Anfragen zusammen und schreibt sie in die DB."""
 
-    def __init__(self, domain_map=None, dedup_seconds: int = 30):
+    def __init__(self, domain_map=None, dedup_seconds: int = 30, on_query=None):
         self.domain_map = domain_map
+        self.on_query = on_query  # fn(ip, domain): jede Anfrage, auch doppelte (z. B. für den Auto-Wechsel)
         self.dedup_seconds = dedup_seconds
         self._pending: list[tuple[int, str, str, str]] = []
         self._last: dict[tuple, int] = {}
@@ -168,6 +169,11 @@ class Collector:
             if ip is None:
                 return True
         now = now if now is not None else int(time.time())
+        if self.on_query:
+            try:
+                self.on_query(ip, domain)
+            except Exception:  # noqa: BLE001 – Zusatzfunktionen dürfen die Statistik nie stören
+                pass
         key = (ip, domain)
         with self._lock:
             # Ein Gerät fragt eine Domain oft mehrfach hintereinander (A, AAAA, HTTPS ...) -> einmal zählen.

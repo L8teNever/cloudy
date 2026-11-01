@@ -361,3 +361,44 @@ def test_mein_order_set_by_admin(client):
     assert page.index('value="vpn2"') < page.index('value="direct"') < page.index('value="warp1"')
     assert page.index('value="warp1"') < page.index('value="vpn1"')  # nicht genannte Profile kommen hinten
     assert 'name="order" value="vpn2"' in client.get("/vpn").text
+
+
+def test_autoswitch_switches_and_returns(client):
+    import time
+    from app import autoswitch
+
+    db.upsert_devices([("192.168.178.50", MAC, "handy")])
+    r = client.post("/auto-wechsel/add", data={"domain": "aniworld.com", "slot": "vpn1"}, follow_redirects=False)
+    assert r.status_code == 303 and autoswitch.load_rules() == {"aniworld.com": "vpn1"}
+    assert client.post("/auto-wechsel/add", data={"domain": "x.de", "slot": "nope"}).status_code == 404
+    assert "aniworld.com" in client.get("/vpn").text
+    client.post("/auto-wechsel/minuten", data={"minutes": "5"})
+    assert autoswitch.minutes() == 5
+
+    a = autoswitch.AutoSwitcher()
+    now = time.time()
+    a.on_query("192.168.178.50", "example.org", now)  # andere Seite: nichts passiert
+    assert db.device_warp() == {}
+    a.on_query("192.168.178.50", "www.aniworld.com", now)
+    assert db.device_warp() == {MAC: "vpn1"}
+    a.tick(now + 4 * 60)  # noch keine 5 Minuten
+    assert db.device_warp() == {MAC: "vpn1"}
+    a.on_query("192.168.178.50", "aniworld.com", now + 4 * 60)  # neuer Aufruf verlängert
+    a.tick(now + 8 * 60)
+    assert db.device_warp() == {MAC: "vpn1"}
+    a.tick(now + 10 * 60)  # 6 Minuten ohne Aufruf -> zurück auf Standard
+    assert db.device_warp() == {}
+    assert autoswitch.AutoSwitcher().state == {}
+
+    # Vorher eingestelltes Profil kommt zurück; manuelle Änderung wird nicht überschrieben.
+    db.set_device_warp(MAC, "warp1")
+    a.on_query("192.168.178.50", "aniworld.com", now)
+    assert db.device_warp() == {MAC: "vpn1"}
+    a.tick(now + 10 * 60)
+    assert db.device_warp() == {MAC: "warp1"}
+    a.on_query("192.168.178.50", "aniworld.com", now)
+    db.set_device_warp(MAC, "vpn2")
+    a.tick(now + 10 * 60)
+    assert db.device_warp() == {MAC: "vpn2"}
+    client.post("/auto-wechsel/remove", data={"domain": "aniworld.com"})
+    assert autoswitch.load_rules() == {}

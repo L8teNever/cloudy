@@ -17,7 +17,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import adblock, blocklist, certs, db, dnsprofile, fritz, localdomain, policy, slots, stats, views, warp
+from . import adblock, autoswitch, blocklist, certs, db, dnsprofile, fritz, localdomain, policy, slots, stats, views, warp
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -79,7 +79,7 @@ async def lifespan(app: FastAPI):
     else:
         print(f"cloudy: Pi-Adresse {settings.pi_ip} ({settings.pi_ip_source})", flush=True)
     db.init()
-    runner = traffic_runner = warp_router = presence = None
+    runner = traffic_runner = warp_router = presence = autoswitcher = None
     domain_map = DomainMap()
     if settings.dnsmasq_enabled and settings.gateway_enabled:
         if setup_gateway(settings):
@@ -104,7 +104,9 @@ async def lifespan(app: FastAPI):
         presence.start()
     app.state.presence = presence
     if settings.dnsmasq_enabled:
-        runner = DnsmasqRunner(settings, Collector(domain_map=domain_map))
+        autoswitcher = autoswitch.AutoSwitcher()
+        autoswitcher.start()
+        runner = DnsmasqRunner(settings, Collector(domain_map=domain_map, on_query=autoswitcher.on_query))
         runner.start()
     app.state.runner = runner
 
@@ -165,6 +167,8 @@ async def lifespan(app: FastAPI):
         warp_router.stop()
     if presence:
         presence.stop()
+    if autoswitcher:
+        autoswitcher.stop()
 
 
 app = FastAPI(title="cloudy", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -663,6 +667,7 @@ def _reload_warp_slots(request: Request) -> str:
 
 
 def _purge_slot_references(slot: str) -> None:
+    autoswitch.purge_slot(slot)
     for mac, assigned in list(db.device_warp().items()):
         if assigned == slot:
             db.set_device_warp(mac, None)
@@ -1020,6 +1025,31 @@ async def site_route_remove(request: Request, domain: str = Form(...), next: str
     await run_in_threadpool(db.remove_site_route, domain)
     await run_in_threadpool(_apply_redirects, request)
     return RedirectResponse(back, status_code=303)
+
+
+@app.post("/auto-wechsel/add", dependencies=[Depends(require_password)])
+async def auto_switch_add(request: Request, domain: str = Form(...), slot: str = Form(...)):
+    """Admin: Ruft ein Gerät diese Seite auf, wechselt es automatisch auf dieses WARP-/VPN-Profil."""
+    _check_tunnel_slot(request, slot)
+    domains, bad = _parse_domains(domain)
+    for d in domains:
+        await run_in_threadpool(autoswitch.set_rule, d, slot)
+    if bad or not domains:
+        msg = _domains_error(bad, len(domains)) if bad else "Keine Seite angegeben"
+        return RedirectResponse(f"/vpn?fehler={quote(msg)}#auto-wechsel", status_code=303)
+    return RedirectResponse("/vpn#auto-wechsel", status_code=303)
+
+
+@app.post("/auto-wechsel/remove", dependencies=[Depends(require_password)])
+async def auto_switch_remove(domain: str = Form(...)):
+    await run_in_threadpool(autoswitch.remove_rule, domain)
+    return RedirectResponse("/vpn#auto-wechsel", status_code=303)
+
+
+@app.post("/auto-wechsel/minuten", dependencies=[Depends(require_password)])
+async def auto_switch_minutes(minutes: int = Form(autoswitch.DEFAULT_MINUTES)):
+    await run_in_threadpool(autoswitch.set_minutes, minutes)
+    return RedirectResponse("/vpn#auto-wechsel", status_code=303)
 
 
 @app.post("/gruppen/{group_id}/seiten/add", dependencies=[Depends(require_password)])

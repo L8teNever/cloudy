@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import blocklist, charts, db, dnsprofile, fritz, localdomain, policy, stats, system_info, warp
+from . import autoswitch, blocklist, charts, db, dnsprofile, fritz, localdomain, policy, stats, system_info, warp
 from .settings import Settings
 
 BASE_DIR = Path(__file__).parent
@@ -245,6 +245,10 @@ def ctx_gruppe(request: Request, group_id: int) -> dict:
         **site_hints([*db.group_site_routes(group_id), *db.site_routes()]),
         "site_profiles": warp_profiles(s, dns=False),
         "site_gateway": s.gateway_enabled,
+        "auto_rules": autoswitch.load_rules(),
+        "auto_extras": {d: dienste.companions(d) for d in autoswitch.load_rules()},
+        "auto_bundles": {d: (dienste.bundle_of(d) or ("", ()))[0] for d in autoswitch.load_rules()},
+        "auto_minutes": autoswitch.minutes(),
         **_warp_ctx(request),
     }
 
