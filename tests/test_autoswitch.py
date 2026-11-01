@@ -15,10 +15,13 @@ def test_auto_rule_dns_hijack_for_bounce(client):
 
 
 def test_bounce_url():
-    assert autoswitch.switch_bounce_url("aniworld.to", ["cloudy-vpn.kulbarts.com"], True) == (
-        "https://cloudy-vpn.kulbarts.com/?cf_request_host=aniworld.to"
+    assert autoswitch.switch_bounce_url("aniworld.to", ["cloudy-vpn.kulbarts.com"], https=False) == (
+        "http://cloudy-vpn.kulbarts.com/?cf_request_host=aniworld.to"
     )
-    assert autoswitch.switch_bounce_url("x", [], True) is None
+    assert autoswitch.switch_bounce_url("aniworld.to", local_name="cloudy.lan") == (
+        "http://cloudy.lan/vpn-wechsel?cf_request_host=aniworld.to"
+    )
+    assert autoswitch.switch_bounce_url("x") is None
 
 
 def test_pass_removes_hijack(client):
@@ -30,13 +33,15 @@ def test_pass_removes_hijack(client):
     assert "aniworld.to" in autoswitch.hijack_domains()
 
 
-def test_pi_shows_switch_page_over_http(client):
-    """Wie Cloudflare: HTTP, Wechselseite, keine Zertifikats-Nachfrage."""
+def test_pi_redirects_to_wechsel_page(client):
+    """Wie Cloudflare: HTTP 307 auf die Wechselseite, Seite wird nicht unter dem Ziel-Host umgeschrieben."""
     autoswitch.set_rule("aniworld.to", autoswitch.AUTO)
-    page = client.get("/", headers={"host": "aniworld.to"})
-    assert page.status_code == 200
-    assert "/vpn-wechsel/status" in page.text
-    assert "aniworld.to" in page.text
+    r = client.get("/", headers={"host": "aniworld.to"}, follow_redirects=False)
+    assert r.status_code == 307
+    assert "cf_request_host=aniworld.to" in r.headers["location"]
+    assert r.headers["location"].startswith("http://")
+    assert "aniworld.to/?" not in r.headers["location"]
+    assert "/vpn-wechsel" in r.headers["location"] or "cloudy" in r.headers["location"]
 
 
 
@@ -84,5 +89,5 @@ def test_normal_setting_form(client):
     assert client.post("/auto-wechsel/normal", data={"slot": "direct"}, follow_redirects=False).status_code == 303
     assert client.post("/auto-wechsel/add", data={"domain": "example.com", "slot": "auto"}, follow_redirects=False).status_code == 303
     page = client.get("/vpn").text
-    assert "Wechselseite" in page and "Cloudflare-DNS" in page
+    assert "Wechselseite" in page and "HTTP 307" in page
 

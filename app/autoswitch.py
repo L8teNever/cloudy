@@ -1,11 +1,11 @@
-"""Auto-Wechsel: Der Pi zeigt die VPN-Wechselseite per HTTP (wie Cloudflare-DNS mit URL-Umleitung).
+"""Auto-Wechsel: Der Pi leitet per HTTP 307 auf die VPN-Wechselseite um (wie Cloudflare-DNS).
 
 Ablauf:
 1. DNS zeigt die Ziel-Domain auf den Pi (nur im Heimnetz).
-2. Aufruf per HTTP: Pi liefert die Wechselseite unter diesem Host
-   (Browser zeigt „Nicht sicher“, aber keine Zertifikats-Nachfrage – wie bei Cloudflare).
-3. Kein Fake-HTTPS / keine cloudy-CA nötig. HTTPS-Handshake für Auto-Wechsel-Hosts wird abgelehnt.
-4. Countdown, VPN umstellen, zurück zur echten Seite. Nach Idle: zurück auf Standard.
+2. Pi antwortet mit HTTP 307 → Wechselseite (cloudy.lan oder konfigurierte Domain).
+   Kein Fake-HTTPS auf der Ziel-Domain → keine Zertifikats-Nachfrage.
+3. Auf der Wechselseite: Countdown, VPN umstellen, zurück zur echten Seite.
+4. Nach Idle: zurück auf Standard.
 
 VPN-Wechsel nur über status_for (Wechselseite), nicht schon bei DNS.
 """
@@ -175,14 +175,24 @@ def hijack_domains() -> list[str]:
     return [d for d in managed_domains() if d not in passed]
 
 
-def switch_bounce_url(host: str, switch_hosts: list[str], https: bool = True) -> str | None:
-    """URL der Wechselseite inkl. cf_request_host – oder None, wenn keine Wechselseite konfiguriert ist."""
+def switch_bounce_url(
+    host: str,
+    switch_hosts: list[str] | None = None,
+    *,
+    local_name: str = "",
+    https: bool = False,
+) -> str | None:
+    """HTTP(S)-URL der Wechselseite inkl. cf_request_host (wie Cloudflare-URL-Umleitung)."""
     host = (host or "").lower().rstrip(".")
-    if not host or not switch_hosts:
+    if not host:
         return None
-    target = switch_hosts[0]
     scheme = "https" if https else "http"
-    return f"{scheme}://{target}/?cf_request_host={host}"
+    if switch_hosts:
+        return f"{scheme}://{switch_hosts[0]}/?cf_request_host={host}"
+    local = (local_name or "").strip().lower().rstrip(".")
+    if local:
+        return f"{scheme}://{local}/vpn-wechsel?cf_request_host={host}"
+    return None
 
 
 def match_rule(domain: str) -> tuple[str, str] | None:

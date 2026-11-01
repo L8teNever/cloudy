@@ -2,15 +2,17 @@
 <div class="card" id="auto-wechsel">
   <h2>Automatisch aufs VPN wechseln, wenn eine Seite aufgerufen wird</h2>
   <p class="muted small">
-    Wie eine <b>Cloudflare-DNS-Umleitung</b>, nur lokal auf dem Pi – Cloudflare braucht dafür nicht.
-    Ruft ein Gerät z. B. <code>aniworld.to</code> auf, zeigt DNS auf den Pi; der Pi antwortet per
-    <b>HTTP</b> mit der VPN-Wechselseite (Browser: „Nicht sicher“, aber <b>keine</b> Zertifikats-Nachfrage).
+    Wie eine <b>Cloudflare-DNS-URL-Umleitung</b>, nur lokal auf dem Pi.
+    Ruft ein Gerät z. B. <code>aniworld.to</code> auf, zeigt DNS auf den Pi; der Pi antwortet mit
+    <b>HTTP 307</b> weiter auf deine VPN-Wechselseite
+    (<code>cloudy.lan/vpn-wechsel</code> oder die unter Einstellungen eingetragene Domain).
+    Browser: kurz „Nicht sicher“ auf dem ersten Hop, <b>keine</b> Zertifikats-Nachfrage.
     Dort: VPN umstellen (bei <b>Automatisch</b> Profile durchprobieren), 5 Sekunden Countdown, dann zur echten Seite.
     Nach <b>{{ auto_minutes }} Minuten</b> ohne Aufruf zurück auf <b>Standard</b>.
   </p>
   <p class="muted small">
-    Kein Zertifikat auf den Geräten nötig. Seiten mit strengem <b>HSTS</b> (nur HTTPS) können den HTTP-Aufruf
-    blocken – dann hilft nur Cloudflare-DNS oder einmal die <a href="/ca.crt">cloudy-CA</a>.
+    Kein Zertifikat auf den Geräten nötig. Seiten mit strengem <b>HSTS</b> (nur HTTPS) können den HTTP-Hop
+    blocken – dann hilft Cloudflare-DNS oder einmal die <a href="/ca.crt">cloudy-CA</a>.
   </p>
   {% if params.fehler %}<div class="info small">{{ params.fehler }}</div>{% endif %}
 

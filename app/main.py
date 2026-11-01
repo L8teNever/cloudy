@@ -248,24 +248,26 @@ async def redirect_middleware(request: Request, call_next):
         ) and not path.startswith("/static/"):
             request.scope["path"] = "/vpn-wechsel"
         return await call_next(request)
-    # Auto-Wechsel wie Cloudflare-DNS-URL-Redirect: per HTTP die Wechselseite zeigen
-    # (Browser: „Nicht sicher“, aber keine Zertifikats-Nachfrage). Kein Fake-HTTPS als Zielseite.
+    # Auto-Wechsel wie Cloudflare: HTTP 307 auf die Wechselseite (nicht die Zielseite umschreiben).
     if raw_host and await run_in_threadpool(autoswitch.covers_host, raw_host):
         if not await run_in_threadpool(autoswitch.is_passed, raw_host):
             path = request.url.path
-            if path not in (
+            if path in (
                 "/healthz", "/favicon.ico", "/vpn-wechsel/status", "/vpn-wechsel/normal", "/vpn-wechsel/ping"
-            ) and not path.startswith("/static/"):
-                request.scope["path"] = "/vpn-wechsel"
-                # Host der Zielseite mitgeben (entspricht cf_request_host bei Cloudflare).
-                raw_qs = (request.scope.get("query_string") or b"").decode()
-                if "cf_request_host=" not in raw_qs:
-                    extra = f"cf_request_host={quote(raw_host, safe='')}"
-                    request.scope["query_string"] = f"{raw_qs}&{extra}".encode() if raw_qs else extra.encode()
-                    # Starlette cached_property neu aufbauen lassen
-                    request.__dict__.pop("query_params", None)
-                    request.__dict__.pop("url", None)
-            return await call_next(request)
+            ) or path.startswith("/static/"):
+                return await call_next(request)
+            local = (settings.local_name if settings else "") or ""
+            bounce = autoswitch.switch_bounce_url(
+                raw_host, list(switch_hosts), local_name=local, https=False
+            )
+            if not bounce:
+                return Response(
+                    "VPN-Wechselseite fehlt. Unter Einstellungen → Lokale Domain eine Wechselseite "
+                    "eintragen oder LOCAL_NAME (z. B. cloudy.lan) setzen.",
+                    status_code=503,
+                    media_type="text/plain; charset=utf-8",
+                )
+            return RedirectResponse(bounce, status_code=307)
     if raw_host in hub_hosts:
         # Hub-Domain: Startseite mit Links – Aufruf ohne Pfad landet auf /hub.
         path = request.url.path
