@@ -363,9 +363,9 @@ def test_mein_order_set_by_admin(client):
     assert 'name="order" value="vpn2"' in client.get("/vpn").text
 
 
-def test_autoswitch_switches_and_returns(client):
+def test_autoswitch_switches_and_returns(client, monkeypatch):
     import time
-    from app import autoswitch
+    from app import autoswitch, warp
 
     db.upsert_devices([("192.168.178.50", MAC, "handy")])
     r = client.post("/auto-wechsel/add", data={"domain": "aniworld.com", "slot": "vpn1"}, follow_redirects=False)
@@ -375,29 +375,32 @@ def test_autoswitch_switches_and_returns(client):
     client.post("/auto-wechsel/minuten", data={"minutes": "5"})
     assert autoswitch.minutes() == 5
 
-    a = autoswitch.AutoSwitcher()
+    a = autoswitch.AutoSwitcher(settings=client.app.state.settings)
+    monkeypatch.setattr(warp, "read_status", lambda s, slot, now=None: warp.SlotStatus(True, "verbunden"))
     now = time.time()
-    a.on_query("192.168.178.50", "example.org", now)  # andere Seite: nichts passiert
+    a.on_query("192.168.178.50", "example.org", now)  # andere Seite: nichts
     assert db.device_warp() == {}
-    a.on_query("192.168.178.50", "www.aniworld.com", now)
+    a.on_query("192.168.178.50", "www.aniworld.com", now)  # DNS allein schaltet nicht mehr
+    assert db.device_warp() == {}
+    # Wechselseite (status_for) stellt um
+    assert a.status_for("192.168.178.50", "www.aniworld.com", now)["state"] == "wait"
     assert db.device_warp() == {MAC: "vpn1"}
     a.tick(now + 4 * 60)  # noch keine 5 Minuten
     assert db.device_warp() == {MAC: "vpn1"}
-    a.on_query("192.168.178.50", "aniworld.com", now + 4 * 60)  # neuer Aufruf verlängert
+    a.on_query("192.168.178.50", "aniworld.com", now + 4 * 60)  # DNS verlängert nur „gesehen“
     a.tick(now + 8 * 60)
     assert db.device_warp() == {MAC: "vpn1"}
     a.tick(now + 10 * 60)  # 6 Minuten ohne Aufruf -> zurück auf Standard
     assert db.device_warp() == {}
     assert autoswitch.AutoSwitcher().state == {}
 
-    # Es geht immer auf Standard zurück (auch wenn vorher ein anderes Profil gesetzt war);
-    # manuelle Änderung wird nicht überschrieben.
+    # Zurück auf Standard; manuelle Änderung danach wird nicht überschrieben.
     db.set_device_warp(MAC, "warp1")
-    a.on_query("192.168.178.50", "aniworld.com", now)
+    assert a.status_for("192.168.178.50", "aniworld.com", now)["state"] == "wait"
     assert db.device_warp() == {MAC: "vpn1"}
     a.tick(now + 10 * 60)
     assert db.device_warp() == {}
-    a.on_query("192.168.178.50", "aniworld.com", now)
+    assert a.status_for("192.168.178.50", "aniworld.com", now)["state"] == "wait"
     db.set_device_warp(MAC, "vpn2")
     a.tick(now + 10 * 60)
     assert db.device_warp() == {MAC: "vpn2"}
