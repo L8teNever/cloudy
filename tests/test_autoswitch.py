@@ -41,6 +41,11 @@ def test_local_host_shows_wechsel_page(client, monkeypatch):
     page = client.get("/", headers={"host": "aniworld.com"})
     assert page.status_code == 200
     assert "aniworld.com" in page.text and "/vpn-wechsel/status" in page.text
+    # Auch mit Durchlass: Wechselseite (Browser-DNS-Cache), kein Dashboard-404
+    autoswitch.set_pass("aniworld.com", "vpn1")
+    page2 = client.get("/", headers={"host": "aniworld.com"})
+    assert page2.status_code == 200 and "/vpn-wechsel/status" in page2.text
+    assert client.get("/vpn-wechsel/ping?host=aniworld.com").json()["cloudy"] is True
 
 
 def test_auto_picks_vpn_and_normal_fallback(client, monkeypatch):
@@ -63,11 +68,14 @@ def test_auto_picks_vpn_and_normal_fallback(client, monkeypatch):
     first = sw.status_for("testclient", "aniworld.com")
     assert first["state"] == "wait" and first["slot"] == "vpn2"
     assert db.device_warp().get(mac) == "vpn2"
-    assert autoswitch.is_passed("aniworld.com")
-    assert dns
+    # Während wait bleibt DNS-Hijack aktiv – sonst lädt die Seite ohne Wechselseite
+    assert not autoswitch.is_passed("aniworld.com")
+    assert not dns
 
     sw.state[mac]["since"] -= 60
     assert sw.status_for("testclient", "aniworld.com")["state"] == "ready"
+    assert autoswitch.is_passed("aniworld.com")
+    assert dns
 
     # Kein VPN erreicht die Seite → none_found, dann normales Internet
     monkeypatch.setattr(autoswitch, "probe_via", lambda s, slot, host, timeout=8: False)

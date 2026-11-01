@@ -74,10 +74,12 @@
       var status = document.getElementById("swStatus");
       var btn = document.getElementById("swBtn");
       var normalBtn = document.getElementById("swNormal");
-      var confirmBox = document.getElementById("swConfirm");
       var ziel = host ? "https://" + host + "/" : "";
       var start = Date.now();
       var MAX_MS = 120000;
+      var MIN_SHOW_MS = 5000; // auch bei sofortigem VPN mindestens so lange die Wechselseite zeigen
+      var DNS_WAIT_MS = 3000; // nach Durchlass: Browser-DNS-Cache abwarten
+      var readyLabel = "";
 
       function ende(art, t, msg, showNormal) {
         panel.className = "panel sw-panel " + art;
@@ -89,29 +91,27 @@
         normalBtn.style.display = showNormal ? "block" : "none";
       }
 
-      // Schutz vor Endlosschleife: Wird die Seite trotz Wechsel wieder gesperrt, landet man erneut hier.
       var key = "cloudyVpnWechsel:" + host, jetzt = Date.now(), liste = [];
       try { liste = JSON.parse(sessionStorage.getItem(key) || "[]").filter(function (t) { return jetzt - t < 120000; }); } catch (e) {}
       liste.push(jetzt);
       try { sessionStorage.setItem(key, JSON.stringify(liste)); } catch (e) {}
       if (!host) { return ende("fehler", "Gesperrt", "Diese Seite ist gesperrt.", false); }
-      if (liste.length > 4) {
-        return ende("fehler", "Das klappt gerade nicht",
-          "Die Seite ist trotz VPN noch gesperrt. Meist hilft es, „Sicheres DNS“ im Browser auszuschalten und es erneut zu versuchen.", true);
-      }
 
-      function erreichbar() {
-        var ctl = typeof AbortController === "function" ? new AbortController() : null;
-        var timer = ctl ? setTimeout(function () { ctl.abort(); }, 5000) : null;
-        return fetch(ziel, { mode: "no-cors", cache: "no-store", signal: ctl ? ctl.signal : undefined })
-          .then(function () { clearTimeout(timer); return true; })
-          .catch(function () { clearTimeout(timer); return false; });
+      // Schon verbunden, Browser hängt aber noch an der Pi-IP → klarer Hinweis statt „kein Internet“
+      if (liste.length > 2) {
+        ende("fertig", "VPN steht – DNS noch alt",
+          "Du bist verbunden, aber der Browser hat noch die cloudy-Adresse gespeichert. " +
+          "WLAN kurz aus/an oder Adresszeile antippen und Enter – dann lädt die echte Seite.", true);
+        if (ziel) { btn.href = ziel; btn.textContent = "Nochmal zur Seite"; }
+        normalBtn.style.display = "block";
+        setTimeout(function () { if (ziel) location.replace(ziel + "?_=" + Date.now()); }, 4000);
+        // Status weiter pollen, falls Durchlass erst jetzt greift
       }
 
       function weiter() {
         titel.textContent = "Weiter geht’s";
-        status.textContent = "Du wirst weitergeleitet …";
-        location.replace(ziel);
+        status.textContent = (readyLabel ? readyLabel + " – " : "") + "Du wirst weitergeleitet …";
+        location.replace(ziel + (ziel.indexOf("?") >= 0 ? "&" : "?") + "_=" + Date.now());
       }
 
       normalBtn.addEventListener("click", function () {
@@ -128,7 +128,8 @@
           .then(function (r) { return r.json(); })
           .then(function (s) {
             if (s.state === "ready") {
-              setTimeout(function () { erreichbar().then(function () { weiter(); }); }, 800);
+              readyLabel = s.label || "Normales Internet";
+              setTimeout(weiter, DNS_WAIT_MS);
             } else {
               ende("fehler", "Nicht möglich", "Normales Internet konnte für dieses Gerät nicht freigeschaltet werden.", true);
             }
@@ -139,7 +140,7 @@
       });
 
       function schritt() {
-        if (Date.now() - start > MAX_MS) {
+        if (Date.now() - start > MAX_MS && liste.length <= 2) {
           return ende("fallback", "Kein VPN-Profil gefunden",
             "Kein verbundenes VPN-Profil konnte diese Seite erreichen. Du kannst es über normales Internet versuchen.", true);
         }
@@ -158,11 +159,11 @@
                 "Kein verbundenes VPN-Profil konnte diese Seite erreichen.", true);
             }
             if (s.state === "ready") {
-              status.textContent = (s.normal ? "Normales Internet" : ("Verbunden" + (s.label ? " über " + s.label : ""))) + " – ich prüfe die Seite …";
-              return erreichbar().then(function (ok) {
-                if (ok) { weiter(); }
-                else { setTimeout(schritt, 2000); }
-              });
+              readyLabel = s.normal ? "Normales Internet" : ("Verbunden" + (s.label ? " über " + s.label : ""));
+              status.textContent = readyLabel + " – DNS wird freigegeben …";
+              var warte = Math.max(DNS_WAIT_MS, MIN_SHOW_MS - (Date.now() - start));
+              setTimeout(weiter, warte);
+              return;
             }
             if (s.state === "probing") {
               status.textContent = "Prüfe VPN-Profile …";

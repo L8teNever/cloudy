@@ -328,6 +328,8 @@ class AutoSwitcher:
         if cb:
             try:
                 cb()
+                # Kurz warten, damit dnsmasq die Hijack-Zeilen weg hat, bevor der Browser neu auflöst.
+                time.sleep(0.4)
             except Exception as exc:  # noqa: BLE001
                 print(f"cloudy: Auto-Wechsel DNS-Update: {exc}", flush=True)
 
@@ -377,10 +379,10 @@ class AutoSwitcher:
                 return
             if not warp.may_use(mac, slot):
                 return
+            # VPN schon anwärmen, DNS-Hijack aber behalten – sonst lädt die echte Seite
+            # ohne Wechselseite (zweite DNS-Antwort ohne address=/…/Pi).
             db.set_device_warp(mac, slot)
             apex = rule_apex(domain) or domain.lower().rstrip(".")
-            if set_pass(apex, slot):
-                self._dns_changed()
             self.state[mac] = {"slot": slot, "seen": now, "since": now, "host": apex}
             self._save()
 
@@ -436,38 +438,35 @@ class AutoSwitcher:
                 return {"state": "ready", "slot": chosen}
 
             if slot == AUTO:
-                # Bereits auf einem VPN, das die Seite kann → durchlassen
+                # Bereits auf einem VPN, das die Seite kann → trotzdem Wechselseite (SETTLE), nicht sofort ready
                 current = db.device_warp().get(mac, "")
                 if current and warp.kind(current) == "vpn" and warp.may_use(mac, current):
                     if self.settings and warp.read_status(self.settings, current, now).connected:
                         if self._probe(current, host, now):
-                            apex = rule_apex(host)
-                            if set_pass(apex, current):
-                                self._dns_changed()
-                            self.state[mac] = {"slot": current, "seen": now, "since": now - SETTLE, "host": apex}
+                            self.state[mac] = {"slot": current, "seen": now, "since": now, "host": apex}
                             self._save()
-                            return {"state": "ready", "slot": current}
+                            return {"state": "wait", "slot": current}
 
                 picked = self._pick_vpn(mac, host, now)
                 if not picked:
                     return {"state": "none_found", "slot": ""}
-                apex = rule_apex(host)
                 db.set_device_warp(mac, picked)
-                if set_pass(apex, picked):
-                    self._dns_changed()
                 self.state[mac] = {"slot": picked, "seen": now, "since": now, "host": apex}
                 self._save()
                 return {"state": "wait", "slot": picked}
 
-            # Festes Profil
+            # Festes Profil – Durchlass erst bei ready (nach SETTLE), nicht schon bei wait
             self.on_query(ip, host, now)
             if db.device_warp().get(mac, "") != slot:
                 return {"state": "blocked", "slot": slot}
             since = self.state.get(mac, {}).get("since", 0)
-            apex = rule_apex(host)
+            if now - since < SETTLE:
+                return {"state": "wait", "slot": slot}
+            if self.settings and not warp.read_status(self.settings, slot, now).connected:
+                return {"state": "wait", "slot": slot}
             if set_pass(apex, slot):
                 self._dns_changed()
-            return {"state": "ready" if now - since >= SETTLE else "wait", "slot": slot}
+            return {"state": "ready", "slot": slot}
 
     def allow_normal(self, ip: str, host: str, now: float | None = None) -> dict:
         """Nach Bestätigung: Gerät auf „normales Internet“ und Seite durchlassen."""

@@ -240,21 +240,24 @@ async def redirect_middleware(request: Request, call_next):
                 f"https://{raw_host}{port}{path}" + (f"?{request.url.query}" if request.url.query else ""),
                 status_code=302,
             )
-        if path not in ("/healthz", "/favicon.ico", "/vpn-wechsel/status", "/vpn-wechsel/normal") and not path.startswith("/static/"):
+        if path not in (
+            "/healthz", "/favicon.ico", "/vpn-wechsel/status", "/vpn-wechsel/normal", "/vpn-wechsel/ping"
+        ) and not path.startswith("/static/"):
             request.scope["path"] = "/vpn-wechsel"
         return await call_next(request)
-    # Auto-Wechsel lokal: Ziel-Domain zeigt auf den Pi → Wechselseite (ohne Cloudflare).
+    # Auto-Wechsel lokal: Ziel-Domain zeigt auf den Pi → immer Wechselseite (auch nach Durchlass,
+    # falls der Browser die Pi-IP noch gecacht hat – sonst landet man auf 404/„kein Internet“).
     if raw_host and await run_in_threadpool(autoswitch.covers_host, raw_host):
-        if not await run_in_threadpool(autoswitch.is_passed, raw_host):
-            path = request.url.path
-            if path not in ("/healthz", "/favicon.ico", "/vpn-wechsel/status", "/vpn-wechsel/normal") and not path.startswith("/static/"):
-                # Host der Zielseite als cf_request_host, damit die Seite weiß, wohin zurück.
-                q = request.url.query
-                if "cf_request_host=" not in q:
-                    extra = f"cf_request_host={raw_host}"
-                    request.scope["query_string"] = (extra if not q else f"{q}&{extra}").encode()
-                request.scope["path"] = "/vpn-wechsel"
-            return await call_next(request)
+        path = request.url.path
+        if path not in (
+            "/healthz", "/favicon.ico", "/vpn-wechsel/status", "/vpn-wechsel/normal", "/vpn-wechsel/ping"
+        ) and not path.startswith("/static/"):
+            q = request.url.query
+            if "cf_request_host=" not in q:
+                extra = f"cf_request_host={raw_host}"
+                request.scope["query_string"] = (extra if not q else f"{q}&{extra}").encode()
+            request.scope["path"] = "/vpn-wechsel"
+        return await call_next(request)
     if raw_host in hub_hosts:
         # Hub-Domain: Startseite mit Links – Aufruf ohne Pfad landet auf /hub.
         path = request.url.path
@@ -476,6 +479,16 @@ async def vpn_wechsel_normal(request: Request, host: str = Form("")):
             res["slot"],
         )
     return {"state": res["state"], "label": label, "normal": True}
+
+
+@app.get("/vpn-wechsel/ping")
+async def vpn_wechsel_ping(host: str = ""):
+    """Nur auf dem Pi erreichbar: Browser prüft damit, ob DNS noch auf cloudy zeigt."""
+    host = _switch_host(host)
+    return {
+        "cloudy": True,
+        "passed": await run_in_threadpool(autoswitch.is_passed, host) if host else False,
+    }
 
 
 @app.get("/hub", response_class=HTMLResponse)
