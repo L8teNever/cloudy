@@ -17,7 +17,7 @@
 
 {% macro route_list(routes, profiles, remove_action, next="", empty="Noch keine Regeln.", extras={}, bundles={}, suggest={}, add_action="") %}
 {% if routes %}
-{% set names = {'direct': 'Normal (Fritzbox)'} %}
+{% set names = {'direct': 'Normal (Fritzbox)', 'auto': 'Automatisch (VPN)'} %}
 {% for w in profiles %}{% set _ = names.update({w.slot: w.label}) %}{% endfor %}
 <div class="site-groups">
   {% for slot, items in routes.items() | groupby(1) %}

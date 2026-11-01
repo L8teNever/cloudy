@@ -104,10 +104,20 @@ async def lifespan(app: FastAPI):
         presence.start()
     app.state.presence = presence
     if settings.dnsmasq_enabled:
-        autoswitcher = autoswitch.AutoSwitcher()
-        autoswitcher.start()
+        autoswitcher = autoswitch.AutoSwitcher(settings=settings)
         runner = DnsmasqRunner(settings, Collector(domain_map=domain_map, on_query=autoswitcher.on_query))
         runner.start()
+
+        def _auto_dns():
+            from .dnsmasq import sync_redirects_hosts
+
+            sync_redirects_hosts(app.state.settings)
+            r = getattr(app.state, "runner", None)
+            if r and hasattr(r, "reload_hosts"):
+                r.reload_hosts()
+
+        autoswitcher.on_dns_change = _auto_dns
+        autoswitcher.start()
     app.state.autoswitcher = autoswitcher
     app.state.runner = runner
 
@@ -143,6 +153,8 @@ async def lifespan(app: FastAPI):
                 own = localdomain.sni_pair(_s, name)
                 if own:
                     return own
+                if autoswitch.covers_host(name):
+                    return certs.ensure_domain_cert(_s, autoswitch.rule_apex(name))
                 rule = find_rule(name, db.redirect_map())
                 return certs.ensure_domain_cert(_s, rule[0]) if rule else None
 
@@ -228,9 +240,21 @@ async def redirect_middleware(request: Request, call_next):
                 f"https://{raw_host}{port}{path}" + (f"?{request.url.query}" if request.url.query else ""),
                 status_code=302,
             )
-        if path not in ("/healthz", "/favicon.ico", "/vpn-wechsel/status") and not path.startswith("/static/"):
+        if path not in ("/healthz", "/favicon.ico", "/vpn-wechsel/status", "/vpn-wechsel/normal") and not path.startswith("/static/"):
             request.scope["path"] = "/vpn-wechsel"
         return await call_next(request)
+    # Auto-Wechsel lokal: Ziel-Domain zeigt auf den Pi → Wechselseite (ohne Cloudflare).
+    if raw_host and await run_in_threadpool(autoswitch.covers_host, raw_host):
+        if not await run_in_threadpool(autoswitch.is_passed, raw_host):
+            path = request.url.path
+            if path not in ("/healthz", "/favicon.ico", "/vpn-wechsel/status", "/vpn-wechsel/normal") and not path.startswith("/static/"):
+                # Host der Zielseite als cf_request_host, damit die Seite weiß, wohin zurück.
+                q = request.url.query
+                if "cf_request_host=" not in q:
+                    extra = f"cf_request_host={raw_host}"
+                    request.scope["query_string"] = (extra if not q else f"{q}&{extra}").encode()
+                request.scope["path"] = "/vpn-wechsel"
+            return await call_next(request)
     if raw_host in hub_hosts:
         # Hub-Domain: Startseite mit Links – Aufruf ohne Pfad landet auf /hub.
         path = request.url.path
@@ -391,9 +415,14 @@ def _switch_host(text: str) -> str:
 
 @app.get("/vpn-wechsel", response_class=HTMLResponse)
 async def vpn_wechsel_page(request: Request, cf_request_host: str = ""):
-    """Öffentliche Wechselseite (Ziel einer Cloudflare-Sperre): wartet auf den VPN-Wechsel und leitet zur Seite zurück."""
+    """Wechselseite: lokal (DNS→Pi) oder als Ziel einer Cloudflare-Sperre – wechselt aufs VPN und leitet zurück."""
+    host = _switch_host(cf_request_host)
+    if not host:
+        raw = request.headers.get("host", "").split(":")[0].strip().lower()
+        if await run_in_threadpool(autoswitch.covers_host, raw):
+            host = _switch_host(raw)
     return templates.TemplateResponse(
-        request, "seiten/vpn_wechsel.html", {"title": "VPN-Wechsel", "host": _switch_host(cf_request_host)}
+        request, "seiten/vpn_wechsel.html", {"title": "VPN-Wechsel", "host": host}
     )
 
 
@@ -405,14 +434,48 @@ async def vpn_wechsel_status(request: Request, host: str = ""):
     ip = client_ip(request)
     if not host or switcher is None or not ip:
         return {"state": "none", "label": ""}
+    # Settings aktuell halten (Probe braucht die Slot-Liste)
+    switcher.settings = request.app.state.settings
     res = await run_in_threadpool(switcher.status_for, ip, host)
     label = ""
-    if res["slot"]:
+    if res.get("slot"):
         settings = request.app.state.settings
-        label = next((w["label"] for w in await run_in_threadpool(warp_profiles, settings) if w["slot"] == res["slot"]), res["slot"])
-        if res["state"] == "ready" and not (await run_in_threadpool(warp.read_status, settings, res["slot"])).connected:
-            res["state"] = "wait"  # Profil steht, aber der Tunnel ist noch nicht verbunden
-    return {"state": res["state"], "label": label}
+        if res["slot"] == warp.DIRECT:
+            label = "Normal (Fritzbox)"
+        else:
+            label = next(
+                (w["label"] for w in await run_in_threadpool(warp_profiles, settings) if w["slot"] == res["slot"]),
+                res["slot"],
+            )
+        if (
+            res["state"] == "ready"
+            and res["slot"] not in ("", warp.DIRECT, warp.STANDARD, autoswitch.AUTO)
+            and not (await run_in_threadpool(warp.read_status, settings, res["slot"])).connected
+        ):
+            res["state"] = "wait"
+    return {"state": res["state"], "label": label, "normal": bool(res.get("normal"))}
+
+
+@app.post("/vpn-wechsel/normal")
+async def vpn_wechsel_normal(request: Request, host: str = Form("")):
+    """Bestätigt: Seite über das eingestellte „normale Internet“-Profil durchlassen."""
+    host = _switch_host(host)
+    switcher = getattr(request.app.state, "autoswitcher", None)
+    ip = client_ip(request)
+    if not host or switcher is None or not ip:
+        return {"state": "none", "label": ""}
+    switcher.settings = request.app.state.settings
+    res = await run_in_threadpool(switcher.allow_normal, ip, host)
+    label = ""
+    if res.get("slot") == warp.DIRECT:
+        label = "Normal (Fritzbox)"
+    elif res.get("slot"):
+        settings = request.app.state.settings
+        label = next(
+            (w["label"] for w in await run_in_threadpool(warp_profiles, settings) if w["slot"] == res["slot"]),
+            res["slot"],
+        )
+    return {"state": res["state"], "label": label, "normal": True}
 
 
 @app.get("/hub", response_class=HTMLResponse)
@@ -1108,11 +1171,14 @@ async def site_route_remove(request: Request, domain: str = Form(...), next: str
 
 @app.post("/auto-wechsel/add", dependencies=[Depends(require_password)])
 async def auto_switch_add(request: Request, domain: str = Form(...), slot: str = Form(...)):
-    """Admin: Ruft ein Gerät diese Seite auf, wechselt es automatisch auf dieses WARP-/VPN-Profil."""
-    _check_tunnel_slot(request, slot)
+    """Admin: Seite → festes Profil oder automatisch passende VPNs durchprobieren (lokal vor Cloudflare)."""
+    if slot != autoswitch.AUTO:
+        _check_tunnel_slot(request, slot)
     domains, bad = _parse_domains(domain)
     for d in domains:
         await run_in_threadpool(autoswitch.set_rule, d, slot)
+    if domains:
+        await run_in_threadpool(_apply_redirects, request)
     if bad or not domains:
         msg = _domains_error(bad, len(domains)) if bad else "Keine Seite angegeben"
         return RedirectResponse(f"/vpn?fehler={quote(msg)}#auto-wechsel", status_code=303)
@@ -1120,14 +1186,27 @@ async def auto_switch_add(request: Request, domain: str = Form(...), slot: str =
 
 
 @app.post("/auto-wechsel/remove", dependencies=[Depends(require_password)])
-async def auto_switch_remove(domain: str = Form(...)):
+async def auto_switch_remove(request: Request, domain: str = Form(...)):
     await run_in_threadpool(autoswitch.remove_rule, domain)
+    await run_in_threadpool(_apply_redirects, request)
     return RedirectResponse("/vpn#auto-wechsel", status_code=303)
 
 
 @app.post("/auto-wechsel/minuten", dependencies=[Depends(require_password)])
 async def auto_switch_minutes(minutes: int = Form(autoswitch.DEFAULT_MINUTES)):
     await run_in_threadpool(autoswitch.set_minutes, minutes)
+    return RedirectResponse("/vpn#auto-wechsel", status_code=303)
+
+
+@app.post("/auto-wechsel/normal", dependencies=[Depends(require_password)])
+async def auto_switch_normal(request: Request, slot: str = Form("")):
+    """Welches Profil gilt als „normales Internet“, wenn kein VPN die Seite erreicht."""
+    slot = (slot or "").strip().lower()
+    if slot in (warp.STANDARD, "standard"):
+        slot = ""
+    if slot and slot != warp.DIRECT:
+        _check_tunnel_slot(request, slot)
+    await run_in_threadpool(autoswitch.set_normal_slot, slot)
     return RedirectResponse("/vpn#auto-wechsel", status_code=303)
 
 

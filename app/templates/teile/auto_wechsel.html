@@ -2,11 +2,14 @@
 <div class="card" id="auto-wechsel">
   <h2>Automatisch aufs VPN wechseln, wenn eine Seite aufgerufen wird</h2>
   <p class="muted small">
-    Ruft ein Gerät eine dieser Seiten auf (z. B. <code>aniworld.com</code>, inkl. Subdomains und zugehöriger Dienst-Domains), wechselt
-    <b>das ganze Gerät</b> automatisch auf das gewählte WARP-/VPN-Profil. Fragt es danach
-    <b>{{ auto_minutes }} Minuten</b> lang keine dieser Seiten mehr ab, geht es immer zurück auf <b>Standard</b> (die Standard-Verbindung für alle nicht
-    zugewiesenen Geräte, oben auf dieser Seite eingestellt). Geräte, die eine Gruppe festlegt, und von Hand geänderte Geräte bleiben unberührt.
-    Das gilt für alle Geräte. Das klappt nur, wenn das Gerät den Pi als DNS nutzt (kein „Sicheres DNS“ im Browser).
+    Ruft ein Gerät eine dieser Seiten auf (z. B. <code>aniworld.com</code>, inkl. Subdomains und zugehöriger Dienst-Domains),
+    fängt <b>cloudy die Anfrage lokal ab</b> (DNS zeigt auf den Pi – vor Cloudflare) und zeigt die VPN-Wechselseite.
+    Bei <b>Automatisch</b> probiert cloudy der Reihe nach alle <b>verbundenen VPN-Profile</b> (nicht WARP/Cloudflare),
+    bis eines die Seite erreicht; sonst erscheint „kein VPN gefunden“ mit der Option, bestätigt über
+    <b>normales Internet</b> weiterzugehen. Ein festes Profil wechselt das Gerät direkt dorthin.
+    Nach <b>{{ auto_minutes }} Minuten</b> ohne Aufruf geht das Gerät zurück auf <b>Standard</b>.
+    Geräte mit Gruppen-Profil und von Hand geänderte bleiben unberührt. Braucht den Pi als DNS (kein „Sicheres DNS“)
+    und die cloudy-CA auf dem Gerät (wie bei Domain-Weiterleitungen).
   </p>
   {% if params.fehler %}<div class="info small">{{ params.fehler }}</div>{% endif %}
 
@@ -15,12 +18,28 @@
               placeholder="Eine oder mehrere Seiten, mit Komma getrennt – z. B. aniworld.com, s.to"></textarea>
     <div class="site-add-row">
       <select name="slot" aria-label="Profil">
+        <option value="auto">Automatisch – verbundene VPN-Profile durchprobieren</option>
         {% for w in site_profiles %}<option value="{{ w.slot }}">{{ w.label }}{{ '' if w.has_token else ' (nicht eingerichtet)' }}</option>{% endfor %}
       </select>
       <button>Regel speichern</button>
     </div>
   </form>
   {{ sm.route_list(auto_rules, site_profiles, "/auto-wechsel/remove", extras=auto_extras, bundles=auto_bundles, empty="Noch keine Regeln.") }}
+
+  <form method="post" action="/auto-wechsel/normal" class="site-add" style="margin-top:.9rem" data-ok="Gespeichert">
+    <div class="site-add-row">
+      <label style="flex:1">„Normales Internet“ (Fallback, wenn kein VPN die Seite erreicht)
+        <select name="slot" aria-label="Normales Internet" style="display:block;width:100%;margin-top:.35rem">
+          <option value="" {% if not auto_normal %}selected{% endif %}>Standard – wie oben eingestellt (meist Fritzbox)</option>
+          <option value="direct" {% if auto_normal == 'direct' %}selected{% endif %}>Normal – direkt über die Fritzbox</option>
+          {% for w in site_profiles %}
+          <option value="{{ w.slot }}" {% if auto_normal == w.slot %}selected{% endif %}>{{ w.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button>Speichern</button>
+    </div>
+  </form>
 
   <form method="post" action="/auto-wechsel/minuten" class="site-add" style="margin-top:.9rem" data-ok="Gespeichert">
     <div class="site-add-row">

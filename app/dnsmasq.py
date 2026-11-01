@@ -79,6 +79,8 @@ def build_config(s: Settings) -> str:
         "domain-needed",
         "bogus-priv",
         "cache-size=10000",
+        # address=/…/Pi (Weiterleitungen, Auto-Wechsel) nicht im Client cachen – sonst bleibt die Wechselseite kleben.
+        "local-ttl=0",
         # "extra": jede Zeile mit Anfrage-Nummer, damit Antwort-IPs der gefragten Domain zugeordnet werden können.
         "log-queries=extra",
         "log-async=50",
@@ -411,11 +413,17 @@ def site_route_lines_multi(s: Settings, routes: dict[str, set[str]]) -> list[str
 
 def sync_redirects_hosts(s: Settings) -> None:
     """Schreibt die Weiterleitungen als dnsmasq-Konfiguration (wird mit conf-file= eingebunden)."""
+    from . import autoswitch
     from .redirects import dnsmasq_lines
 
     lines = ["# cloudy: Domain-Weiterleitungen (automatisch erzeugt, nicht von Hand ändern)"]
     lines += dnsmasq_lines([r["source"] for r in db.redirects()], s.pi_ip)
     lines += localdomain.dnsmasq_lines(localdomain.domains(), s.pi_ip)
+    # Auto-Wechsel lokal: Domain zeigt auf den Pi (Wechselseite), bis ein VPN/Durchlass aktiv ist.
+    hijack = autoswitch.hijack_domains()
+    if hijack:
+        lines.append("# Auto-Wechsel (lokal, vor Cloudflare): Wechselseite auf dem Pi")
+        lines += dnsmasq_lines(hijack, s.pi_ip)
     if ipset_supported():
         merged: dict[str, set[str]] = {d: {sl} for d, sl in db.site_routes().items()}
         for domain, slots in db.all_group_site_domains().items():

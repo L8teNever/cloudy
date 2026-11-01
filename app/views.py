@@ -231,10 +231,13 @@ def ctx_gruppen(request: Request) -> dict:
 
 
 def ctx_gruppe(request: Request, group_id: int) -> dict:
+    from . import dienste
+
     g = db.group(group_id)
     if not g:
         raise HTTPException(status_code=404, detail="Gruppe nicht gefunden")
     s: Settings = request.app.state.settings
+    rules = autoswitch.load_rules()
     return {
         "group": g,
         "members": db.group_members(group_id),
@@ -245,10 +248,11 @@ def ctx_gruppe(request: Request, group_id: int) -> dict:
         **site_hints([*db.group_site_routes(group_id), *db.site_routes()]),
         "site_profiles": warp_profiles(s, dns=False),
         "site_gateway": s.gateway_enabled,
-        "auto_rules": autoswitch.load_rules(),
-        "auto_extras": {d: dienste.companions(d) for d in autoswitch.load_rules()},
-        "auto_bundles": {d: (dienste.bundle_of(d) or ("", ()))[0] for d in autoswitch.load_rules()},
+        "auto_rules": rules,
+        "auto_extras": {d: dienste.companions(d) for d in rules},
+        "auto_bundles": {d: (dienste.bundle_of(d) or ("", ()))[0] for d in rules},
         "auto_minutes": autoswitch.minutes(),
+        "auto_normal": autoswitch.normal_slot(),
         **_warp_ctx(request),
     }
 
@@ -355,7 +359,10 @@ def site_hints(domains: list[str]) -> dict:
 
 
 def ctx_seitenrouten(request: Request) -> dict:
+    from . import dienste
+
     s: Settings = request.app.state.settings
+    rules = autoswitch.load_rules()
     return {
         "site_routes": db.site_routes(),
         **site_hints(list(db.site_routes())),
@@ -367,6 +374,11 @@ def ctx_seitenrouten(request: Request) -> dict:
         ),
         "site_gateway": s.gateway_enabled,
         "mein_allowed": warp.mein_allowed(),
+        "auto_rules": rules,
+        "auto_extras": {d: dienste.companions(d) for d in rules},
+        "auto_bundles": {d: (dienste.bundle_of(d) or ("", ()))[0] for d in rules},
+        "auto_minutes": autoswitch.minutes(),
+        "auto_normal": autoswitch.normal_slot(),
     }
 
 

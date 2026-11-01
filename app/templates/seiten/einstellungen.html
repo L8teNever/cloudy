@@ -112,7 +112,7 @@
 
       <div class="field-group">
         <div class="fg-title">VPN-Wechselseite</div>
-        <div class="fg-hint">Ziel einer Cloudflare-Sperre für Seiten, die ein VPN brauchen (siehe VPN → Automatisch aufs VPN wechseln). Wechselt das Gerät aufs VPN und leitet danach zur Seite zurück.</div>
+        <div class="fg-hint">Optional als Ziel einer Cloudflare-Sperre. Neu: unter VPN → Automatisch wechselt cloudy Domains auch lokal ab (DNS→Pi), ohne Cloudflare – mit VPN-Durchprobieren und Fallback „normales Internet“.</div>
         <div id="switch-domains" style="display:grid;gap:.35rem">
           {% for d in ld.switches or [''] %}
           <div class="field-row"><input name="wechsel" data-keep autocomplete="off" value="{{ d }}" placeholder="vpn.kulbarts.com"></div>
