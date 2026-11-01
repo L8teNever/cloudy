@@ -150,6 +150,7 @@ async def lifespan(app: FastAPI):
     renew_stop = threading.Event()
     if "PYTEST_CURRENT_TEST" not in os.environ:
         threading.Thread(target=localdomain.renew_loop, args=(settings, renew_stop), daemon=True).start()
+        threading.Thread(target=fritz.retry_loop, args=(settings, renew_stop), daemon=True).start()
     yield
     renew_stop.set()
     if https_server:

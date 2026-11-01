@@ -446,6 +446,33 @@ def _bg_worker(settings: Settings) -> None:
             _is_refreshing = False
 
 
+RETRY_OFFLINE = 15.0  # Sekunden bis zum nächsten Versuch, solange eine Box nicht erreichbar ist
+RECHECK_ONLINE = 120.0  # Sekunden bis zur nächsten Kontrolle, wenn alle Boxen erreichbar sind
+
+
+def retry_loop(settings: Settings, stop: threading.Event, first_delay: float = 3.0) -> None:
+    """Baut die Verbindung zu den FRITZ!Boxen von selbst auf und wiederholt sie, solange eine nicht erreichbar ist.
+    Nach einem Neustart (Pi oder Box) muss man so nicht mehr „Neu versuchen“ drücken."""
+    global _cached_at, _cached_data
+    if stop.wait(first_delay):
+        return
+    while True:
+        wait = RECHECK_ONLINE
+        try:
+            if get_routers(settings):
+                res = _fetch_all_sync(settings)
+                with _cache_lock:
+                    _cached_data = res
+                    _cached_at = time.time()
+                if any(not b.get("online") for b in res.get("boxes", [])):
+                    wait = RETRY_OFFLINE
+        except Exception as e:  # noqa: BLE001 – der Dienst darf cloudy nie stoppen
+            logger.debug("FRITZ!Box-Abfrage im Hintergrund fehlgeschlagen: %s", e)
+            wait = RETRY_OFFLINE
+        if stop.wait(wait):
+            return
+
+
 def get_all_fritz_data(settings: Settings, force: bool = False) -> dict[str, Any]:
     """Liefert aggregierte Daten aller konfigurierten FRITZ!Boxen (für Pi 3: nicht-blockierend aus Cache)."""
     global _cached_at, _cached_data, _is_refreshing

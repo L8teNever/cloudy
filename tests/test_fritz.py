@@ -274,3 +274,29 @@ def test_fritz_geraete_zusammenfuehren(client):
 
     r = client.get("/geraete")
     assert r.status_code == 200 and "Handy Max" in r.text and "Drucker" in r.text
+
+
+def test_retry_loop_fills_cache_and_retries_while_offline(monkeypatch):
+    import threading
+
+    calls = []
+    waits = []
+
+    class Stop(threading.Event):
+        def wait(self, timeout=None):
+            waits.append(timeout)
+            return len(waits) > 3  # nach drei Runden beenden
+
+    def fake_fetch(settings):
+        calls.append(1)
+        return {"boxes": [{"online": len(calls) > 1}], "device_connections": {}, "updated_at": 1}
+
+    monkeypatch.setattr(fritz, "get_routers", lambda s: [{"ip": "x"}])
+    monkeypatch.setattr(fritz, "_fetch_all_sync", fake_fetch)
+    fritz.invalidate_cache()
+    fritz.retry_loop(None, Stop(), first_delay=0)
+    assert waits[0] == 0  # Startverzögerung
+    assert waits[1] == fritz.RETRY_OFFLINE  # erste Abfrage: Box offline -> bald wieder versuchen
+    assert waits[2] == fritz.RECHECK_ONLINE  # danach erreichbar -> seltener prüfen
+    assert fritz._cached_data["boxes"][0]["online"] is True
+    fritz.invalidate_cache()
