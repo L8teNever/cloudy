@@ -2,7 +2,7 @@
 {% block content %}
 {% set ld = params.lokal %}
 {% set local = settings.local_name or 'cloudy.lan' %}
-{% set any_domain = ld.domains or ld.dashboards or ld.hubs or ld.blocks %}
+{% set any_domain = ld.domains or ld.dashboards or ld.hubs or ld.blocks or ld.switches %}
 
 <div class="page-head">
   <div>
@@ -108,6 +108,18 @@
         </div>
         <button type="button" class="secondary add-btn" onclick="document.getElementById('block-domains').append(document.getElementById('tpl-block').content.cloneNode(true))">+ weitere</button>
         <template id="tpl-block"><div class="field-row"><input name="gesperrt" data-keep autocomplete="off" placeholder="gesperrt.kulbarts.com"></div></template>
+      </div>
+
+      <div class="field-group">
+        <div class="fg-title">VPN-Wechselseite</div>
+        <div class="fg-hint">Ziel einer Cloudflare-Sperre für Seiten, die ein VPN brauchen (siehe VPN → Automatisch aufs VPN wechseln). Wechselt das Gerät aufs VPN und leitet danach zur Seite zurück.</div>
+        <div id="switch-domains" style="display:grid;gap:.35rem">
+          {% for d in ld.switches or [''] %}
+          <div class="field-row"><input name="wechsel" data-keep autocomplete="off" value="{{ d }}" placeholder="vpn.kulbarts.com"></div>
+          {% endfor %}
+        </div>
+        <button type="button" class="secondary add-btn" onclick="document.getElementById('switch-domains').append(document.getElementById('tpl-switch').content.cloneNode(true))">+ weitere</button>
+        <template id="tpl-switch"><div class="field-row"><input name="wechsel" data-keep autocomplete="off" placeholder="vpn.kulbarts.com"></div></template>
       </div>
 
       <div class="field-group">

@@ -38,6 +38,7 @@ from .settings import Settings
 DOMAIN_KEY = "local_domain"  # nur „Mein Gerät“ (/mein)
 DASH_KEY = "local_domain_dashboard"  # das ganze Dashboard (wie cloudy.lan)
 HUB_KEY = "local_domain_hub"  # Hub-Startseite (/hub)
+SWITCH_KEY = "local_domain_switch"  # Wechselseite: „ich verbinde dich übers VPN“, dann zurück zur Seite
 BLOCK_KEY = "local_domain_block"  # Sperrseite („Diese Seite ist gesperrt“, z. B. als Ziel der Cloudflare-Sperre)
 HA_URL_KEY = "hub_ha_url"  # Home-Assistant-URL für den Hub-Status
 CHAIN_FIX_KEY = "cert_chain_fix_v1"  # einmal geprüft, ob die Kette bei ISRG Root X1/X2 endet
@@ -110,6 +111,11 @@ def block_domains() -> list[str]:
     return _setting_hosts(BLOCK_KEY)
 
 
+def switch_domains() -> list[str]:
+    """Domains für die Wechselseite – Ziel einer Cloudflare-Sperre, die aufs VPN wechselt und zurückleitet."""
+    return _setting_hosts(SWITCH_KEY)
+
+
 def domain() -> str:
     """Erste Mein-Gerät-Domain (Kompatibilität)."""
     return (mein_domains() or [""])[0]
@@ -137,6 +143,10 @@ def set_hub_domains(hosts: list[str]) -> None:
     _save_hosts(HUB_KEY, hosts)
 
 
+def set_switch_domains(hosts: list[str]) -> None:
+    _save_hosts(SWITCH_KEY, hosts)
+
+
 def set_block_domains(hosts: list[str]) -> None:
     _save_hosts(BLOCK_KEY, hosts)
 
@@ -148,7 +158,7 @@ def ha_url() -> str:
 
 def domains() -> list[str]:
     """Alle eingestellten Domains (ohne Doppelte). Sie bekommen zusammen ein Zertifikat."""
-    return list(dict.fromkeys(dashboard_domains() + mein_domains() + hub_domains() + block_domains()))
+    return list(dict.fromkeys(dashboard_domains() + mein_domains() + hub_domains() + block_domains() + switch_domains()))
 
 
 def skipped() -> set[str]:

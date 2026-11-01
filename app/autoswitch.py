@@ -22,6 +22,7 @@ MIN_MINUTES, MAX_MINUTES = 1, 240
 TICK = 15.0  # Sekunden zwischen den Prüfungen auf „lange nichts mehr“
 RULES_TTL = 10.0  # Regeln so lange im Speicher halten
 SEEN_STEP = 5  # „zuletzt gesehen“ höchstens alle paar Sekunden neu speichern
+SETTLE = 12.0  # Sekunden, bis der Wechsel überall angekommen ist (Weiterleitung und DNS-Profil prüfen alle 5 s)
 
 
 # --------------------------------------------------------------------------- Einstellungen
@@ -146,8 +147,24 @@ class AutoSwitcher:
             if not warp.may_use(mac, slot):
                 return
             db.set_device_warp(mac, slot)
-            self.state[mac] = {"slot": slot, "seen": now}
+            self.state[mac] = {"slot": slot, "seen": now, "since": now}
             self._save()
+
+    def status_for(self, ip: str, host: str, now: float | None = None) -> dict:
+        """Für die Wechselseite: Wohin wechselt dieses Gerät für `host`, und ist der Wechsel schon wirksam?
+        state: none (keine Regel), blocked (Wechsel nicht möglich), wait (läuft noch) oder ready."""
+        now = now if now is not None else time.time()
+        slot = self.match(host, now)
+        if not slot:
+            return {"state": "none", "slot": ""}
+        mac = self._mac_for(ip, now)
+        if not mac:
+            return {"state": "blocked", "slot": slot}
+        self.on_query(ip, host, now)  # falls die DNS-Anfrage den Wechsel noch nicht ausgelöst hat
+        if db.device_warp().get(mac, "") != slot:
+            return {"state": "blocked", "slot": slot}
+        since = self.state.get(mac, {}).get("since", 0)  # fehlt: vom Admin gesetzt, also schon länger wirksam
+        return {"state": "ready" if now - since >= SETTLE else "wait", "slot": slot}
 
     # -- Zurückwechseln
     def tick(self, now: float | None = None) -> None:

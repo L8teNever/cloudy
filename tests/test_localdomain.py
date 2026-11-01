@@ -452,3 +452,35 @@ def test_block_domain_shows_blocked_page(client, monkeypatch):
     assert "Einstellungen" not in client.get("/einstellungen", headers=h).text
     assert client.post("/lokale-domain", data={"gesperrt": "a.kulbarts.com", "hub": "a.kulbarts.com"}).status_code == 400
     assert "gesperrt.kulbarts.com" in client.get("/einstellungen").text
+
+
+def test_switch_domain_page_and_status(client, monkeypatch):
+    import time
+    from app import autoswitch, db, warp
+
+    monkeypatch.setattr(localdomain, "start_in_background", lambda s: None)
+    r = client.post("/lokale-domain", data={"wechsel": "vpn.kulbarts.com"}, follow_redirects=False)
+    assert r.status_code == 303 and localdomain.switch_domains() == ["vpn.kulbarts.com"]
+    assert "vpn.kulbarts.com" in localdomain.domains()
+    assert client.post("/lokale-domain", data={"wechsel": "a.kulbarts.com", "gesperrt": "a.kulbarts.com"}).status_code == 400
+    h = {"host": "vpn.kulbarts.com"}
+    page = client.get("/?cf_request_host=aniworld.com", headers=h)
+    assert page.status_code == 200 and "aniworld.com" in page.text and "/vpn-wechsel/status" in page.text
+    assert "<script>alert" not in client.get("/?cf_request_host=%3Cscript%3Ealert", headers=h).text
+    # Ohne Auto-Wechsel-Regel: nichts zu tun
+    assert client.get("/vpn-wechsel/status?host=aniworld.com", headers=h).json()["state"] == "none"
+
+    # Mit Regel: erst „wait“, nach der Einschwingzeit „ready“ (Tunnel verbunden vorausgesetzt)
+    mac = "aa:bb:cc:dd:ee:01"
+    db.upsert_devices([("testclient", mac, "handy")])
+    autoswitch.set_rule("aniworld.com", "vpn1")
+    sw = autoswitch.AutoSwitcher()
+    client.app.state.autoswitcher = sw
+    monkeypatch.setattr(warp, "read_status", lambda s, slot, now=None: warp.SlotStatus(True, "verbunden"))
+    first = client.get("/vpn-wechsel/status?host=aniworld.com", headers=h).json()
+    assert first["state"] == "wait" and db.device_warp() == {mac: "vpn1"}
+    sw.state[mac]["since"] -= 60  # Zeit vergangen
+    assert client.get("/vpn-wechsel/status?host=aniworld.com", headers=h).json()["state"] == "ready"
+    monkeypatch.setattr(warp, "read_status", lambda s, slot, now=None: warp.SlotStatus(False, "startet"))
+    assert client.get("/vpn-wechsel/status?host=aniworld.com", headers=h).json()["state"] == "wait"
+    client.app.state.autoswitcher = None

@@ -517,11 +517,13 @@ def localdomain_ctx(request: Request) -> dict:
     dash = localdomain.dashboard_domains()
     hubs = localdomain.hub_domains()
     blocks = localdomain.block_domains()
+    switches = localdomain.switch_domains()
     return {
         "domains": mein,
         "dashboards": dash,
         "hubs": hubs,
         "blocks": blocks,
+        "switches": switches,
         "domain": (mein or [""])[0],
         "dashboard": (dash or [""])[0],
         "hub": (hubs or [""])[0],
