@@ -233,6 +233,18 @@ def rules(per_mac: dict[str, str], others: list[str], default: str, allow: dict[
     return out
 
 
+def expand_protocols(chain_rules: list[list[str]]) -> list[list[str]]:
+    """REDIRECT --to-ports verlangt in iptables ein Protokoll (-p tcp/udp) – sonst wird die Regel abgelehnt.
+    Jede Umleitung wird deshalb einmal für UDP und einmal für TCP angelegt; RETURN-Regeln gelten für beides."""
+    out: list[list[str]] = []
+    for rule in chain_rules:
+        if "REDIRECT" in rule:
+            out += [["-p", proto, *rule] for proto in ("udp", "tcp")]
+        else:
+            out.append(rule)
+    return out
+
+
 def _run(cmd: list[str]) -> bool:
     try:
         return subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
@@ -256,8 +268,9 @@ def apply_rules(s: Settings, chain_rules: list[list[str]]) -> None:
             continue
         _run([tool, "-t", "nat", "-N", CHAIN])
         _run([tool, "-t", "nat", "-F", CHAIN])
-        for rule in chain_rules:
-            _run([tool, "-t", "nat", "-A", CHAIN, *rule])
+        for rule in expand_protocols(chain_rules):
+            if not _run([tool, "-t", "nat", "-A", CHAIN, *rule]):
+                print(f"cloudy: DNS-Profile: {tool}-Regel nicht angelegt: {' '.join(rule)}", file=sys.stderr, flush=True)
         ensure_jump(s, tool)
 
 

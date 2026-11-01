@@ -72,6 +72,14 @@ def test_targets_and_rules():
     assert per_mac == {}
 
 
+def test_redirect_rules_get_protocol():
+    rules = [["-m", "mac", "--mac-source", MAC, "-j", "REDIRECT", "--to-ports", "5361"],
+             ["-m", "mac", "--mac-source", MAC2, "-j", "RETURN"]]
+    out = dnsprofile.expand_protocols(rules)
+    assert out[0][:2] == ["-p", "udp"] and out[1][:2] == ["-p", "tcp"]
+    assert out[2] == rules[1]
+
+
 def test_dns_profile_device_is_not_tunneled():
     """Ein DNS-Profil leitet keinen Verkehr um – auch nicht über einen Standard-Tunnel."""
     s = Settings.from_env()
