@@ -122,8 +122,8 @@
               <input type="hidden" name="ip" value="{{ d.ip }}">
               <input type="hidden" name="isolated" value="{{ 0 if is_iso else 1 }}">
               <button class="{{ 'danger' if is_iso else 'secondary' }}" style="padding:.2rem .45rem;font-size:.78rem"
-                      title="{{ 'Gerät ist isoliert (nur Internet, kein Heimnetz-Zugriff)' if is_iso else 'Gerät isolieren (darf nur ins Internet, kein Heimnetz)' }}">
-                {{ '🔒 Isoliert' if is_iso else '🔓 Normal' }}
+                      title="{{ 'Gast: nur Internet und DNS, kein Heimnetz, keine Tunnel-Ziele, kein Pi-Zugriff' if is_iso else 'Als Gast setzen (nur Internet und DNS)' }}">
+                {{ '🔒 Gast' if is_iso else '🔓 Normal' }}
               </button>
             </form>
             {% else %}

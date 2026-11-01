@@ -123,3 +123,25 @@ def test_ipv6_is_filtered_in_gateway_mode_by_default(monkeypatch):
     conf = build_config(Settings.from_env())
     assert "filter-AAAA" in conf
     assert "enable-ra" not in conf
+
+
+def test_guest_isolation_rules():
+    from app.traffic import isolation_rules
+
+    s = Settings.from_env()
+    mac = "aa:bb:cc:dd:ee:99"
+    fwd, inp = isolation_rules(s, {mac}, v6=False)
+    m = ["-m", "mac", "--mac-source", mac]
+    assert [*m, "-d", s.pi_ip, "-p", "udp", "--dport", "53", "-j", "ACCEPT"] in fwd
+    for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"):
+        assert [*m, "-d", net, "-j", "DROP"] in fwd
+    # DNS-Erlaubnis kommt vor den DROPs, sonst käme der Gast nicht an den Pi-DNS
+    assert fwd.index([*m, "-d", s.pi_ip, "-p", "udp", "--dport", "53", "-j", "ACCEPT"]) < fwd.index([*m, "-d", "192.168.0.0/16", "-j", "DROP"])
+    # Pi selbst: nur DNS/DHCP/Ping, alles andere zu
+    assert inp[-1] == [*m, "-j", "DROP"]
+    assert [*m, "-p", "udp", "--dport", "67", "-j", "ACCEPT"] in inp
+    assert [*m, "-p", "tcp", "--dport", "8080", "-j", "ACCEPT"] not in inp
+    assert isolation_rules(s, set()) == ([], [])
+    fwd6, inp6 = isolation_rules(s, {mac}, v6=True)
+    assert [*m, "-d", "fc00::/7", "-j", "DROP"] in fwd6
+    assert [*m, "-p", "udp", "--dport", "547", "-j", "ACCEPT"] in inp6

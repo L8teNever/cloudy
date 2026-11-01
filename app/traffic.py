@@ -232,22 +232,50 @@ def dns_force_rules_v6(s: Settings) -> list[list[str]]:
     ]
 
 
-def apply_isolation(s: Settings) -> bool:
-    """Isoliert Geräte: Sie dürfen nur ins Internet und zum Pi-DNS, aber nichts im lokalen Heimnetz erreichen."""
-    _run(["iptables", "-N", ISOLATE_CHAIN])
-    _run(["iptables", "-F", ISOLATE_CHAIN])
-    if not _run(["iptables", "-C", FWD_CHAIN, "-j", ISOLATE_CHAIN]):
-        _run(["iptables", "-I", FWD_CHAIN, "1", "-j", ISOLATE_CHAIN])
+GUEST_PRIVATE_V4 = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16")
+GUEST_PRIVATE_V6 = ("fc00::/7", "fe80::/10")
+GUEST_INPUT_CHAIN = "CLOUDY-GUEST-IN"
 
+
+def isolation_rules(s: Settings, macs, v6: bool = False) -> tuple[list[list[str]], list[list[str]]]:
+    """Gast-Regeln (iptables-Argumente ohne Binärname): (FORWARD-Kette, INPUT-Kette am Pi).
+
+    Gast = nur Internet + DNS am Pi. Verboten: alle privaten Netze (Heimnetz, Mesh/CGNAT, Docker, Tunnel-Ziele)
+    und alle Dienste auf dem Pi selbst (Dashboard, SSH, ...) – außer DNS, DHCP und Ping.
+    """
+    fwd: list[list[str]] = []
+    inp: list[list[str]] = []
+    nets = GUEST_PRIVATE_V6 if v6 else GUEST_PRIVATE_V4
+    for mac in sorted(macs):
+        m = ["-m", "mac", "--mac-source", mac]
+        if not v6:
+            for proto in ("udp", "tcp"):
+                fwd.append([*m, "-d", s.pi_ip, "-p", proto, "--dport", "53", "-j", "ACCEPT"])
+        for net in nets:
+            fwd.append([*m, "-d", net, "-j", "DROP"])
+        for proto, port in (("udp", "53"), ("tcp", "53"), ("udp", "547" if v6 else "67")):  # 67/547 = DHCP
+            inp.append([*m, "-p", proto, "--dport", port, "-j", "ACCEPT"])
+        inp.append([*m, "-p", "icmpv6" if v6 else "icmp", "-j", "ACCEPT"])
+        inp.append([*m, "-j", "DROP"])
+    return fwd, inp
+
+
+def apply_isolation(s: Settings) -> bool:
+    """Gast-Geräte (db.isolated_macs): nur Internet und Pi-DNS, nichts im Heimnetz und nichts auf dem Pi."""
     macs = db.isolated_macs()
-    for mac in macs:
-        # DNS zum Pi erlauben
-        _run(["iptables", "-A", ISOLATE_CHAIN, "-m", "mac", "--mac-source", mac, "-d", s.pi_ip, "-p", "udp", "--dport", "53", "-j", "ACCEPT"])
-        _run(["iptables", "-A", ISOLATE_CHAIN, "-m", "mac", "--mac-source", mac, "-d", s.pi_ip, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"])
-        # Zugriff auf lokale private Netzwerke verbieten
-        _run(["iptables", "-A", ISOLATE_CHAIN, "-m", "mac", "--mac-source", mac, "-d", "10.0.0.0/8", "-j", "DROP"])
-        _run(["iptables", "-A", ISOLATE_CHAIN, "-m", "mac", "--mac-source", mac, "-d", "172.16.0.0/12", "-j", "DROP"])
-        _run(["iptables", "-A", ISOLATE_CHAIN, "-m", "mac", "--mac-source", mac, "-d", "192.168.0.0/16", "-j", "DROP"])
+    families = [("iptables", False)] + ([("ip6tables", True)] if s.ipv6_enabled else [])
+    for binary, v6 in families:
+        fwd, inp = isolation_rules(s, macs, v6)
+        for chain, parent, rules in (
+            (ISOLATE_CHAIN, FWD_CHAIN, fwd),
+            (GUEST_INPUT_CHAIN, "INPUT", inp),
+        ):
+            _run([binary, "-N", chain])
+            _run([binary, "-F", chain])
+            if not _run([binary, "-C", parent, "-j", chain]):
+                _run([binary, "-I", parent, "1", "-j", chain])
+            for rule in rules:
+                _run([binary, "-A", chain, *rule])
     return True
 
 
