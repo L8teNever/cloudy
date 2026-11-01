@@ -7,7 +7,7 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 import uvicorn
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
@@ -17,7 +17,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import adblock, autoswitch, blocklist, certs, db, dnsprofile, fritz, localdomain, policy, slots, stats, views, warp
+from . import adblock, autoswitch, blocklist, certs, db, dnsprofile, fritz, localdomain, policy, slots, stats, views, warp, zertwechsel
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -153,11 +153,24 @@ async def lifespan(app: FastAPI):
                 own = localdomain.sni_pair(_s, name)
                 if own:
                     return own
+                if name == zertwechsel.CHECK_HOST:
+                    return certs.ensure_domain_cert(_s, name)
+                # Auto-Wechsel: nur Geräte mit cloudy-Zertifikat landen hier (Weiche) – Zertifikat pro Seite.
+                if autoswitch.covers_host(name):
+                    return certs.ensure_domain_cert(_s, autoswitch.rule_apex(name))
                 rule = find_rule(name, db.redirect_map())
                 return certs.ensure_domain_cert(_s, rule[0]) if rule else None
 
             https_server = start_https_server(app, certfile, keyfile, settings.https_port, sni_cert=redirect_cert)
             print(f"cloudy: HTTPS an (Port {settings.https_port})", flush=True)
+            if autoswitcher and settings.gateway_enabled and "PYTEST_CURRENT_TEST" not in os.environ:
+                try:
+                    zertwechsel.start_proxy(settings.https_port, autoswitch.covers_host)
+                    autoswitcher.on_intercept = lambda macs: zertwechsel.apply_intercept(app.state.settings, macs)
+                    autoswitcher.sync_intercept(force=True)
+                    print(f"cloudy: Wechselseite für Geräte mit Zertifikat an (Port {zertwechsel.PROXY_PORT})", flush=True)
+                except OSError as exc:
+                    print(f"cloudy: Wechselseite-Weiche nicht gestartet: {exc}", flush=True)
         except Exception as exc:  # noqa: BLE001 – ohne HTTPS läuft das Dashboard weiter über HTTP
             print(f"cloudy: HTTPS nicht verfügbar: {exc}", flush=True)
     renew_stop = threading.Event()
@@ -243,6 +256,18 @@ async def redirect_middleware(request: Request, call_next):
         ) and not path.startswith("/static/"):
             request.scope["path"] = "/vpn-wechsel"
         return await call_next(request)
+    if raw_host and await run_in_threadpool(autoswitch.covers_host, raw_host):
+        # Auto-Wechsel-Seite über die Weiche (nur Geräte mit cloudy-Zertifikat): Wechselseite unter dieser Adresse.
+        path = request.url.path
+        if path not in ("/vpn-wechsel/status", "/vpn-wechsel/normal", "/favicon.ico") and not path.startswith("/static/"):
+            target = f"{request.url.scheme}://{raw_host}{path}" + (f"?{request.url.query}" if request.url.query else "")
+            request.scope["path"] = "/vpn-wechsel"
+            request.scope["query_string"] = urlencode({"cf_request_host": raw_host, "target_url": target}).encode()
+        response = await call_next(request)
+        # Keine offene Verbindung behalten – nach dem Wechsel soll der Browser die echte Seite erreichen.
+        response.headers["Connection"] = "close"
+        response.headers["Cache-Control"] = "no-store"
+        return response
     if raw_host in hub_hosts:
         # Hub-Domain: Startseite mit Links – Aufruf ohne Pfad landet auf /hub.
         path = request.url.path
@@ -332,6 +357,33 @@ async def ca_certificate(request: Request):
     return FileResponse(path, media_type="application/x-x509-ca-cert", filename="cloudy-ca.crt")
 
 
+_PIXEL = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
+
+
+def _set_cert_for(request: Request, on: bool) -> None:
+    dev = db.device(client_ip(request))
+    mac = ((dev or {}).get("mac") or "").strip().lower()
+    if zertwechsel.set_cert(mac, on):
+        switcher = getattr(request.app.state, "autoswitcher", None)
+        if switcher:
+            switcher.sync_intercept()
+
+
+@app.get("/zertifikat/check.gif")
+async def zertifikat_check(request: Request):
+    """Lädt nur, wenn das Gerät der cloudy-CA vertraut → Gerät bekommt bei Auto-Wechsel-Seiten die Wechselseite."""
+    if request.url.scheme == "https" and request.url.hostname == zertwechsel.CHECK_HOST:
+        await run_in_threadpool(_set_cert_for, request, True)
+    return Response(_PIXEL, media_type="image/gif", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/zertifikat/fehlt")
+async def zertifikat_fehlt(request: Request):
+    """Prüfbild konnte nicht laden – Gerät vertraut der cloudy-CA nicht (mehr): wieder still wechseln."""
+    await run_in_threadpool(_set_cert_for, request, False)
+    return {"ok": True}
+
+
 @app.get("/ca.mobileconfig")
 async def ca_mobileconfig(request: Request):
     """Apple Configuration Profile für iOS/iPadOS/macOS für 1-Klick-Installation des Zertifikats."""
@@ -373,8 +425,11 @@ def online_ips(request: Request) -> frozenset[str]:
 
 def client_ip(request: Request) -> str:
     """IP des aufrufenden Geräts im Heimnetz (ohne Proxy – cloudy läuft direkt auf dem Pi)."""
-    host = (request.client.host if request.client else "") or ""
-    return host.strip()
+    host = ((request.client.host if request.client else "") or "").strip()
+    if host == "127.0.0.1" and request.client:
+        # Über die Wechselseite-Weiche: echte Geräte-IP nachschlagen.
+        return zertwechsel.peer_ip(request.client.port) or host
+    return host
 
 
 app.include_router(views.router)
@@ -452,6 +507,8 @@ async def vpn_wechsel_status(request: Request, host: str = ""):
             and not (await run_in_threadpool(warp.read_status, settings, res["slot"])).connected
         ):
             res["state"] = "wait"
+    if res["state"] == "ready":
+        await run_in_threadpool(switcher.mark_shown, ip)
     return {"state": res["state"], "label": label, "normal": bool(res.get("normal"))}
 
 
@@ -474,6 +531,8 @@ async def vpn_wechsel_normal(request: Request, host: str = Form("")):
             (w["label"] for w in await run_in_threadpool(warp_profiles, settings) if w["slot"] == res["slot"]),
             res["slot"],
         )
+    if res["state"] == "ready":
+        await run_in_threadpool(switcher.mark_shown, ip)
     return {"state": res["state"], "label": label, "normal": True}
 
 
@@ -684,11 +743,16 @@ async def mein_geraet(request: Request, ok: int | None = None, fehler: str | Non
         hub_base = await run_in_threadpool(_local_base, hubs[0], settings)
         if hub_base:
             hub_href = f"{hub_base}/hub"
+    zert_check = ""
+    if settings.https_port and settings.gateway_enabled:
+        port = "" if settings.https_port == 443 else f":{settings.https_port}"
+        zert_check = f"https://{zertwechsel.CHECK_HOST}{port}/zertifikat/check.gif"
     return templates.TemplateResponse(
         request,
         "seiten/mein.html",
         {
             "title": "Mein Gerät",
+            "zert_check": zert_check,
             "hub_href": hub_href,
             "ip": ip,
             "device": device,

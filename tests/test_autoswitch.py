@@ -1,6 +1,6 @@
 """Auto-Wechsel: Gerät wechselt still beim DNS-Aufruf aufs VPN."""
 
-from app import autoswitch, db, warp
+from app import autoswitch, db, warp, zertwechsel
 from app.dnsmasq import sync_redirects_hosts
 from app.settings import Settings
 
@@ -114,3 +114,98 @@ def test_normal_setting_form(client):
     assert client.post("/auto-wechsel/add", data={"domain": "example.com", "slot": "auto"}, follow_redirects=False).status_code == 303
     page = client.get("/vpn").text
     assert "still im Hintergrund" in page
+
+
+def _hello(name: str) -> bytes:
+    """Minimales TLS-ClientHello mit SNI."""
+    host = name.encode()
+    sni = (len(host) + 3).to_bytes(2, "big") + b"\x00" + len(host).to_bytes(2, "big") + host
+    ext = b"\x00\x00" + len(sni).to_bytes(2, "big") + sni
+    body = b"\x03\x03" + b"\x00" * 32 + b"\x00" + b"\x00\x02\x13\x01" + b"\x01\x00" + len(ext).to_bytes(2, "big") + ext
+    hs = b"\x01" + len(body).to_bytes(3, "big") + body
+    return b"\x16\x03\x01" + len(hs).to_bytes(2, "big") + hs
+
+
+def test_parse_sni():
+    assert zertwechsel.parse_sni(_hello("www.aniworld.to")) == "www.aniworld.to"
+    assert zertwechsel.parse_sni(b"GET / HTTP/1.1\r\n") is None
+    assert zertwechsel.parse_sni(_hello("x.de")[:20]) is None
+
+
+def test_cert_device_sees_page_then_released(client, monkeypatch):
+    mac = "aa:bb:cc:dd:ee:05"
+    db.upsert_devices([("testclient", mac, "laptop")])
+    autoswitch.set_rule("aniworld.to", "vpn1")
+    monkeypatch.setattr(warp, "may_use", lambda m, slot: True)
+    monkeypatch.setattr(warp, "read_status", lambda s, slot, now=None: warp.SlotStatus(True, "verbunden"))
+    sw = autoswitch.AutoSwitcher(settings=client.app.state.settings)
+    client.app.state.autoswitcher = sw
+    intercepted = []
+    sw.on_intercept = lambda macs: intercepted.append(macs)
+
+    # Prüfbild über den Prüf-Namen per HTTPS → Gerät hat das Zertifikat → wird umgeleitet
+    r = client.get(f"https://{zertwechsel.CHECK_HOST}/zertifikat/check.gif")
+    assert r.status_code == 200 and mac in zertwechsel.cert_macs()
+    assert intercepted[-1] == [mac]
+
+    # DNS allein schaltet nicht – die Wechselseite soll erscheinen
+    sw.on_query("testclient", "aniworld.to")
+    assert mac not in db.device_warp()
+
+    # Über die Weiche: Wechselseite unter aniworld.to, ursprüngliche URL bleibt erhalten
+    page = client.get("https://aniworld.to/anime/folge?ep=3")
+    assert page.status_code == 200 and page.headers["connection"] == "close"
+    assert "https://aniworld.to/anime/folge?ep=3" in page.text
+
+    # Wechselseite pollt → VPN an → fertig → Gerät raus aus der Umleitung
+    assert client.get("https://aniworld.to/vpn-wechsel/status?host=aniworld.to").json()["state"] == "wait"
+    assert db.device_warp().get(mac) == "vpn1"
+    sw.state[mac]["since"] -= 60
+    assert client.get("https://aniworld.to/vpn-wechsel/status?host=aniworld.to").json()["state"] == "ready"
+    assert intercepted[-1] == []
+
+    # Nach der Wartezeit zurück auf Standard → wieder umleiten
+    sw.tick(now=sw.state[mac]["seen"] + autoswitch.minutes() * 60 + 1)
+    assert intercepted[-1] == [mac]
+
+    # Prüfbild lädt nicht mehr → Zertifikat weg → wieder still wechseln
+    client.post("/zertifikat/fehlt")
+    assert mac not in zertwechsel.cert_macs() and intercepted[-1] == []
+    client.app.state.autoswitcher = None
+
+
+def test_cert_device_fallback_switches_silently(client, monkeypatch):
+    mac = "aa:bb:cc:dd:ee:06"
+    db.upsert_devices([("testclient", mac, "laptop")])
+    autoswitch.set_rule("aniworld.to", "vpn1")
+    zertwechsel.set_cert(mac, True)
+    monkeypatch.setattr(warp, "may_use", lambda m, slot: True)
+    sw = autoswitch.AutoSwitcher(settings=client.app.state.settings)
+    intercepted = []
+    sw.on_intercept = lambda macs: intercepted.append(macs)
+    monkeypatch.setattr(autoswitch, "CERT_FALLBACK", 3600)
+    sw.on_query("testclient", "aniworld.to")
+    assert mac not in db.device_warp()
+    sw.fallback("testclient", "aniworld.to")  # Wechselseite kam nicht (z. B. IPv6)
+    assert db.device_warp().get(mac) == "vpn1"
+    assert intercepted[-1] == []
+
+
+def test_check_pixel_needs_check_host(client):
+    db.upsert_devices([("testclient", "aa:bb:cc:dd:ee:07", "laptop")])
+    client.get("/zertifikat/check.gif")
+    assert "aa:bb:cc:dd:ee:07" not in zertwechsel.cert_macs()
+
+
+def test_auto_domains_in_intercept_set(client, monkeypatch):
+    import app.dnsmasq as dm
+
+    monkeypatch.setenv("GATEWAY_ENABLED", "1")
+    monkeypatch.setenv("HTTPS_PORT", "443")
+    monkeypatch.setattr(dm, "ipset_supported", lambda: True)
+    autoswitch.set_rule("s.to", autoswitch.AUTO)
+    s = Settings.from_env()
+    sync_redirects_hosts(s)
+    conf = open(s.redirects_path, encoding="utf-8").read()
+    assert f"ipset=/s.to/{zertwechsel.SET}" in conf
+    assert f"address=/{zertwechsel.CHECK_HOST}/{s.pi_ip}" in conf

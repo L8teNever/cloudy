@@ -227,6 +227,12 @@
       {% endif %}
     })();
   </script>
+  {% if zert_check and device %}
+  {# Prüft unsichtbar, ob das Gerät dem cloudy-Zertifikat vertraut – dann zeigt der Auto-Wechsel die Wechselseite. #}
+  <img src="{{ zert_check }}?t={{ range(100000, 999999) | random }}" alt="" width="1" height="1"
+       style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none"
+       onerror="fetch('/zertifikat/fehlt', {method: 'POST'})">
+  {% endif %}
   {% include "teile/ladebalken.html" %}
 </body>
 </html>

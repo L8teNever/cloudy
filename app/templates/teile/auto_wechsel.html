@@ -8,6 +8,12 @@
     das erste verbundene VPN, das die Seite erreicht.
     Nach <b>{{ auto_minutes }} Minuten</b> ohne Aufruf zurück auf <b>Standard</b>.
   </p>
+  <p class="muted small">
+    <b>Mit Anzeige:</b> Geräte mit installiertem <a href="/einstellungen">cloudy-Zertifikat</a> sehen bei diesen
+    Seiten kurz die Wechselseite (5 Sekunden, dann weiter zur Seite) – nur hier, alles andere läuft normal.
+    cloudy erkennt das Zertifikat, sobald das Gerät einmal <code>/mein</code> öffnet. Neue Seiten brauchen
+    kein neues Zertifikat.
+  </p>
   {% if params.fehler %}<div class="info small">{{ params.fehler }}</div>{% endif %}
 
   <form method="post" action="/auto-wechsel/add" class="site-add" data-ok="Gespeichert">

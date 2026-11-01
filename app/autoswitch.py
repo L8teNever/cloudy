@@ -18,7 +18,7 @@ import subprocess
 import threading
 import time
 
-from . import db, dienste, policy, warp
+from . import db, dienste, policy, warp, zertwechsel
 
 RULES_KEY = "auto_rules"  # JSON: {"domain": "slot"| "auto", …}
 MINUTES_KEY = "auto_minutes"
@@ -34,6 +34,7 @@ SEEN_STEP = 5
 SETTLE = 5.0  # kurz warten, bis Markierung/DNS greifen; die Wechselseite zeigt sowieso ≥5 s
 PROBE_TTL = 45.0  # Ergebnis „Seite über Slot erreichbar?“ so lange merken
 PROBE_TIMEOUT = 8
+CERT_FALLBACK = 20.0  # Gerät mit Zertifikat: kommt die Wechselseite nicht (z. B. IPv6), still wechseln
 _rules_gen = 0  # steigt bei jeder Regel-Änderung → Cache im AutoSwitcher verwerfen
 
 
@@ -282,6 +283,9 @@ class AutoSwitcher:
         self._probe_cache: dict[tuple[str, str], tuple[float, bool]] = {}
         self._picking: set[str] = set()  # MACs, für die gerade ein VPN gesucht wird
         self.async_auto = True
+        self.on_intercept = None  # bekommt die MACs, deren HTTPS zur Wechselseite umgeleitet wird
+        self._intercept_last: list[str] | None = None
+        self._waiting: set[str] = set()  # Geräte mit Zertifikat, für die der stille Notfall-Wechsel läuft
         self._stopping = threading.Event()
         try:
             state = json.loads(db.get_setting(STATE_KEY) or "{}")
@@ -322,6 +326,32 @@ class AutoSwitcher:
 
     def _save(self) -> None:
         db.set_setting(STATE_KEY, json.dumps(self.state) if self.state else "")
+        self.sync_intercept()
+
+    def sync_intercept(self, force: bool = False) -> None:
+        """Geräte mit Zertifikat, die gerade keine Seite freigeschaltet haben, zur Wechselseite umleiten."""
+        cb = self.on_intercept
+        if not cb:
+            return
+        with self._lock:
+            wanted = sorted(m for m in zertwechsel.cert_macs() if not (self.state.get(m) or {}).get("shown"))
+            if wanted == self._intercept_last and not force:
+                return
+            self._intercept_last = wanted
+        try:
+            cb(wanted)
+        except Exception as exc:  # noqa: BLE001
+            print(f"cloudy: Wechselseite-Umleitung: {exc}", flush=True)
+
+    def mark_shown(self, ip: str, now: float | None = None) -> None:
+        """Wechselseite fertig: Gerät aus der Umleitung nehmen, damit die echte Seite lädt."""
+        now = now if now is not None else time.time()
+        mac = self._mac_for(ip, now)
+        with self._lock:
+            st = self.state.get(mac)
+            if st and not st.get("shown"):
+                st["shown"] = True
+                self._save()
 
     def _dns_changed(self) -> None:
         cb = self.on_dns_change
@@ -355,7 +385,11 @@ class AutoSwitcher:
             self._save()
 
     def on_query(self, ip: str, domain: str, now: float | None = None) -> None:
-        """DNS-Anfrage für eine Auto-Wechsel-Seite: Gerät still im Hintergrund aufs VPN stellen."""
+        """DNS-Anfrage für eine Auto-Wechsel-Seite: Gerät still im Hintergrund aufs VPN stellen.
+
+        Geräte mit cloudy-Zertifikat sehen stattdessen die Wechselseite (die schaltet über status_for um);
+        kommt die nicht (z. B. Aufruf über IPv6), wird nach CERT_FALLBACK Sekunden still gewechselt.
+        """
         now = now if now is not None else time.time()
         slot = self.match(domain, now)
         if not slot:
@@ -369,6 +403,31 @@ class AutoSwitcher:
             if st and (st.get("host") == apex or _covers(st.get("host") or "", domain) or st["slot"] == slot):
                 self._touch(mac, now)
                 return
+            if self.on_intercept and mac in zertwechsel.cert_macs() and not (st or {}).get("shown"):
+                if mac not in self._waiting:
+                    self._waiting.add(mac)
+                    timer = threading.Timer(CERT_FALLBACK, self.fallback, args=(ip, domain))
+                    timer.daemon = True
+                    timer.start()
+                return
+        self._switch(mac, slot, domain, apex, now, shown=False)
+
+    def fallback(self, ip: str, domain: str) -> None:
+        """Wechselseite kam nicht – still wechseln und Gerät aus der Umleitung nehmen."""
+        now = time.time()
+        mac = self._mac_for(ip, now)
+        slot = self.match(domain, now)
+        apex = rule_apex(domain) or domain.lower().rstrip(".")
+        with self._lock:
+            self._waiting.discard(mac)
+            st = self.state.get(mac)
+            if not slot or (st and (st.get("host") == apex or st["slot"] == slot)):
+                return  # Wechselseite hat übernommen
+        self._switch(mac, slot, domain, apex, now, shown=True)
+
+    def _switch(self, mac: str, slot: str, domain: str, apex: str, now: float, shown: bool) -> None:
+        with self._lock:
+            st = self.state.get(mac)
             if slot == AUTO:
                 if mac in self._picking:
                     return
@@ -379,16 +438,16 @@ class AutoSwitcher:
                 if st is None and db.device_warp().get(mac, "") == slot:
                     return  # schon von Hand auf diesem Profil – nicht zurückstellen
                 db.set_device_warp(mac, slot)
-                self.state[mac] = {"slot": slot, "seen": now, "since": now, "host": apex}
+                self.state[mac] = {"slot": slot, "seen": now, "since": now, "host": apex, "shown": shown}
                 self._save()
                 return
         # „auto“: VPN-Suche dauert (Probe übers VPN) – nicht im DNS-Log-Thread warten.
         if self.async_auto:
-            threading.Thread(target=self._auto_switch, args=(mac, domain, apex), daemon=True).start()
+            threading.Thread(target=self._auto_switch, args=(mac, domain, apex, shown), daemon=True).start()
         else:
-            self._auto_switch(mac, domain, apex)
+            self._auto_switch(mac, domain, apex, shown)
 
-    def _auto_switch(self, mac: str, host: str, apex: str) -> None:
+    def _auto_switch(self, mac: str, host: str, apex: str, shown: bool = False) -> None:
         try:
             now = time.time()
             host = host.lower().rstrip(".")
@@ -406,7 +465,7 @@ class AutoSwitcher:
                 return
             with self._lock:
                 db.set_device_warp(mac, picked)
-                self.state[mac] = {"slot": picked, "seen": now, "since": now, "host": apex}
+                self.state[mac] = {"slot": picked, "seen": now, "since": now, "host": apex, "shown": shown}
                 self._save()
                 changed = set_pass(apex, picked)
             if changed:

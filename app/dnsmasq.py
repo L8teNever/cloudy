@@ -389,23 +389,28 @@ def site_route_lines(s: Settings, routes: dict[str, str]) -> list[str]:
     return site_route_lines_multi(s, multi)
 
 
-def site_route_lines_multi(s: Settings, routes: dict[str, set[str]]) -> list[str]:
-    """Wie site_route_lines, aber eine Domain darf in mehreren Profil-ipsets landen (Gruppen + global)."""
-    if not (s.gateway_enabled and routes):
+def site_route_lines_multi(
+    s: Settings, routes: dict[str, set[str]], extra: dict[str, list[str]] | None = None
+) -> list[str]:
+    """Wie site_route_lines, aber eine Domain darf in mehreren Profil-ipsets landen (Gruppen + global).
+    extra: weitere ipsets pro Domain (z. B. cloudy_auto für die Wechselseite)."""
+    extra = extra or {}
+    if not (s.gateway_enabled and (routes or extra)):
         return []
     from . import warp
 
     index_of = {slot: i for i, (slot, _) in enumerate(s.warp_slots, start=1)}
     lines = []
-    for domain, slots in sorted(routes.items()):
+    for domain in sorted(set(routes) | set(extra)):
         set_names: list[str] = []
-        for slot in sorted(slots):
+        for slot in sorted(routes.get(domain, ())):
             key = slot if slot == warp.DIRECT else index_of.get(slot)
             if key is None:
                 continue
             set_names.append(warp.site_set(key))
             if s.ipv6_enabled:
                 set_names.append(warp.site_set(key, True))
+        set_names += extra.get(domain, [])
         if set_names:
             lines.append(f"ipset=/{domain}/{','.join(dict.fromkeys(set_names))}")
     return lines
@@ -413,12 +418,14 @@ def site_route_lines_multi(s: Settings, routes: dict[str, set[str]]) -> list[str
 
 def sync_redirects_hosts(s: Settings) -> None:
     """Schreibt die Weiterleitungen als dnsmasq-Konfiguration (wird mit conf-file= eingebunden)."""
-    from . import autoswitch
+    from . import autoswitch, zertwechsel
     from .redirects import dnsmasq_lines
 
     lines = ["# cloudy: Domain-Weiterleitungen (automatisch erzeugt, nicht von Hand ändern)"]
     lines += dnsmasq_lines([r["source"] for r in db.redirects()], s.pi_ip)
     lines += localdomain.dnsmasq_lines(localdomain.domains(), s.pi_ip)
+    if s.https_port and s.gateway_enabled:
+        lines += dnsmasq_lines([zertwechsel.CHECK_HOST], s.pi_ip)  # Prüfbild „hat das Gerät das cloudy-Zertifikat?“
     if ipset_supported():
         merged: dict[str, set[str]] = {d: {sl} for d, sl in db.site_routes().items()}
         for domain, slots in db.all_group_site_domains().items():
@@ -429,7 +436,9 @@ def sync_redirects_hosts(s: Settings) -> None:
         from .dienste import expand
 
         # Zugehörige Domains (z. B. nflxvideo.net zu netflix.com) laufen automatisch mit.
-        lines += site_route_lines_multi(s, expand(merged))
+        # Auto-Wechsel-Seiten selbst (ohne CDNs): Geräte mit cloudy-Zertifikat sehen dort die Wechselseite.
+        auto_sets = {d: [zertwechsel.SET] for d in autoswitch.managed_domains()} if s.https_port else {}
+        lines += site_route_lines_multi(s, expand(merged), auto_sets)
     os.makedirs(s.data_dir, exist_ok=True)
     tmp = s.redirects_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
