@@ -80,6 +80,32 @@ def base_domain(name: str) -> str:
     return ".".join(parts[-2:])
 
 
+# Sitzungen pro Regel kurz merken: die Auswertung liest viel aus dem DNS-Verlauf, und die VPN-Seite wird oft
+# geladen (auch nach jedem Speichern). Vorschläge ändern sich ohnehin nur langsam.
+_SESSION_TTL = 120.0
+_session_cache: dict[tuple[str, str, int, int], tuple[float, list[set[str]]]] = {}
+
+
+def _sessions_all(rules: list[str], since: int, days: int, window: int) -> dict[str, list[set[str]]]:
+    path, now = db.db_path(), time.monotonic()
+    out: dict[str, list[set[str]]] = {}
+    missing = []
+    for rule in rules:
+        hit = _session_cache.get((path, rule, days, window))
+        if hit and now - hit[0] < _SESSION_TTL:
+            out[rule] = hit[1]
+        else:
+            missing.append(rule)
+    if missing:
+        if len(_session_cache) > 500:
+            _session_cache.clear()
+        hits = db.rule_hits(missing, since)  # ein Durchlauf für alle neuen Regeln
+        for rule in missing:
+            out[rule] = db.query_sessions(rule, since, window, hits=hits[rule])
+            _session_cache[(path, rule, days, window)] = (now, out[rule])
+    return out
+
+
 def suggestions(rules: list[str], days: int = 7, window: int = 90, limit: int = 6) -> dict[str, list[tuple[str, int]]]:
     """Pro Regel: Domains, die Geräte oft innerhalb von `window` Sekunden nach der Seite abfragen.
 
@@ -93,8 +119,9 @@ def suggestions(rules: list[str], days: int = 7, window: int = 90, limit: int = 
     for r in rules:
         covered.update(companions(r))
     out: dict[str, list[tuple[str, int]]] = {}
+    all_sessions = _sessions_all(rules, since, days, window)
     for rule in rules:
-        sessions = db.query_sessions(rule, since, window)
+        sessions = all_sessions[rule]
         if len(sessions) < 3:
             continue
         counts: Counter[str] = Counter()

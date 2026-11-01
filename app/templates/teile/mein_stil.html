@@ -78,7 +78,6 @@
     }
     .panel {
       background-color: rgba(23, 25, 36, 0.94);
-      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
       border: 1px solid var(--color-border);
       box-shadow: var(--shadow-card);
       border-radius: var(--radius-xl);
@@ -206,4 +205,13 @@
     .switch:active .switch-knob { width: 24px; }
       .ad-stats { display: flex; gap: .75rem; flex-wrap: wrap; margin-top: .3rem; font-size: .72rem; color: var(--color-text-muted); }
     .ad-stats b { color: var(--color-online); font-weight: 800; font-variant-numeric: tabular-nums; }
+    /* Sanftes Einblenden beim Laden */
+    @keyframes meinEin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    .app-container > * { animation: meinEin .35s cubic-bezier(.16, 1, .3, 1) backwards; }
+    .app-container > :nth-child(2) { animation-delay: .04s; }
+    .app-container > :nth-child(3) { animation-delay: .08s; }
+    .app-container > :nth-child(4) { animation-delay: .12s; }
+    .app-container > :nth-child(n+5) { animation-delay: .16s; }
+    .switch.busy { opacity: .7; pointer-events: none; }
+    .back-btn:focus-visible, .option-card:focus-within, .switch:focus-visible, .btn-save:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
   </style>

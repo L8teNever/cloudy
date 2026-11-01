@@ -224,6 +224,14 @@
         });
       }
 
+      // Werbeblocker-Schalter: sofort umschalten, dann speichern.
+      document.querySelectorAll("form[action='/mein/werbeblocker']").forEach(f => {
+        f.addEventListener("submit", () => {
+          const sw = f.querySelector(".switch");
+          if (sw) { sw.classList.toggle("on"); sw.classList.add("busy"); }
+        });
+      });
+
       const toast = document.getElementById("toast");
       {% if ok or fehler %}
       if (window.CloudyLoader) CloudyLoader.hide();
@@ -232,5 +240,6 @@
       {% endif %}
     })();
   </script>
+  {% include "teile/ladebalken.html" %}
 </body>
 </html>

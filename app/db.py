@@ -47,6 +47,8 @@ def init() -> None:
                 qtype TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_queries_ip ON queries (ip, id);
+            -- Für Zeitfenster pro Gerät (Vorschläge auf der VPN-Seite): sonst wird pro Sitzung alles des Geräts gelesen.
+            CREATE INDEX IF NOT EXISTS idx_queries_ip_ts ON queries (ip, ts);
 
             CREATE TABLE IF NOT EXISTS domain_stats (
                 ip TEXT NOT NULL,
@@ -606,21 +608,13 @@ def known_ips() -> list[str]:
 def current_sites() -> dict[str, dict]:
     """Für jedes Gerät die zuletzt aufgerufene Domain/Seite mit Zeitstempel und optionaler Ziel-IP."""
     with closing(_connect()) as conn:
+        # MAX(id) pro IP kommt direkt aus dem Index (ip, id) – kein Sortieren aller Aufrufe (läuft alle paar Sekunden).
         q_rows = conn.execute(
-            """
-            SELECT ip, domain, ts FROM (
-                SELECT ip, domain, ts, ROW_NUMBER() OVER (PARTITION BY ip ORDER BY id DESC) AS rn
-                FROM queries
-            ) WHERE rn = 1
-            """
+            "SELECT ip, domain, ts FROM queries WHERE id IN (SELECT MAX(id) FROM queries GROUP BY ip)"
         ).fetchall()
+        # SQLite liefert bei MAX() die übrigen Spalten aus genau der Zeile mit dem Höchstwert.
         t_rows = conn.execute(
-            """
-            SELECT ip, target, last_seen FROM (
-                SELECT ip, target, last_seen, ROW_NUMBER() OVER (PARTITION BY ip ORDER BY last_seen DESC) AS rn
-                FROM traffic
-            ) WHERE rn = 1
-            """
+            "SELECT ip, target, MAX(last_seen) AS last_seen FROM traffic GROUP BY ip"
         ).fetchall()
     result = {}
     for r in q_rows:
@@ -1000,21 +994,39 @@ def connect() -> sqlite3.Connection:
     return _connect()
 
 
-def query_sessions(rule: str, since: int, window: int = 90, max_sessions: int = 60) -> list[set[str]]:
+def rule_hits(rules: list[str], since: int) -> dict[str, list[tuple[str, int]]]:
+    """Alle Aufrufe (ip, ts) seit `since` pro Regel – die Domain selbst oder eine Subdomain davon.
+
+    Liest die Aufrufe nur einmal für alle Regeln (statt einmal pro Regel): bei vielen Regeln viel schneller.
+    """
+    wanted = {r.lower().strip("."): r for r in rules}
+    out: dict[str, list[tuple[str, int]]] = {r: [] for r in rules}
+    with closing(_connect()) as conn:
+        cur = conn.execute("SELECT ip, ts, domain FROM queries WHERE ts >= ? ORDER BY ip, ts", (since,))
+        for ip, ts, domain in cur:
+            parts = domain.lower().strip(".").split(".")
+            for i in range(len(parts) - 1):
+                rule = wanted.get(".".join(parts[i:]))
+                if rule is not None:
+                    out[rule].append((ip, ts))
+    return out
+
+
+def query_sessions(
+    rule: str, since: int, window: int = 90, max_sessions: int = 60, hits: list[tuple[str, int]] | None = None
+) -> list[set[str]]:
     """Für Vorschläge zugehöriger Domains: Pro Aufruf der Seite (Gerät + Zeitpunkt) die Domains, die dasselbe
-    Gerät in den `window` Sekunden danach abgefragt hat (ohne die Seite selbst)."""
+    Gerät in den `window` Sekunden danach abgefragt hat (ohne die Seite selbst).
+
+    `hits` (aus rule_hits, nach ip und ts sortiert) spart die Suche nach den Aufrufen der Seite.
+    """
+    if hits is None:
+        hits = rule_hits([rule], since)[rule]
     rule = rule.lower().strip(".")
     with closing(_connect()) as conn:
-        hits = conn.execute(
-            """SELECT ip, ts FROM queries
-               WHERE ts >= ? AND (domain = ? OR domain LIKE ?)
-               ORDER BY ip, ts""",
-            (since, rule, "%." + rule),
-        ).fetchall()
         starts: list[tuple[str, int]] = []
         last: dict[str, int] = {}
-        for row in hits:
-            ip, ts = row["ip"], row["ts"]
+        for ip, ts in hits:
             if ip in last and ts - last[ip] < window:
                 continue  # gehört noch zur selben Sitzung
             last[ip] = ts

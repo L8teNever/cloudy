@@ -32,7 +32,8 @@
     function busy(el) {
       // Nicht austauschen, während jemand darin tippt oder etwas ausgewählt hat.
       if (el.contains(document.activeElement) && document.activeElement !== document.body) return true;
-      return [...el.querySelectorAll("input:not([type=hidden]), textarea")].some(i => i.value !== i.defaultValue);
+      return [...el.querySelectorAll("input:not([type=hidden]):not([type=checkbox]):not([type=radio]), textarea")].some(i => i.value !== i.defaultValue)
+        || [...el.querySelectorAll("input[type=checkbox], input[type=radio]")].some(i => i.checked !== i.defaultChecked);
     }
     async function refresh(el, force) {
       if (!force && (document.hidden || busy(el))) return;
@@ -53,44 +54,91 @@
     window.cloudyRefresh = () => document.querySelectorAll("[data-live]").forEach(el => refresh(el, true));
 
     // --- Seitenwechsel ohne komplettes Neuladen ---
+    const bar = { start: () => window.Ladebalken && Ladebalken.start(), done: () => window.Ladebalken && Ladebalken.done() };
+    // Beim Drüberfahren schon laden – beim Klick ist die Seite dann meist sofort da (nur kurz gültig, Daten sind live).
+    const pre = new Map();
+    function fetchPage(url, signal) {
+      const hit = pre.get(url);
+      pre.delete(url);
+      if (hit && Date.now() - hit.t < 8000) return hit.p;
+      return fetch(url, { headers: { "X-Cloudy": "1" }, signal }).then(r => r.ok ? r.text().then(html => ({ url: r.url, html })) : Promise.reject(r.status));
+    }
+    function prefetch(a) {
+      const url = a.href;
+      const hit = pre.get(url);
+      if ((hit && Date.now() - hit.t < 8000) || url === location.href) return;
+      pre.delete(url);
+      const p = fetchPage(url);
+      p.catch(() => pre.delete(url));
+      pre.set(url, { t: Date.now(), p });
+    }
+    let nav = null;
     async function go(url, push) {
+      if (nav) nav.abort();
+      const ctrl = nav = new AbortController();
+      const main = document.getElementById("main");
+      bar.start();
+      main.classList.add("lb-wartet");
       try {
-        const res = await fetch(url, { headers: { "X-Cloudy": "1" } });
-        const doc = new DOMParser().parseFromString(await res.text(), "text/html");
-        document.getElementById("main").replaceWith(doc.getElementById("main"));
+        const page = await fetchPage(url, ctrl.signal);
+        if (ctrl !== nav) return;
+        const doc = new DOMParser().parseFromString(page.html, "text/html");
+        const fresh = doc.getElementById("main");
+        if (!fresh) throw new Error("kein main");
+        fresh.classList.add("lb-ein");
+        main.replaceWith(fresh);
+        // Inline-Skripte der neuen Seite ausführen (per innerHTML eingefügt laufen sie sonst nicht).
+        fresh.querySelectorAll("script").forEach(old => {
+          const s = document.createElement("script");
+          [...old.attributes].forEach(at => s.setAttribute(at.name, at.value));
+          s.textContent = old.textContent;
+          old.replaceWith(s);
+        });
         document.title = doc.title;
-        document.querySelectorAll("header nav a").forEach(a => a.classList.toggle("active", a.getAttribute("href") === (doc.querySelector("nav a.active") || {}).getAttribute?.("href")));
-        if (push) history.pushState({}, "", url);
-        window.scrollTo(0, 0);
+        const activeHref = doc.querySelector("nav a.active")?.getAttribute("href");
+        document.querySelectorAll("header nav a").forEach(a => a.classList.toggle("active", a.getAttribute("href") === activeHref));
+        if (push) { history.pushState({}, "", page.url || url); window.scrollTo(0, 0); }
         startLive();
-      } catch (_) { location.href = url; }
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+        location.href = url;
+        return;
+      } finally {
+        if (ctrl === nav) nav = null;
+        bar.done();
+      }
     }
     document.addEventListener("click", e => {
       const a = e.target.closest("a[data-nav]");
-      if (!a || e.ctrlKey || e.metaKey || e.shiftKey || a.target) return;
+      if (!a || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || a.target) return;
       e.preventDefault();
       go(a.href, true);
     });
+    document.addEventListener("mouseover", e => { const a = e.target.closest?.("a[data-nav]"); if (a) prefetch(a); });
+    document.addEventListener("touchstart", e => { const a = e.target.closest?.("a[data-nav]"); if (a) prefetch(a); }, { passive: true });
     window.addEventListener("popstate", () => go(location.href, false));
 
     // --- Formulare im Hintergrund abschicken ---
     function toast(msg, bad) {
       const t = document.getElementById("toast");
-      t.textContent = msg; t.className = bad ? "bad" : ""; t.style.display = "block";
-      clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", bad ? 6000 : 2500);
+      t.textContent = msg; t.className = (bad ? "bad " : "") + "show";
+      clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), bad ? 6000 : 2500);
     }
-    // Bereiche mit data-refresh-box (und id) nach dem Speichern frisch von der Seite holen – ohne Neuladen.
+    // Bereiche mit data-refresh-box (und id) nach dem Speichern frisch holen – ohne Neuladen.
+    // Mit data-refresh-url nur dieses Stück (schneller), sonst die ganze Seite.
     // Bei einem Fehler bleibt die Eingabe (Textfeld) erhalten.
     async function refreshBox(form) {
       const box = form.closest("[data-refresh-box][id]");
       if (!box) return;
-      const typed = [...form.querySelectorAll("textarea, input:not([type=hidden])")].map(i => [i.name, i.value]);
+      const typed = [...form.querySelectorAll("textarea, input:not([type=hidden]):not([type=checkbox]):not([type=radio])")].map(i => [i.name, i.value]);
       try {
-        const res = await fetch(location.pathname + location.search, { headers: { "X-Cloudy": "1" } });
+        const res = await fetch(box.dataset.refreshUrl || location.pathname + location.search, { headers: { "X-Cloudy": "1" } });
         const doc = new DOMParser().parseFromString(await res.text(), "text/html");
         const fresh = doc.getElementById(box.id);
         if (!fresh) return;
+        const open = [...box.querySelectorAll("details[id][open]")].map(d => d.id);
         box.replaceWith(fresh);
+        open.forEach(id => { const d = fresh.querySelector(`details[id="${id}"]`); if (d) d.open = true; });
         const again = fresh.querySelector(`form[action="${form.getAttribute("action")}"]`);
         if (again) typed.forEach(([name, value]) => { const i = name && again.querySelector(`[name="${name}"]`); if (i && value) i.value = value; });
       } catch (_) {}
@@ -102,6 +150,11 @@
       if (form.dataset.confirm && !confirm(form.dataset.confirm)) return;
       const buttons = form.querySelectorAll("button");
       buttons.forEach(b => b.disabled = true);
+      // Spinner im geklickten Knopf – aber erst, wenn es spürbar dauert (kein Flackern bei schnellen Antworten).
+      const btn = e.submitter && e.submitter.tagName === "BUTTON" && !e.submitter.classList.contains("chip-x") ? e.submitter : null;
+      const label = btn && btn.innerHTML;
+      const spin = btn && setTimeout(() => { btn.style.minWidth = btn.offsetWidth + "px"; btn.innerHTML = '<span class="lb-spinner"></span>' + btn.textContent.trim(); }, 180);
+      bar.start();
       try {
         const res = await fetch(form.action, { method: "POST", body: new URLSearchParams(new FormData(form)) });
         const err = new URL(res.url).searchParams.get("fehler");
@@ -113,11 +166,14 @@
           toast(err, true);
         } else {
           toast(form.dataset.ok || "Gespeichert");
-          form.querySelectorAll("input:not([type=hidden]), textarea").forEach(i => { if (!i.dataset.keep) { i.value = ""; i.defaultValue = ""; } });
+          form.querySelectorAll("input:not([type=hidden]):not([type=checkbox]):not([type=radio]), textarea").forEach(i => { if (!i.dataset.keep) { i.value = ""; i.defaultValue = ""; } });
         }
       } catch (_) { toast("Keine Verbindung zum Pi", true); }
+      clearTimeout(spin);
+      if (btn) { btn.innerHTML = label; btn.style.minWidth = ""; }
       buttons.forEach(b => b.disabled = false);
       await refreshBox(form);
+      bar.done();
       window.cloudyRefresh();
     });
     document.addEventListener("change", e => {
@@ -144,5 +200,6 @@
     startLive();
   })();
   </script>
+  {% include "teile/ladebalken.html" %}
 </body>
 </html>

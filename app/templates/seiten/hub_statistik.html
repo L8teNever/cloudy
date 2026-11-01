@@ -209,5 +209,18 @@
       <a href="/hub" style="color:#64748b;text-decoration:none">← zurück zum Hub</a>
     </footer>
   </main>
+  <script>
+  (function () {
+    // Zeitraum-Wechsel: Auswahl sofort umschalten und Inhalt abdunkeln, bis die neue Seite da ist.
+    document.querySelectorAll(".time-pill").forEach(function (a) {
+      a.addEventListener("click", function (e) {
+        if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+        document.querySelectorAll(".time-pill").forEach(function (p) { p.classList.toggle("active", p === a); });
+        document.querySelectorAll(".metrics-grid, .panel-card").forEach(function (n) { n.classList.add("lb-wartet"); });
+      });
+    });
+  })();
+  </script>
+  {% include "teile/ladebalken.html" %}
 </body>
 </html>

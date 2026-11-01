@@ -171,12 +171,21 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.middleware("http")
+async def static_cache_middleware(request: Request, call_next):
+    """Logo und Icons kurz im Browser behalten statt bei jedem Seitenaufruf neu zu fragen."""
+    response = await call_next(request)
+    if request.url.path.startswith("/static/") and response.status_code == 200:
+        response.headers.setdefault("Cache-Control", "public, max-age=3600")
+    return response
+
+
+@app.middleware("http")
 async def redirect_middleware(request: Request, call_next):
     raw_host = request.headers.get("host", "").split(":")[0].strip().lower()
     settings = getattr(request.app.state, "settings", None)
-    mein_hosts = await run_in_threadpool(localdomain.mein_domains)
-    dash_hosts = await run_in_threadpool(localdomain.dashboard_domains)
-    hub_hosts = await run_in_threadpool(localdomain.hub_domains)
+    mein_hosts, dash_hosts, hub_hosts = await run_in_threadpool(
+        lambda: (localdomain.mein_domains(), localdomain.dashboard_domains(), localdomain.hub_domains())
+    )
     if raw_host in dash_hosts and request.url.scheme == "http":
         # Dashboard unter der eigenen Domain: Passwort und Daten nur verschlüsselt, sobald das Zertifikat da ist.
         if settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):

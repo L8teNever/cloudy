@@ -27,9 +27,9 @@
               <div class="ha-name">Home Assistant</div>
             </div>
           </div>
-          <a class="badge-pill green" id="haBadge" href="{{ ha_url }}" style="display:flex;align-items:center;gap:.35rem;padding:.25rem .55rem;text-decoration:none">
+          <a class="badge-pill gray checking" id="haBadge" href="{{ ha_url }}" style="display:flex;align-items:center;gap:.35rem;padding:.25rem .55rem;text-decoration:none">
             <span class="status-dot-wrap">
-              <span class="status-dot-ping" id="haPing"></span>
+              <span class="status-dot-ping" id="haPing" style="display:none"></span>
               <span class="status-dot-solid" id="haSolid"></span>
             </span>
             <span id="haStatusText">Prüfen…</span>
@@ -108,12 +108,12 @@
       var solid = document.getElementById("haSolid");
       if (!badge || !text) return;
       if (online) {
-        badge.className = "badge-pill green";
+        badge.className = "badge-pill green ready";
         text.textContent = "Läuft";
         if (ping) ping.style.display = "block";
         if (solid) solid.style.background = "var(--color-online)";
       } else {
-        badge.className = "badge-pill gray";
+        badge.className = "badge-pill gray ready";
         text.textContent = "Offline";
         if (ping) ping.style.display = "none";
         if (solid) solid.style.background = "#ef4444";
@@ -126,8 +126,9 @@
         .then(function (d) { updateHAStatus(!!d.online); })
         .catch(function () { updateHAStatus(false); });
     }
-    setTimeout(checkHomeAssistant, 400);
+    checkHomeAssistant();
   })();
   </script>
+  {% include "teile/ladebalken.html" %}
 </body>
 </html>
