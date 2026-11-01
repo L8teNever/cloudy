@@ -32,7 +32,7 @@ MIN_MINUTES, MAX_MINUTES = 1, 240
 TICK = 15.0
 RULES_TTL = 10.0
 SEEN_STEP = 5
-SETTLE = 12.0
+SETTLE = 5.0  # kurz warten, bis Markierung/DNS greifen; die Wechselseite zeigt sowieso ≥5 s
 PROBE_TTL = 45.0  # Ergebnis „Seite über Slot erreichbar?“ so lange merken
 PROBE_TIMEOUT = 8
 _rules_gen = 0  # steigt bei jeder Regel-Änderung → Cache im AutoSwitcher verwerfen
@@ -438,14 +438,18 @@ class AutoSwitcher:
                 return {"state": "ready", "slot": chosen}
 
             if slot == AUTO:
-                # Bereits auf einem VPN, das die Seite kann → trotzdem Wechselseite (SETTLE), nicht sofort ready
+                # VPN schon an und Seite erreichbar → ready (Wechselseite zeigt trotzdem 5-s-Countdown)
                 current = db.device_warp().get(mac, "")
                 if current and warp.kind(current) == "vpn" and warp.may_use(mac, current):
                     if self.settings and warp.read_status(self.settings, current, now).connected:
                         if self._probe(current, host, now):
-                            self.state[mac] = {"slot": current, "seen": now, "since": now, "host": apex}
+                            self.state[mac] = {
+                                "slot": current, "seen": now, "since": now - SETTLE, "host": apex,
+                            }
                             self._save()
-                            return {"state": "wait", "slot": current}
+                            if set_pass(apex, current):
+                                self._dns_changed()
+                            return {"state": "ready", "slot": current}
 
                 picked = self._pick_vpn(mac, host, now)
                 if not picked:
