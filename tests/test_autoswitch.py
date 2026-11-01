@@ -48,6 +48,17 @@ def test_local_host_shows_wechsel_page(client, monkeypatch):
     assert client.get("/vpn-wechsel/ping?host=aniworld.com").json()["cloudy"] is True
 
 
+def test_dns_query_does_not_switch_vpn(client):
+    """VPN erst auf der Wechselseite – nicht schon beim DNS-Lookup."""
+    mac = "aa:bb:cc:dd:ee:03"
+    db.upsert_devices([("testclient", mac, "phone")])
+    autoswitch.set_rule("aniworld.com", "vpn1")
+    sw = autoswitch.AutoSwitcher(settings=client.app.state.settings)
+    sw.on_query("testclient", "aniworld.com")
+    assert db.device_warp().get(mac) is None or mac not in db.device_warp()
+    assert not sw.state.get(mac)
+
+
 def test_auto_picks_vpn_and_normal_fallback(client, monkeypatch):
     mac = "aa:bb:cc:dd:ee:02"
     # TestClient erscheint als Host „testclient“
@@ -64,6 +75,10 @@ def test_auto_picks_vpn_and_normal_fallback(client, monkeypatch):
     monkeypatch.setattr(warp, "read_status", lambda s, slot, now=None: warp.SlotStatus(True, "verbunden"))
     monkeypatch.setattr(autoswitch, "vpn_slots", lambda s: ["vpn1", "vpn2"])
     monkeypatch.setattr(autoswitch, "probe_via", lambda s, slot, host, timeout=8: slot == "vpn2")
+
+    # DNS allein ändert nichts
+    sw.on_query("testclient", "aniworld.com")
+    assert mac not in db.device_warp()
 
     first = sw.status_for("testclient", "aniworld.com")
     assert first["state"] == "wait" and first["slot"] == "vpn2"

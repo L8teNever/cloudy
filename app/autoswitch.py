@@ -1,15 +1,14 @@
-"""Auto-Wechsel: Ruft ein Gerät eine bestimmte Seite auf (z. B. aniworld.com), wechselt das ganze Gerät automatisch
-aufs VPN.
+"""Auto-Wechsel: Ruft ein Gerät eine bestimmte Seite auf (z. B. aniworld.com), landet zuerst auf der
+VPN-Wechselseite; erst dort wird das VPN umgestellt (Countdown), danach Weiterleitung zur echten Seite.
 
 Zwei Arten von Regeln:
-- festes Profil (warp1, vpn2 …): wie bisher – Gerät wechselt auf dieses Profil
+- festes Profil (warp1, vpn2 …): Wechselseite schaltet auf dieses Profil
 - „auto“: nur echte VPN-Profile (vpn1, vpn2 …), die gerade verbunden sind; cloudy prüft der Reihe nach, ob die
   Seite darüber erreichbar ist, und nimmt das erste passende. Schlägt keines an, kann der Nutzer bestätigt über
   „normales Internet“ (einstellbares Profil, z. B. Fritzbox/WARP) weitergehen.
 
-Lokal (ohne Cloudflare): Die Domains zeigen per DNS auf den Pi und landen auf der VPN-Wechselseite. Sobald ein
-Profil greift, wird die DNS-Umleitung für diese Domain ausgesetzt und eine Seiten-Regel gesetzt, damit der
-Browser die echte Seite über das VPN erreicht. Nach der Wartezeit ohne Aufruf: zurück auf Standard.
+Lokal: Domains zeigen per DNS auf den Pi → Wechselseite. VPN-Wechsel passiert nur über status_for (Seite offen),
+nicht schon bei der DNS-Anfrage. Nach der Wartezeit ohne Aufruf: zurück auf Standard.
 """
 
 from __future__ import annotations
@@ -357,34 +356,24 @@ class AutoSwitcher:
             self._save()
 
     def on_query(self, ip: str, domain: str, now: float | None = None) -> None:
-        """DNS-Anfrage: festes Profil sofort umschalten; „auto“ erst auf der Wechselseite (Probe)."""
+        """DNS-Anfrage: nur „zuletzt gesehen“ pflegen.
+
+        Den VPN-Wechsel macht erst die Wechselseite über status_for – sonst wechselt das Gerät
+        schon beim DNS-Lookup und die echte Seite lädt, bevor man die Wechselseite sieht.
+        """
         now = now if now is not None else time.time()
-        slot = self.match(domain, now)
-        if not slot:
+        if not self.match(domain, now):
             return
         mac = self._mac_for(ip, now)
         if not mac or not warp.MAC_RE.match(mac):
             return
         with self._lock:
             st = self.state.get(mac)
-            if st and (st["slot"] == slot or slot == AUTO):
-                self._touch(mac, now)
+            if not st:
                 return
-            if slot == AUTO:
-                return  # Auswahl passiert in status_for / allow_normal
-            if policy.locked_for(mac):
-                return
-            current = db.device_warp().get(mac, "")
-            if st is None and current == slot:
-                return
-            if not warp.may_use(mac, slot):
-                return
-            # VPN schon anwärmen, DNS-Hijack aber behalten – sonst lädt die echte Seite
-            # ohne Wechselseite (zweite DNS-Antwort ohne address=/…/Pi).
-            db.set_device_warp(mac, slot)
             apex = rule_apex(domain) or domain.lower().rstrip(".")
-            self.state[mac] = {"slot": slot, "seen": now, "since": now, "host": apex}
-            self._save()
+            if st.get("host") == apex or _covers(st.get("host") or "", domain):
+                self._touch(mac, now)
 
     def _pick_vpn(self, mac: str, host: str, now: float) -> str | None:
         settings = self.settings
@@ -459,11 +448,15 @@ class AutoSwitcher:
                 self._save()
                 return {"state": "wait", "slot": picked}
 
-            # Festes Profil – Durchlass erst bei ready (nach SETTLE), nicht schon bei wait
-            self.on_query(ip, host, now)
-            if db.device_warp().get(mac, "") != slot:
+            # Festes Profil – Wechsel erst hier (Wechselseite pollt), nicht schon bei DNS
+            if not warp.may_use(mac, slot):
                 return {"state": "blocked", "slot": slot}
-            since = self.state.get(mac, {}).get("since", 0)
+            if not st or st.get("host") != apex or st.get("slot") != slot:
+                db.set_device_warp(mac, slot)
+                self.state[mac] = {"slot": slot, "seen": now, "since": now, "host": apex}
+                self._save()
+                return {"state": "wait", "slot": slot}
+            since = st.get("since", 0)
             if now - since < SETTLE:
                 return {"state": "wait", "slot": slot}
             if self.settings and not warp.read_status(self.settings, slot, now).connected:
