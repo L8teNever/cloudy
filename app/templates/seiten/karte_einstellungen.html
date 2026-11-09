@@ -41,6 +41,68 @@
   <button type="submit">Speichern</button>
 </form>
 
+{% set ha = params.ha %}
+<div class="card" id="ha">
+  <h2>Home Assistant</h2>
+  <div class="muted small" style="margin-bottom:.75rem">
+    Verbinde cloudy mit Home Assistant, dann steuern Rollläden, Licht, LEDs, PC und Steckdose auf der Karte die echten Geräte.
+    Den Schlüssel bekommst du in Home Assistant unter <b>Profil → Sicherheit → Langlebige Zugriffstoken</b>.
+    Er bleibt in cloudy, die Karte sieht ihn nie.
+  </div>
+  {% set hq = request.query_params %}
+  {% if hq.get('ha_fehler') %}<div style="margin-bottom:.6rem"><span class="pill bad">{{ hq.get('ha_fehler') }}</span></div>
+  {% elif hq.get('ha') == 'verbunden' %}<div style="margin-bottom:.6rem"><span class="pill on">Verbunden</span></div>
+  {% elif hq.get('ha') == 'gespeichert' %}<div style="margin-bottom:.6rem"><span class="pill on">Zuordnung gespeichert</span></div>
+  {% elif hq.get('ha') == 'getrennt' %}<div style="margin-bottom:.6rem"><span class="pill">Verbindung entfernt</span></div>{% endif %}
+
+  <form method="post" action="/karte/einstellungen/ha" style="display:grid;gap:.6rem">
+    <label class="small" style="display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,2fr);gap:.6rem;align-items:center">
+      <span><strong>Adresse</strong></span>
+      <input name="ha_url" value="{{ ha.url }}" placeholder="http://192.168.178.20:8123" required>
+    </label>
+    <label class="small" style="display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,2fr);gap:.6rem;align-items:center">
+      <span><strong>Zugriffstoken</strong></span>
+      <input name="ha_token" type="password" autocomplete="off" placeholder="{{ 'gespeichert – leer lassen zum Behalten' if ha.has_token else 'langlebiges Zugriffstoken' }}" {{ '' if ha.has_token else 'required' }}>
+    </label>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+      <button type="submit" name="aktion" value="verbinden">Verbinden &amp; testen</button>
+      {% if ha.url or ha.has_token %}<button type="submit" name="aktion" value="trennen" formnovalidate class="secondary">Trennen</button>{% endif %}
+      {% if ha.url and ha.has_token %}<span class="pill {{ 'bad' if ha.error else 'on' }}">{{ ha.error or 'Verbunden' }}</span>{% endif %}
+    </div>
+  </form>
+
+  {% if ha.url and ha.has_token and not ha.error %}
+  <form method="post" action="/karte/einstellungen/ha" style="margin-top:1.25rem">
+    <input type="hidden" name="aktion" value="zuordnen">
+    {% for kind, title, devices in ha.groups %}
+    <h3 style="margin:.9rem 0 .5rem">{{ title }}</h3>
+    <div style="display:grid;gap:.5rem">
+      {% for dev, label in devices %}
+      {% set cur = ha.map.get(dev, '') %}
+      <label class="small" style="display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,2fr);gap:.6rem;align-items:center">
+        <span><strong>{{ label }}</strong></span>
+        <select name="ha_{{ dev }}" style="width:100%">
+          <option value="">– nicht verknüpft (nur Anzeige auf der Karte) –</option>
+          {% set ns = namespace(found=false) %}
+          {% for e in ha.choices.get(kind, []) %}
+          {% if e.id == cur %}{% set ns.found = true %}{% endif %}
+          <option value="{{ e.id }}" {{ 'selected' if e.id == cur }}>{{ e.name }} · {{ e.id }} · {{ e.state }}</option>
+          {% endfor %}
+          {% if cur and not ns.found %}<option value="{{ cur }}" selected>{{ cur }} (gerade nicht in Home Assistant)</option>{% endif %}
+        </select>
+      </label>
+      {% endfor %}
+    </div>
+    {% endfor %}
+    <div class="muted small" style="margin:.75rem 0">
+      Rollläden ohne Positionsangabe fahren nur ganz auf oder ganz zu. Bei den LEDs gehen Farbe und Helligkeit mit, wenn das Licht Farben kann.
+      Schalten auf der Karte braucht das cloudy-Passwort, falls eins gesetzt ist.
+    </div>
+    <button type="submit">Zuordnung speichern</button>
+  </form>
+  {% endif %}
+</div>
+
 <div class="card">
   <h2>Eigene Domain für die Karte</h2>
   <div class="muted small">

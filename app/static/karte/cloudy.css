@@ -107,3 +107,13 @@
     padding: 14px;
   }
 }
+
+/* Meldung, wenn Home Assistant nicht schalten konnte */
+#ha-toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px);
+  max-width: min(92vw, 440px); padding: 10px 16px; border-radius: 14px;
+  background: rgba(30, 30, 34, .96); color: #fca5a5; border: 1px solid rgba(239, 68, 68, .45);
+  font: 600 13px/1.35 system-ui, sans-serif; box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
+  opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 9999;
+}
+#ha-toast.visible { opacity: 1; transform: translate(-50%, 0); }

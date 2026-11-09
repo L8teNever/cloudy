@@ -150,6 +150,7 @@
       const data = await r.json();
       const screens = (data && data.screens) || {};
       let changed = false;
+      assignedScreens = new Set(Object.keys(screens));
       (window.screensRegistry || []).forEach(scr => {
         if (!(scr.id in screens)) return;
         const on = Boolean(screens[scr.id]);
@@ -343,6 +344,147 @@
   }
 
   window.addEventListener('load', () => { initNetBadges(); requestAnimationFrame(placeNetBadges); });
+
+  // ---------------------------------------------------------------- Home Assistant
+  // Geräte, die in cloudy (Einstellungen → 3D-Karte → Home Assistant) einer Entität zugeordnet sind, schalten echt:
+  // Bedienen auf der Karte -> /karte/ha -> Home Assistant; der echte Zustand kommt alle paar Sekunden zurück.
+  let ha = { configured: false, devices: {} };
+  let haApplying = false;
+  let haTimer = null;
+  const haHold = {};   // Gerät -> bis wann Rückmeldungen ignoriert werden (gerade selbst geschaltet)
+  const haDelay = {};  // Gerät -> Timer zum Bündeln (Schieberegler)
+  const LED_DEV = { simon: 'led-simon', schlaf: 'led-schlaf' };
+  const ledObj = t => (t === 'schlaf' ? window.schlafCeilingLed : window.simonDeskLed);
+  const linked = dev => Boolean(ha.devices[dev]);
+  let assignedScreens = new Set();
+
+  function haToast(text) {
+    let el = document.getElementById('ha-toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'ha-toast';
+      document.body.appendChild(el);
+    }
+    el.textContent = text;
+    el.classList.add('visible');
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.classList.remove('visible'), 4500);
+  }
+
+  function haSend(device, action, value, delay = 0) {
+    if (haApplying || !linked(device)) return;
+    haHold[device] = Date.now() + 10000;
+    clearTimeout(haDelay[device]);
+    haDelay[device] = setTimeout(async () => {
+      try {
+        const r = await fetch('/karte/ha', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ device, action, value })
+        });
+        if (r.ok) {
+          haHold[device] = Date.now() + 4000;
+        } else {
+          let data = null;
+          try { data = await r.json(); } catch (e) { /* kein JSON */ }
+          haHold[device] = 0;
+          haToast(r.status === 401 ? 'Zum Schalten brauchst du das cloudy-Passwort.' : (data && (data.error || data.detail)) || 'Home Assistant hat nicht reagiert.');
+        }
+      } catch (e) {
+        haHold[device] = 0;
+        haToast('cloudy ist gerade nicht erreichbar.');
+      }
+      setTimeout(syncHa, 1200);
+    }, delay);
+  }
+
+  function after(name, fn) {
+    const orig = window[name];
+    if (typeof orig !== 'function') return;
+    window[name] = function () {
+      const res = orig.apply(this, arguments);
+      try { fn.apply(this, arguments); } catch (e) { /* Karte läuft weiter */ }
+      return res;
+    };
+  }
+
+  after('setActiveShutterPercent', (pct, shId) => {
+    const id = shId || (typeof activeShutterId !== 'undefined' ? activeShutterId : null);
+    const sh = (window.shuttersRegistry || []).find(s => s.id === id);
+    if (sh) haSend(sh.id, 'position', sh.targetPercent, 450);
+  });
+  after('toggleSimonRoomLight', () => haSend('light-simon', window.simonRoomLight.isOn ? 'on' : 'off'));
+  after('toggleSchlafRoomLight', () => haSend('light-schlaf', window.schlafRoomLight.isOn ? 'on' : 'off'));
+  after('toggleSimonPc', () => haSend('pc-simon', window.simonPc.isOn ? 'on' : 'off'));
+  after('toggleKuecheSocket', () => haSend('plug-kueche', window.kuecheSocket.isOn ? 'on' : 'off'));
+  const sendLed = extra => {
+    const t = typeof activeLedTarget !== 'undefined' ? activeLedTarget : 'simon';
+    const led = ledObj(t);
+    if (!led) return;
+    haSend(LED_DEV[t], led.isOn ? 'on' : 'off', led.isOn ? extra(led) : null, 300);
+  };
+  after('toggleSpecificLed', () => sendLed(() => null));
+  after('toggleSimonDeskLed', () => sendLed(() => null));
+  after('setSimonDeskLedColor', () => sendLed(led => ({ color: led.colorHex })));
+  after('setSimonDeskLedBrightness', () => sendLed(led => ({ brightness: led.brightness })));
+
+  function applyHa() {
+    const now = Date.now();
+    const d = ha.devices || {};
+    const fresh = id => d[id] && d[id].available && !(haHold[id] > now);
+    haApplying = true;
+    try {
+      (window.shuttersRegistry || []).forEach(sh => {
+        const st = d[sh.id];
+        if (fresh(sh.id) && !st.moving && typeof st.percent === 'number' && sh.targetPercent !== st.percent) sh.targetPercent = st.percent;
+      });
+      let lights = false;
+      [['light-simon', window.simonRoomLight], ['light-schlaf', window.schlafRoomLight]].forEach(([id, obj]) => {
+        if (obj && fresh(id) && obj.isOn !== d[id].on) { obj.isOn = d[id].on; lights = true; }
+      });
+      Object.entries(LED_DEV).forEach(([t, id]) => {
+        const led = ledObj(t);
+        if (!led || !fresh(id)) return;
+        const st = d[id];
+        if (led.isOn !== st.on) { led.isOn = st.on; lights = true; }
+        if (st.brightness && led.brightness !== st.brightness) { led.brightness = st.brightness; lights = true; }
+        if (st.color && String(led.colorHex).toLowerCase() !== st.color) { led.colorHex = st.color; led.colorName = 'Eigene Farbe'; lights = true; }
+      });
+      if (lights && typeof updateSimonLightVisuals === 'function') updateSimonLightVisuals();
+      const pc = window.simonPc;
+      if (pc && fresh('pc-simon') && pc.isOn !== d['pc-simon'].on) {
+        pc.isOn = d['pc-simon'].on;
+        (window.screensRegistry || []).forEach(scr => {
+          if ((scr.id === 'mon-simon-1' || scr.id === 'mon-simon-2') && !assignedScreens.has(scr.id)) scr.isOn = pc.isOn;
+        });
+        if (typeof updateSimonPcVisuals === 'function') updateSimonPcVisuals();
+        if (typeof updateAllScreensVisuals === 'function') updateAllScreensVisuals();
+      }
+      const sock = window.kuecheSocket;
+      if (sock && fresh('plug-kueche') && sock.isOn !== d['plug-kueche'].on) {
+        sock.isOn = d['plug-kueche'].on;
+        if (typeof updateKuecheSocketVisuals === 'function') updateKuecheSocketVisuals();
+      }
+    } finally {
+      haApplying = false;
+    }
+  }
+
+  async function syncHa() {
+    try {
+      const r = await fetch('/karte/ha', { cache: 'no-store' });
+      if (!r.ok) return;
+      ha = await r.json();
+      if (!ha || !ha.devices) ha = { configured: false, devices: {} };
+      applyHa();
+      if (!Object.keys(ha.devices).length) haStop(); // nichts verknüpft -> nicht weiter fragen
+    } catch (e) { /* offline – Zustand bleibt */ }
+  }
+  function haStart() { if (!haTimer) { syncHa(); haTimer = setInterval(syncHa, 8000); } }
+  function haStop() { if (haTimer) { clearInterval(haTimer); haTimer = null; } }
+  document.addEventListener('visibilitychange', () => (document.hidden ? haStop() : haStart()));
+  window.addEventListener('load', () => { if (!document.hidden) haStart(); });
 
   installRouting();
 })();

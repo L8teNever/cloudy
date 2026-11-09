@@ -17,7 +17,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import adblock, autoswitch, blocklist, certs, db, dnsprofile, fritz, karte, localdomain, policy, slots, stats, tunnel, views, warp, zertwechsel
+from . import adblock, autoswitch, blocklist, certs, db, dnsprofile, fritz, homeassistant, karte, localdomain, policy, slots, stats, tunnel, views, warp, zertwechsel
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -264,7 +264,7 @@ async def redirect_middleware(request: Request, call_next):
         if request.url.scheme == "http" and settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
             port = "" if settings.https_port == 443 else f":{settings.https_port}"
             return RedirectResponse(f"https://{raw_host}{port}{path}", status_code=302)
-        if path in ("/healthz", "/favicon.ico", "/karte/status", "/karte/internet") or path.startswith("/static/"):
+        if path in ("/healthz", "/favicon.ico", "/karte/status", "/karte/internet", "/karte/ha") or path.startswith("/static/"):
             return await call_next(request)
         raum = path.strip("/")
         if path == "/karte" or path.startswith("/karte/"):  # alte Links auf /karte bzw. /karte/<raum>
@@ -272,7 +272,7 @@ async def redirect_middleware(request: Request, call_next):
             if not raum:
                 return RedirectResponse("/", status_code=302)
             return RedirectResponse(f"/{raum}/", status_code=302) if karte.valid_path(raum) else Response("Nicht gefunden.", status_code=404)
-        if raum.split("/")[0] in ("einstellungen", "status", "internet") or (raum and not karte.valid_path(raum)):
+        if raum.split("/")[0] in ("einstellungen", "status", "internet", "ha") or (raum and not karte.valid_path(raum)):
             return Response("Nicht gefunden.", status_code=404)
         request.scope["path"] = f"/karte/{raum}" if raum else "/karte"
         request.state.karte_base = ""
@@ -633,10 +633,71 @@ async def karte_einstellungen(request: Request):
     status = await run_in_threadpool(karte.status, online, devs)
     karte_hosts = await run_in_threadpool(localdomain.karte_domains)
     karte_href = (await run_in_threadpool(_local_base, karte_hosts[0], request.app.state.settings) + "/") if karte_hosts else "/karte/"
+    ha = await run_in_threadpool(_ha_settings_context)
     return await views.page(
         request, "seiten/karte_einstellungen.html", "3D-Karte", "/einstellungen", [],
-        screens=karte.SCREENS, assign=assign, choices=choices, screen_status=status, karte_href=karte_href,
+        screens=karte.SCREENS, assign=assign, choices=choices, screen_status=status, karte_href=karte_href, ha=ha,
     )
+
+
+def _ha_settings_context() -> dict:
+    """Home Assistant in den Karten-Einstellungen: Verbindung, Entitäten zur Auswahl, aktuelle Zuordnung."""
+    url, token = homeassistant.config()
+    ctx = {"url": url, "has_token": bool(token), "error": "", "choices": {}, "map": homeassistant.mapping(),
+           "groups": [(kind, homeassistant.KIND_TITLES[kind], [(d, label) for d, label, k in homeassistant.DEVICES if k == kind])
+                      for kind in homeassistant.DOMAINS]}
+    if url and token:
+        try:
+            ctx["choices"] = homeassistant.entity_choices(homeassistant.states())
+        except homeassistant.HAError as exc:
+            ctx["error"] = str(exc)
+    return ctx
+
+
+@app.post("/karte/einstellungen/ha", dependencies=[Depends(require_password)])
+async def karte_ha_einstellungen(request: Request):
+    """Home-Assistant-Verbindung speichern/trennen bzw. Geräte der Karte Entitäten zuordnen."""
+    form = await request.form()
+    aktion = str(form.get("aktion") or "")
+    if aktion == "trennen":
+        await run_in_threadpool(homeassistant.forget)
+        return RedirectResponse("/karte/einstellungen?ha=getrennt#ha", status_code=303)
+    if aktion == "verbinden":
+        try:
+            await run_in_threadpool(homeassistant.save_config, str(form.get("ha_url") or ""), str(form.get("ha_token") or ""))
+        except homeassistant.HAError as exc:
+            return RedirectResponse(f"/karte/einstellungen?ha_fehler={quote(str(exc))}#ha", status_code=303)
+        err = await run_in_threadpool(homeassistant.check)
+        if err:
+            return RedirectResponse(f"/karte/einstellungen?ha_fehler={quote(err)}#ha", status_code=303)
+        return RedirectResponse("/karte/einstellungen?ha=verbunden#ha", status_code=303)
+    data = {dev: str(form.get(f"ha_{dev}") or "") for dev, _, _ in homeassistant.DEVICES}
+    await run_in_threadpool(homeassistant.save_mapping, data)
+    return RedirectResponse("/karte/einstellungen?ha=gespeichert#ha", status_code=303)
+
+
+@app.get("/karte/ha")
+async def karte_ha_status():
+    """Zustand der Home-Assistant-Geräte auf der Karte (ohne Token, nur zugeordnete Entitäten)."""
+    return await run_in_threadpool(homeassistant.karte_state)
+
+
+@app.post("/karte/ha", dependencies=[Depends(require_password)])
+async def karte_ha_befehl(request: Request):
+    """Befehl von der Karte an Home Assistant: {device, action: on|off|position|stop, value}."""
+    try:
+        data = await request.json()
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="JSON erwartet")
+    try:
+        await run_in_threadpool(
+            homeassistant.command, str(data.get("device") or ""), str(data.get("action") or ""), data.get("value")
+        )
+    except homeassistant.HAError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return {"ok": True}
 
 
 @app.post("/karte/einstellungen", dependencies=[Depends(require_password)])
