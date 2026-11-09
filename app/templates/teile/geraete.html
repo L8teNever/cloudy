@@ -38,8 +38,21 @@
           <th>Zuletzt</th>
         </tr>
       </thead>
+      {% set cols = 11 if warp else 10 %}
+      {% for sec in sections %}
       <tbody>
-        {% for d in devices %}
+        {% if sec.group or sections | length > 1 %}
+        <tr class="section-row">
+          <td colspan="{{ cols }}" style="padding:.9rem .5rem .4rem;border-bottom:2px solid {{ sec.group.color if sec.group else 'var(--line, #e5e7eb)' }}">
+            <span style="display:inline-flex;align-items:center;gap:.5rem;font-weight:700">
+              <span style="width:.7rem;height:.7rem;border-radius:50%;background:{{ sec.group.color if sec.group else '#94a3b8' }}"></span>
+              {{ sec.group.name if sec.group else 'Ohne Gruppe' }}
+              <span class="muted small" style="font-weight:400">{{ sec.devices | length }} Gerät{{ 'e' if sec.devices | length != 1 }}</span>
+            </span>
+          </td>
+        </tr>
+        {% endif %}
+        {% for d in sec.devices %}
         <tr>
           <td>
             {% if d.ip in online or d.fritz_active %}
@@ -54,7 +67,9 @@
             {% else %}
             <strong>{{ d.hostname or d.mac }}</strong>
             {% endif %}
-            {% if d.fritz_name and d.lease_name and d.lease_name != d.fritz_name %}
+            {% if d.custom_name and d.original_name %}
+            <div class="muted small" title="Name aus FRITZ!Box/DHCP">{{ d.original_name }}</div>
+            {% elif d.fritz_name and d.lease_name and d.lease_name != d.fritz_name %}
             <div class="muted small" title="Name, den das Gerät selbst meldet">{{ d.lease_name }}</div>
             {% endif %}
             {% if d.fritz_only %}
@@ -133,9 +148,10 @@
           <td class="muted small">{{ fmt_time(d.last_seen) }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="{{ 11 if warp else 10 }}" class="muted">Noch keine Geräte erfasst.</td></tr>
+        <tr><td colspan="{{ cols }}" class="muted small">{{ 'Noch keine Geräte – zuordnen beim Gerät oder über den Assistenten.' if sec.group else 'Noch keine Geräte erfasst.' }}</td></tr>
         {% endfor %}
       </tbody>
+      {% endfor %}
     </table>
   </div>
 </div>

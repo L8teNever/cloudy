@@ -9,6 +9,7 @@
   <title>Zuhause – 3D Grundriss</title>
   <link rel="stylesheet" href="/static/karte/karte.css?v=__V__">
   <link rel="stylesheet" href="/static/karte/cloudy.css?v=__V__">
+  <link rel="stylesheet" href="/static/karte/m3.css?v=__V__">
   <meta name="karte-base" content="__BASE__">
 </head>
 
@@ -71,11 +72,11 @@
 
     <!-- Quick Presets below slider -->
     <div class="shutter-presets">
-      <button class="shutter-preset-btn" onclick="setActiveShutterPercent(0)" title="Komplett öffnen (0%)">Auf (0%)</button>
+      <button class="shutter-preset-btn" onclick="setActiveShutterPercent(0)" title="Komplett öffnen (0%)">Auf</button>
       <button class="shutter-preset-btn" onclick="setActiveShutterPercent(25)">25%</button>
       <button class="shutter-preset-btn" onclick="setActiveShutterPercent(50)">50%</button>
       <button class="shutter-preset-btn" onclick="setActiveShutterPercent(75)">75%</button>
-      <button class="shutter-preset-btn" onclick="setActiveShutterPercent(100)" title="Komplett schließen (100%)">Zu (100%)</button>
+      <button class="shutter-preset-btn" onclick="setActiveShutterPercent(100)" title="Komplett schließen (100%)">Zu</button>
     </div>
   </div>
 
@@ -177,6 +178,9 @@
 
   <!-- Top Bar (Centered Title + Settings Dropdown on Right with all Global & Room Controls) -->
   <div id="room-view-bar">
+    <button class="m3-back" onclick="exitRoomView()" title="Zurück zur Übersicht" aria-label="Zurück zur Übersicht">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M19 12H5M11 6l-6 6 6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
     <span id="room-view-title">Übersicht</span>
     <div class="room-header-right">
       <button class="door-pill" id="room-settings-btn" onclick="toggleRoomHeaderDropdown(event)">

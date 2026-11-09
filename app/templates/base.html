@@ -12,7 +12,7 @@
     <div class="bar">
       <a class="logo" href="/" data-nav><img class="logo-icon" src="/static/cloudy.svg" width="32" height="32" alt=""><span>cloudy</span></a>
       <nav>
-        {% for href, name in [("/", "Übersicht"), ("/geraete", "Geräte"), ("/gruppen", "Gruppen"), ("/statistik", "Statistik"), ("/schutz", "Schutz"), ("/vpn", "VPN"), ("/fritzbox", "FRITZ!Box"), ("/leistung", "Leistung"), ("/einstellungen", "Einstellungen")] %}
+        {% for href, name in [("/", "Übersicht"), ("/geraete", "Geräte"), ("/gruppen", "Gruppen"), ("/assistent", "Assistent"), ("/statistik", "Statistik"), ("/schutz", "Schutz"), ("/vpn", "VPN"), ("/fritzbox", "FRITZ!Box"), ("/leistung", "Leistung"), ("/einstellungen", "Einstellungen")] %}
         <a href="{{ href }}" data-nav class="{{ 'active' if active == href }}">{{ name }}</a>
         {% endfor %}
       </nav>
@@ -148,6 +148,9 @@
       if (form.method.toLowerCase() !== "post" || form.hasAttribute("data-noajax")) return;
       e.preventDefault();
       if (form.dataset.confirm && !confirm(form.dataset.confirm)) return;
+      // Gedrückten Knopf mitschicken (name/value, z. B. aktion=loeschen) – vor dem Deaktivieren einsammeln.
+      let fd;
+      try { fd = new FormData(form, e.submitter || null); } catch (_) { fd = new FormData(form); }
       const buttons = form.querySelectorAll("button");
       buttons.forEach(b => b.disabled = true);
       // Spinner im geklickten Knopf – aber erst, wenn es spürbar dauert (kein Flackern bei schnellen Antworten).
@@ -156,7 +159,7 @@
       const spin = btn && setTimeout(() => { btn.style.minWidth = btn.offsetWidth + "px"; btn.innerHTML = '<span class="lb-spinner"></span>' + btn.textContent.trim(); }, 180);
       bar.start();
       try {
-        const res = await fetch(form.action, { method: "POST", body: new URLSearchParams(new FormData(form)) });
+        const res = await fetch(form.action, { method: "POST", body: new URLSearchParams(fd) });
         const err = new URL(res.url).searchParams.get("fehler");
         if (!res.ok) {
           let msg = "Fehler";

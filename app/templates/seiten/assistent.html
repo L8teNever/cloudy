@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+  .as-wrap { display: grid; gap: 1rem; }
+  .as-chat { display: flex; flex-direction: column; min-height: 60vh; }
+  .as-log { flex: 1; display: flex; flex-direction: column; gap: .75rem; overflow-y: auto; max-height: 62vh; padding: .25rem .1rem 1rem; }
+  .as-msg { max-width: min(46rem, 88%); padding: .7rem 1rem; border-radius: 18px; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; }
+  .as-msg.user { align-self: flex-end; background: var(--brand); color: #fff; border-bottom-right-radius: 6px; }
+  .as-msg.model { align-self: flex-start; background: var(--brand-soft); border: 1px solid var(--brand-border); border-bottom-left-radius: 6px; }
+  .as-msg.error { align-self: flex-start; background: var(--bad-soft); color: var(--bad); border: 1px solid var(--bad-border); }
+  .as-changes { margin-top: .5rem; padding-top: .5rem; border-top: 1px solid var(--brand-border); font-size: .85rem; }
+  .as-changes div::before { content: "✓ "; color: var(--good); font-weight: 700; }
+  .as-input { display: flex; gap: .5rem; align-items: flex-end; margin-top: .5rem; }
+  .as-input textarea { flex: 1; resize: none; min-height: 2.8rem; max-height: 10rem; padding: .7rem .9rem; border-radius: 14px; font: inherit; }
+  .as-chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .5rem; }
+  .as-chip { border: 1px solid var(--brand-border); background: transparent; color: var(--brand-ink); border-radius: 999px; padding: .3rem .8rem; font-size: .82rem; cursor: pointer; }
+  .as-chip:hover { background: var(--brand-soft); }
+  .as-typing { align-self: flex-start; color: var(--muted, #64748b); font-size: .9rem; }
+  .as-empty { margin: auto; text-align: center; color: var(--muted, #64748b); max-width: 30rem; }
+</style>
+
+<div class="as-wrap">
+  <details class="card" id="as-settings" {{ '' if params.has_key else 'open' }}>
+    <summary style="cursor:pointer;font-weight:700">
+      Gemini {% if params.has_key %}<span class="pill on" style="margin-left:.4rem">verbunden · {{ params.model }}</span>{% else %}<span class="pill warn" style="margin-left:.4rem">noch kein Schlüssel</span>{% endif %}
+    </summary>
+    {% set q = request.query_params %}
+    {% if q.get('fehler') %}<div style="margin-top:.6rem"><span class="pill bad">{{ q.get('fehler') }}</span></div>{% endif %}
+    <p class="muted small">
+      Den API-Schlüssel bekommst du kostenlos im <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>.
+      Er bleibt in cloudy und geht nur an Google.
+    </p>
+    <form method="post" action="/assistent/einstellungen" data-noajax style="display:grid;gap:.6rem;max-width:40rem">
+      <label class="small"><strong>API-Schlüssel</strong>
+        <input name="key" type="password" autocomplete="off" style="display:block;width:100%"
+               placeholder="{{ 'gespeichert – leer lassen zum Behalten' if params.has_key else 'AIza…' }}" {{ '' if params.has_key else 'required' }}>
+      </label>
+      <label class="small"><strong>Modell</strong>
+        <select name="model" id="as-model" style="display:block;width:100%">
+          <option value="{{ params.model }}" selected>{{ params.model }}</option>
+        </select>
+        <span class="muted small" id="as-model-note">{{ 'Liste wird geladen …' if params.has_key else 'Nach dem Speichern des Schlüssels kannst du aus allen Modellen wählen.' }}</span>
+      </label>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+        <button type="submit" name="aktion" value="speichern">Speichern</button>
+        {% if params.has_key %}<button type="submit" name="aktion" value="trennen" class="secondary" formnovalidate>Schlüssel entfernen</button>{% endif %}
+      </div>
+    </form>
+  </details>
+
+  <div class="card as-chat">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin-bottom:.5rem">
+      <h2 style="margin:0">Assistent</h2>
+      <button type="button" class="secondary" id="as-clear" style="padding:.25rem .7rem">Neuer Chat</button>
+    </div>
+    <div class="as-log" id="as-log"></div>
+    <div class="as-chips" id="as-chips">
+      <button type="button" class="as-chip">Sortier meine Geräte in sinnvolle Gruppen</button>
+      <button type="button" class="as-chip">Gib Geräten mit kryptischen Namen bessere Namen</button>
+      <button type="button" class="as-chip">Welche Geräte sind gerade online?</button>
+    </div>
+    <form class="as-input" id="as-form" data-noajax>
+      <textarea id="as-text" rows="1" placeholder="{{ 'Schreib dem Assistenten …' if params.has_key else 'Erst oben den Gemini-Schlüssel eintragen' }}" {{ '' if params.has_key else 'disabled' }}></textarea>
+      <button type="submit" id="as-send" {{ '' if params.has_key else 'disabled' }}>Senden</button>
+    </form>
+    <div class="muted small" style="margin-top:.4rem">Der Assistent kann Geräte benennen und sortieren, Profile pro Gerät und Gruppe setzen, Auto-Wechsel für Domains einrichten und auswerten, was ein Gerät tut. Dafür gehen Gerätedaten und aufgerufene Domains an Google. Sperren ändert er nicht.</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const STORE = "cloudy-assistent";
+  const log = document.getElementById("as-log");
+  const form = document.getElementById("as-form");
+  const text = document.getElementById("as-text");
+  const send = document.getElementById("as-send");
+  if (!log || !form) return;
+  let msgs = [];
+  try { msgs = JSON.parse(sessionStorage.getItem(STORE) || "[]"); } catch (_) { msgs = []; }
+  let busy = false;
+
+  const esc = t => String(t).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const fmt = t => esc(t).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`([^`]+)`/g, "<code>$1</code>");
+
+  function render(typing) {
+    if (!msgs.length && !typing) {
+      log.innerHTML = '<div class="as-empty">Frag mich etwas zu deinem Heimnetz oder gib mir eine Aufgabe, z. B. <b>„Sortier meine Geräte in Gruppen“</b>.</div>';
+    } else {
+      log.innerHTML = msgs.map(m => {
+        const changes = (m.changes || []).length ? `<div class="as-changes">${m.changes.map(c => `<div>${esc(c)}</div>`).join("")}</div>` : "";
+        return `<div class="as-msg ${m.role === "user" ? "user" : (m.error ? "error" : "model")}">${fmt(m.text)}${changes}</div>`;
+      }).join("") + (typing ? '<div class="as-typing">Assistent denkt nach …</div>' : "");
+    }
+    log.scrollTop = log.scrollHeight;
+    sessionStorage.setItem(STORE, JSON.stringify(msgs.slice(-40)));
+  }
+
+  async function ask(q) {
+    q = q.trim();
+    if (!q || busy || text.disabled) return;
+    busy = true; send.disabled = true;
+    msgs.push({ role: "user", text: q });
+    text.value = ""; grow();
+    render(true);
+    try {
+      const history = msgs.filter(m => !m.error).map(m => ({ role: m.role, text: m.text }));
+      const r = await fetch("/assistent/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: history }) });
+      const data = await r.json().catch(() => null);
+      if (r.ok && data && data.ok) {
+        msgs.push({ role: "model", text: data.reply, changes: data.changes || [] });
+        if ((data.changes || []).length && window.cloudyRefresh) window.cloudyRefresh();
+      } else {
+        msgs.push({ role: "model", error: true, text: (data && (data.error || data.detail)) || "Das hat nicht geklappt." });
+      }
+    } catch (_) {
+      msgs.push({ role: "model", error: true, text: "cloudy ist gerade nicht erreichbar." });
+    } finally {
+      busy = false; send.disabled = false; render(false); text.focus();
+    }
+  }
+
+  function grow() { text.style.height = "auto"; text.style.height = Math.min(text.scrollHeight, 160) + "px"; }
+  text.addEventListener("input", grow);
+  text.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(text.value); } });
+  form.addEventListener("submit", e => { e.preventDefault(); ask(text.value); });
+  document.querySelectorAll(".as-chip").forEach(c => c.addEventListener("click", () => ask(c.textContent)));
+  document.getElementById("as-clear").addEventListener("click", () => { msgs = []; render(false); });
+  render(false);
+
+  // Modellliste von Google holen
+  const sel = document.getElementById("as-model");
+  const note = document.getElementById("as-model-note");
+  {% if params.has_key %}
+  fetch("/assistent/modelle").then(r => r.json()).then(data => {
+    if (!data.ok) { note.textContent = data.error || "Modellliste nicht verfügbar."; return; }
+    const cur = sel.value;
+    sel.innerHTML = data.models.map(m => `<option value="${esc(m.id)}" ${m.id === cur ? "selected" : ""}>${esc(m.label)} · ${esc(m.id)}</option>`).join("");
+    if (!data.models.some(m => m.id === cur)) sel.insertAdjacentHTML("afterbegin", `<option value="${esc(cur)}" selected>${esc(cur)} (gespeichert)</option>`);
+    note.textContent = `${data.models.length} Modelle verfügbar.`;
+  }).catch(() => { note.textContent = "Modellliste nicht verfügbar."; });
+  {% endif %}
+})();
+</script>
+{% endblock %}

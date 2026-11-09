@@ -1,4 +1,46 @@
 {% extends "base.html" %}
 {% block content %}
 {% include "teile/gruppen.html" %}
+
+{% set vg = view_groups %}
+<div class="card" id="uebersicht">
+  <h2 style="margin:0 0 .25rem">Übersichtsgruppen</h2>
+  <p class="muted small" style="margin-top:0">
+    Nur zum Ordnen: Die Geräteliste zeigt die Geräte nach diesen Gruppen sortiert. Am Netz ändern sie nichts
+    (keine Sperren, kein VPN). Geräte legst du beim Gerät selbst hinein, oder du sagst dem
+    <a href="/assistent" data-nav>Assistenten</a> z.&nbsp;B. „Sortier meine Geräte in Gruppen“.
+  </p>
+  <form method="post" action="/uebersichtsgruppen" style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:end;margin:1rem 0">
+    <label class="small">Name
+      <input name="name" required maxlength="40" placeholder="z. B. Fernseher" style="display:block;min-width:10rem">
+    </label>
+    <label class="small">Farbe
+      <select name="color" style="display:block">
+        {% for c in group_colors %}<option value="{{ c }}" style="background:{{ c }}">{{ c }}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="submit">Anlegen</button>
+  </form>
+
+  {% if vg %}
+  <div style="display:grid;gap:.5rem">
+    {% for g in vg %}
+    <form method="post" action="/uebersichtsgruppen/{{ g.id }}" style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;padding:.5rem .75rem;border-radius:12px;border-left:6px solid {{ g.color }};background:var(--brand-soft)">
+      <input name="name" value="{{ g.name }}" maxlength="40" required style="min-width:10rem">
+      <select name="color" aria-label="Farbe">
+        {% for c in group_colors %}<option value="{{ c }}" {{ 'selected' if c == g.color }} style="background:{{ c }}">{{ c }}</option>{% endfor %}
+      </select>
+      <span class="muted small">{{ g.members | length }} Gerät{{ 'e' if g.members | length != 1 }}</span>
+      <span style="flex:1"></span>
+      <button type="submit" name="aktion" value="hoch" class="secondary" title="Nach oben" {{ 'disabled' if loop.first }}>↑</button>
+      <button type="submit" name="aktion" value="runter" class="secondary" title="Nach unten" {{ 'disabled' if loop.last }}>↓</button>
+      <button type="submit" name="aktion" value="speichern" class="secondary">Speichern</button>
+      <button type="submit" name="aktion" value="loeschen" class="danger" formnovalidate onclick="return confirm('Gruppe löschen? Die Geräte bleiben, nur ohne Gruppe.')">Löschen</button>
+    </form>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="muted small">Noch keine Übersichtsgruppen.</div>
+  {% endif %}
+</div>
 {% endblock %}

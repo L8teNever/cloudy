@@ -19,6 +19,28 @@
       <div class="muted small mono">
         IP: {{ device.ip }}{% if device.mac %} · MAC: {{ device.mac }}{% endif %}{% if device.fritz_name and device.lease_name and device.lease_name != device.fritz_name %} · meldet sich als {{ device.lease_name }}{% endif %}
       </div>
+      {% if device_key %}
+      <div style="margin-top:.6rem;display:flex;flex-wrap:wrap;gap:.5rem;align-items:center">
+        <form method="post" action="/geraete/name" class="inline" style="display:flex;gap:.35rem;align-items:center">
+          <input type="hidden" name="key" value="{{ device_key }}">
+          <input type="hidden" name="back" value="/geraete/{{ device.ip | urlencode }}">
+          <input name="name" value="{{ device.custom_name or '' }}" maxlength="60" placeholder="{{ device.original_name or device.hostname or 'Eigener Name' }}" aria-label="Eigener Name" style="min-width:12rem">
+          <button type="submit" class="secondary" style="padding:.25rem .6rem">Name speichern</button>
+        </form>
+        <form method="post" action="/geraete/uebersichtsgruppe" class="inline">
+          <input type="hidden" name="key" value="{{ device_key }}">
+          <input type="hidden" name="back" value="/geraete/{{ device.ip | urlencode }}">
+          <label class="small muted">Übersichtsgruppe
+            <select name="gruppe" data-autosubmit>
+              <option value="">– ohne –</option>
+              {% for g in view_groups %}<option value="{{ g.id }}" {{ 'selected' if view_group and view_group.id == g.id }}>{{ g.name }}</option>{% endfor %}
+            </select>
+          </label>
+        </form>
+        {% if not view_groups %}<a href="/gruppen#uebersicht" data-nav class="small">Übersichtsgruppe anlegen</a>{% endif %}
+      </div>
+      {% if device.custom_name and device.original_name %}<div class="muted small" style="margin-top:.25rem">Leer speichern = wieder „{{ device.original_name }}“</div>{% endif %}
+      {% endif %}
       {% if device.connection %}
       <div style="margin-top:.4rem">
         <span class="pill {{ 'on' if device.connection.type == 'WLAN' else '' }}" style="font-size:.82rem" title="{{ device.connection.full_details }}">

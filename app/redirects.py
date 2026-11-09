@@ -26,6 +26,29 @@ def normalize_source(text: str) -> str:
     return host
 
 
+def parse_domains(text: str) -> tuple[list[str], list[str]]:
+    """Mehrere Seiten auf einmal: mit Komma, Semikolon, Leerzeichen oder Zeilenumbruch getrennt.
+    Rückgabe: (gültige, normalisiert und ohne Doppelte), (ungültige Eingaben)."""
+    ok: list[str] = []
+    bad: list[str] = []
+    for raw in re.split(r"[\s,;]+", text or ""):
+        # "*.netflix.com", ".netflix.com", "*netflix.com" = netflix.com – Subdomains sind ohnehin immer dabei.
+        raw = re.sub(r"^(\*\.?|\.)+", "", raw.strip())
+        if not raw:
+            continue
+        if "*" in raw:
+            bad.append(raw)  # Platzhalter nur vorne möglich (dnsmasq kennt keine Muster in der Mitte)
+            continue
+        try:
+            domain = normalize_source(raw)
+        except ValueError:
+            bad.append(raw)
+            continue
+        if domain not in ok:
+            ok.append(domain)
+    return ok, bad
+
+
 def normalize_target(text: str) -> str:
     """'wikipedia.org' -> 'https://wikipedia.org'. ValueError bei leerer/ungültiger Adresse."""
     text = text.strip()

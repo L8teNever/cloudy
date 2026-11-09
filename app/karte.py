@@ -87,7 +87,7 @@ def status(online_ips: frozenset[str], devices: list[dict] | None = None) -> dic
 def _version() -> str:
     """Kurzer Hash über die Karten-Dateien, damit der Browser nach einem Update neu lädt."""
     h = hashlib.sha1()
-    for name in ("index.html", "karte.css", "karte.js", "cloudy.css", "cloudy.js"):
+    for name in ("index.html", "karte.css", "karte.js", "cloudy.css", "cloudy.js", "m3.css"):
         h.update((KARTE_DIR / name).read_bytes())
     return h.hexdigest()[:10]
 

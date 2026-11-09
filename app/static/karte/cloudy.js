@@ -80,6 +80,7 @@
     if (location.pathname !== want) history.pushState(null, '', want);
     const room = (typeof roomLabels !== 'undefined' ? roomLabels : []).find(r => r.id === currentRoom());
     document.title = room ? `${room.text} – Zuhause` : 'Zuhause – 3D Grundriss';
+    document.body.classList.toggle('in-room', Boolean(room));
   }
 
   function track(name) {

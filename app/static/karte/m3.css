@@ -1,0 +1,577 @@
+/* =============================================================================
+   Material 3 Expressive (Android 16) für die Oberfläche der Karte.
+   Nur Bedienelemente: Leiste oben, Raum-Chips, Geräte-Kacheln, Menüs, Sheets.
+   Die 3D-Karte selbst bleibt unverändert. Lädt nach karte.css und cloudy.css.
+   ============================================================================= */
+:root {
+  /* Dunkles Farbschema (Seed: Google-Blau) */
+  --md-primary: #a8c7fa;
+  --md-on-primary: #062e6f;
+  --md-primary-container: #0842a0;
+  --md-on-primary-container: #d3e3fd;
+  --md-secondary-container: #3e4759;
+  --md-on-secondary-container: #d8e2f9;
+  --md-tertiary: #ffd97a;
+  --md-tertiary-container: #574500;
+  --md-on-tertiary-container: #ffe08b;
+  --md-success-container: #0f5223;
+  --md-on-success-container: #a6f4b5;
+  --md-warn-container: #6b3a00;
+  --md-on-warn-container: #ffdcbe;
+  --md-error: #ffb4ab;
+  --md-surface: #111318;
+  --md-surface-low: #191c20;
+  --md-surface-cont: #1d2024;
+  --md-surface-high: #282a2f;
+  --md-surface-highest: #33353a;
+  --md-on-surface: #e2e2e9;
+  --md-on-surface-variant: #c4c6d0;
+  --md-outline: #8e9099;
+  --md-outline-variant: #44474f;
+  --md-inverse-surface: #e2e2e9;
+  --md-inverse-on-surface: #2e3036;
+  --md-scrim: rgba(0, 0, 0, 0.42);
+
+  /* Formen */
+  --md-shape-full: 999px;
+  --md-shape-xl: 28px;
+  --md-shape-l: 20px;
+  --md-shape-m: 16px;
+  --md-shape-s: 12px;
+  --md-shape-xs: 6px;
+
+  /* Bewegung (Expressive: federnd für Formen, ruhig für Farben) */
+  --md-spring: cubic-bezier(0.34, 1.45, 0.64, 1);
+  --md-emph: cubic-bezier(0.2, 0, 0, 1);
+  --md-dur: 0.28s;
+
+  --md-elev-1: 0 1px 2px rgba(0, 0, 0, .3), 0 1px 3px 1px rgba(0, 0, 0, .15);
+  --md-elev-2: 0 1px 2px rgba(0, 0, 0, .3), 0 2px 6px 2px rgba(0, 0, 0, .15);
+  --md-elev-3: 0 4px 8px 3px rgba(0, 0, 0, .15), 0 1px 3px rgba(0, 0, 0, .3);
+
+  --md-font: "Google Sans Flex", "Google Sans", "Google Sans Text", "Roboto Flex", Roboto, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html, body { font-family: var(--md-font); background: var(--md-surface); color: var(--md-on-surface); }
+button { font-family: var(--md-font); }
+#led-popup, #shutter-popup, #net-popup { font-family: var(--md-font); }
+
+/* ------------------------------------------------------------------ Leiste oben (schwebende Toolbar) */
+#room-view-bar {
+  top: calc(14px + var(--safe-top));
+  min-width: min(560px, calc(100vw - 24px));
+  height: 64px;
+  padding: 8px;
+  gap: 8px;
+  border-radius: var(--md-shape-full);
+  background: var(--md-surface-high);
+  border: none;
+  box-shadow: var(--md-elev-3);
+  color: var(--md-on-surface);
+}
+#room-view-title {
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 46vw;
+}
+/* Zurück-Pfeil links, nur im Raum sichtbar */
+.m3-back {
+  grid-column: 1;
+  justify-self: start;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--md-shape-full);
+  border: none;
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(.6);
+  transition: opacity .2s var(--md-emph), transform var(--md-dur) var(--md-spring), border-radius var(--md-dur) var(--md-spring);
+}
+.m3-back svg { width: 24px; height: 24px; }
+body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
+.m3-back:active { border-radius: var(--md-shape-s); }
+
+/* Einstellungen-Knopf: tonaler Button, rund */
+#room-settings-btn {
+  height: 48px;
+  padding: 0 18px 0 14px;
+  border-radius: var(--md-shape-full);
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+  font-size: 14px;
+  font-weight: 500;
+  gap: 8px;
+  transition: border-radius var(--md-dur) var(--md-spring), background .2s;
+}
+#room-settings-btn .gh-inline-icon { width: 20px; height: 20px; vertical-align: 0; }
+#room-settings-btn:hover { background: color-mix(in srgb, var(--md-secondary-container), white 8%); color: var(--md-on-secondary-container); }
+#room-settings-btn:active { border-radius: var(--md-shape-s); }
+
+/* Menü */
+#room-settings-dropdown {
+  top: calc(100% + 12px);
+  min-width: 248px;
+  padding: 8px;
+  gap: 2px;
+  border-radius: var(--md-shape-l);
+  background: var(--md-surface-cont);
+  border: none;
+  box-shadow: var(--md-elev-3);
+  transform-origin: top right;
+  animation: m3-menu-in .26s var(--md-emph);
+}
+@keyframes m3-menu-in { from { opacity: 0; transform: scale(.92) translateY(-6px); } to { opacity: 1; transform: none; } }
+#room-settings-dropdown .door-pill,
+#room-settings-dropdown .door-exit-btn {
+  min-height: 48px;
+  padding: 0 16px;
+  gap: 12px;
+  border-radius: var(--md-shape-m);
+  background: transparent;
+  color: var(--md-on-surface);
+  font-size: 14px;
+  font-weight: 500;
+  transition: background .15s, border-radius var(--md-dur) var(--md-spring);
+}
+#room-settings-dropdown .gh-inline-icon { width: 20px; height: 20px; vertical-align: 0; color: var(--md-on-surface-variant); }
+#room-settings-dropdown .door-pill:hover,
+#room-settings-dropdown .door-exit-btn:hover { background: rgba(226, 226, 233, .08); color: var(--md-on-surface); }
+#room-settings-dropdown .door-pill.active { background: var(--md-secondary-container); color: var(--md-on-secondary-container); border-radius: var(--md-shape-full); }
+#room-settings-dropdown .door-pill.active .gh-inline-icon { color: var(--md-on-secondary-container); }
+#room-settings-dropdown .door-exit-btn { color: var(--md-primary); }
+#room-settings-dropdown .door-exit-btn .gh-inline-icon { color: var(--md-primary); }
+#room-dropdown-divider { background: var(--md-outline-variant) !important; margin: 6px 8px !important; }
+
+/* ------------------------------------------------------------------ Raum-Chips in der Übersicht */
+.apt-label {
+  height: 40px;
+  padding: 0 16px 0 10px;
+  gap: 8px;
+  border-radius: var(--md-shape-full);
+  background: var(--md-surface-high);
+  border: none;
+  color: var(--md-on-surface);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0;
+  box-shadow: var(--md-elev-2);
+  transition: transform var(--md-dur) var(--md-spring), background .2s, color .2s, border-radius var(--md-dur) var(--md-spring), opacity .2s;
+}
+.apt-label .gh-inline-icon {
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  border-radius: var(--md-shape-full);
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+  vertical-align: 0;
+  box-sizing: border-box;
+}
+.apt-label:hover {
+  background: var(--md-surface-highest);
+  color: var(--md-on-surface);
+  transform: translate(-50%, -106%) scale(1.06);
+  box-shadow: var(--md-elev-3);
+}
+.apt-label:active { border-radius: var(--md-shape-s); transform: translate(-50%, -100%) scale(.96); }
+.apt-label.active-room { background: var(--md-primary); color: var(--md-on-primary); border: none; }
+
+/* ------------------------------------------------------------------ Geräte-Kacheln (wie Schnelleinstellungen) */
+.shutter-badge,
+.light-badge,
+.screen-badge {
+  min-width: 128px;
+  min-height: 56px;
+  padding: 8px 16px 8px 8px;
+  gap: 10px;
+  border-radius: var(--md-shape-l);
+  background: var(--md-surface-high);
+  border: none;
+  color: var(--md-on-surface);
+  font-size: 14px;
+  box-shadow: var(--md-elev-2);
+  transition: transform var(--md-dur) var(--md-spring), border-radius var(--md-dur) var(--md-spring), background .22s var(--md-emph), color .22s var(--md-emph);
+}
+/* Symbol in eigenem runden Feld */
+.shutter-badge > .gh-tile-icon,
+.light-badge > .gh-tile-icon,
+.screen-badge > .gh-tile-icon,
+.shutter-badge > .shutter-mini-win {
+  box-sizing: content-box;
+}
+.shutter-badge > .gh-tile-icon,
+.light-badge > .gh-tile-icon,
+.screen-badge > .gh-tile-icon {
+  width: 22px;
+  height: 22px;
+  padding: 9px;
+  border-radius: var(--md-shape-full);
+  background: var(--md-surface-highest);
+  transition: background .22s, border-radius var(--md-dur) var(--md-spring);
+}
+.shutter-badge > .shutter-mini-win { margin: 0 9px 0 11px; }
+.screen-badge > .screen-status-dot { margin: 0 6px 0 8px; }
+.gh-tile-title { font-size: 14px; font-weight: 500; color: inherit; letter-spacing: 0; }
+.gh-tile-sub { font-size: 12px; color: var(--md-on-surface-variant); }
+.shutter-badge:hover,
+.light-badge:hover,
+.screen-badge:hover { background: var(--md-surface-highest); transform: translate(-50%, -52%) scale(1.04); box-shadow: var(--md-elev-3); }
+.shutter-badge:active,
+.light-badge:active,
+.screen-badge:active { border-radius: var(--md-shape-s); }
+
+/* An = kräftig gefüllt und rund (Form wechselt mit) */
+.shutter-badge.on,
+.light-badge.on,
+.screen-badge.on {
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  border-radius: var(--md-shape-full);
+  box-shadow: var(--md-elev-2);
+}
+.shutter-badge.on:hover,
+.light-badge.on:hover,
+.screen-badge.on:hover { background: color-mix(in srgb, var(--md-primary), white 10%); }
+.shutter-badge.on .gh-tile-title,
+.light-badge.on .gh-tile-title,
+.screen-badge.on .gh-tile-title { color: var(--md-on-primary); }
+.shutter-badge.on .gh-tile-sub,
+.light-badge.on .gh-tile-sub,
+.screen-badge.on .gh-tile-sub { color: var(--md-on-primary); opacity: .78; }
+.shutter-badge.on > .gh-tile-icon,
+.light-badge.on > .gh-tile-icon,
+.screen-badge.on > .gh-tile-icon { background: rgba(6, 46, 111, .14); }
+.shutter-mini-fill { border-bottom-color: currentColor; }
+.screen-badge.on .screen-status-dot { background: var(--md-on-primary); box-shadow: none; }
+
+/* Internet-Kacheln: grün = VPN, orange = WARP */
+.net-badge.vpn { background: var(--md-success-container); color: var(--md-on-success-container); border-radius: var(--md-shape-full); }
+.net-badge.vpn:hover { background: color-mix(in srgb, var(--md-success-container), white 8%); }
+.net-badge.warp { background: var(--md-warn-container); color: var(--md-on-warn-container); border-radius: var(--md-shape-full); }
+.net-badge.warp:hover { background: color-mix(in srgb, var(--md-warn-container), white 8%); }
+.net-badge.vpn .gh-tile-sub, .net-badge.warp .gh-tile-sub { color: inherit; opacity: .8; }
+.net-badge .gh-tile-title { font-size: 14px; font-weight: 500; }
+.net-badge .gh-tile-sub { font-size: 12px; color: var(--md-on-surface-variant); }
+.net-badge.vpn > .gh-tile-icon, .net-badge.warp > .gh-tile-icon { background: rgba(0, 0, 0, .18); }
+
+.shutter-badge.holding, .light-badge.holding, .screen-badge.holding { filter: none; border-radius: var(--md-shape-s); }
+
+/* ------------------------------------------------------------------ Seitenblatt (PC) / Bottom Sheet (Handy) */
+#popup-backdrop { background: var(--md-scrim); backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+#led-popup, #shutter-popup, #net-popup {
+  top: calc(92px + var(--safe-top));
+  right: 16px;
+  bottom: 16px;
+  width: 360px;
+  padding: 12px 20px 24px;
+  border-radius: var(--md-shape-xl);
+  background: var(--md-surface-low);
+  border: none;
+  box-shadow: var(--md-elev-3);
+  color: var(--md-on-surface);
+  transform: translateX(400px);
+  transition: transform .42s var(--md-emph), opacity .2s;
+}
+#net-popup { bottom: auto; }
+#led-popup.visible, #shutter-popup.visible, #net-popup.visible { animation: m3-side-in .42s var(--md-emph); }
+@keyframes m3-side-in { from { transform: translateX(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes m3-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+.gh-popup-topbar { margin: 0 -8px 16px; min-height: 56px; }
+.gh-popup-title { font-size: 22px; font-weight: 400; color: var(--md-on-surface); letter-spacing: 0; text-align: center; flex: 1; padding: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gh-icon-btn {
+  width: 48px;
+  height: 48px;
+  color: var(--md-on-surface-variant);
+  transition: background .15s, border-radius var(--md-dur) var(--md-spring);
+}
+.gh-icon-btn svg { width: 24px; height: 24px; }
+.gh-icon-btn:hover { background: rgba(226, 226, 233, .08); }
+.gh-icon-btn:active { transform: none; border-radius: var(--md-shape-s); background: rgba(226, 226, 233, .12); }
+/* rechter Knopf (An/Aus bzw. Auf/Zu) als tonaler Button */
+.gh-popup-topbar > .gh-icon-btn:last-child { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.gh-popup-topbar > .gh-icon-btn:last-child:hover { background: color-mix(in srgb, var(--md-secondary-container), white 8%); }
+
+/* Große Regler */
+.gh-pill-slider, .gh-shutter-pill-slider {
+  width: 156px;
+  height: 300px;
+  border-radius: 48px;
+  background: var(--md-surface-highest);
+  box-shadow: none;
+  transition: border-radius var(--md-dur) var(--md-spring);
+}
+.gh-pill-slider:active, .gh-shutter-pill-slider:active { border-radius: 36px; }
+.gh-shutter-pill-fill {
+  background: var(--md-primary-container);
+  border-top: 4px solid var(--md-primary);
+  border-radius: 0 0 0 0;
+}
+.gh-shutter-pill-icon { color: var(--md-on-primary-container); filter: none; }
+.gh-shutter-pill-pct { font-size: 32px; font-weight: 500; color: var(--md-on-surface); filter: none; }
+.gh-shutter-pill-sub { font-size: 12px; color: var(--md-on-surface-variant); text-align: center; padding: 0 12px; }
+.gh-pill-pct { font-size: 28px; font-weight: 500; }
+.gh-pill-off-knob { border-radius: var(--md-shape-xl); background: var(--md-surface-high); border: none; box-shadow: none; transition: border-radius var(--md-dur) var(--md-spring); }
+.gh-pill-off-knob:active { transform: none; border-radius: var(--md-shape-full); }
+.gh-pill-off-label { color: var(--md-on-surface-variant); }
+.gh-palette-btn {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--md-shape-m);
+  background: var(--md-tertiary-container);
+  color: var(--md-on-tertiary-container);
+  border: none;
+  box-shadow: var(--md-elev-3);
+  transition: border-radius var(--md-dur) var(--md-spring), transform var(--md-dur) var(--md-spring);
+}
+.gh-palette-btn:hover { background: color-mix(in srgb, var(--md-tertiary-container), white 8%); transform: none; }
+.gh-palette-btn:active { transform: none; border-radius: var(--md-shape-full); }
+
+/* Voreinstellungen als verbundene Button-Gruppe */
+.shutter-presets { gap: 3px; margin-top: 16px; }
+.shutter-preset-btn {
+  min-height: 48px;
+  padding: 0 4px;
+  border-radius: var(--md-shape-xs);
+  border: none;
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+  font-size: 13px;
+  font-weight: 500;
+  transition: border-radius var(--md-dur) var(--md-spring), background .15s;
+}
+.shutter-preset-btn:first-child { border-radius: var(--md-shape-full) var(--md-shape-xs) var(--md-shape-xs) var(--md-shape-full); }
+.shutter-preset-btn:last-child { border-radius: var(--md-shape-xs) var(--md-shape-full) var(--md-shape-full) var(--md-shape-xs); }
+.shutter-preset-btn:hover { background: color-mix(in srgb, var(--md-secondary-container), white 8%); color: var(--md-on-secondary-container); transform: none; }
+.shutter-preset-btn:active { border-radius: var(--md-shape-full) !important; background: var(--md-primary); color: var(--md-on-primary); }
+
+/* Farbfelder */
+.gh-swatch-grid { gap: 8px; }
+.gh-swatch-tile { height: 56px; border-radius: var(--md-shape-m); border: none; transition: border-radius var(--md-dur) var(--md-spring), transform var(--md-dur) var(--md-spring); }
+.gh-swatch-tile:hover { transform: none; border-radius: var(--md-shape-xl); box-shadow: none; }
+.gh-swatch-tile:active { transform: scale(.94); border-radius: var(--md-shape-full); }
+
+/* Lichtfarbe: Tabs + Buttons */
+.gh-color-drag-handle { width: 32px; height: 4px; background: var(--md-on-surface-variant); opacity: .4; }
+.gh-color-title { font-size: 22px; font-weight: 400; }
+.gh-color-tabs { border-bottom: 1px solid var(--md-outline-variant); justify-content: stretch; }
+.gh-color-tab { flex: 1; min-height: 48px; color: var(--md-on-surface-variant); font-size: 14px; border-bottom: 3px solid transparent; border-radius: 3px 3px 0 0; }
+.gh-color-tab.active { color: var(--md-primary); border-bottom-color: var(--md-primary); font-weight: 500; }
+.gh-footer-cancel-btn { color: var(--md-primary); font-size: 14px; min-height: 40px; padding: 0 16px; border-radius: var(--md-shape-full); }
+.gh-footer-cancel-btn:hover { background: rgba(168, 199, 250, .08); }
+.gh-footer-done-btn {
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  font-size: 14px;
+  font-weight: 500;
+  min-height: 40px;
+  padding: 0 24px;
+  box-shadow: none;
+  transition: border-radius var(--md-dur) var(--md-spring);
+}
+.gh-footer-done-btn:hover { background: color-mix(in srgb, var(--md-primary), white 10%); transform: none; }
+.gh-footer-done-btn:active { border-radius: var(--md-shape-s); }
+
+/* ------------------------------------------------------------------ Internet-Menü als gruppierte Liste (wie Android-16-Einstellungen) */
+.net-device {
+  gap: 14px;
+  padding: 16px;
+  margin-bottom: 8px;
+  border-radius: var(--md-shape-l);
+  background: var(--md-surface-high);
+  font-size: 14px;
+}
+.net-device .net-dot { width: 12px; height: 12px; background: var(--md-outline); }
+.net-device .net-dot.on { background: #7ee29a; box-shadow: 0 0 0 4px rgba(126, 226, 154, .18); }
+.net-device .net-dev-name { font-size: 16px; font-weight: 500; }
+.net-device .net-dev-sub { font-size: 13px; color: var(--md-on-surface-variant); }
+.net-section { font-size: 14px; font-weight: 500; color: var(--md-primary); text-transform: none; letter-spacing: 0; margin: 20px 16px 8px; }
+.net-options { gap: 2px; }
+.net-option {
+  min-height: 64px;
+  padding: 10px 16px;
+  border-radius: var(--md-shape-xs);
+  border: none;
+  background: var(--md-surface-high);
+  color: var(--md-on-surface);
+  font-size: 16px;
+  font-weight: 400;
+  transition: background .15s, border-radius var(--md-dur) var(--md-spring);
+}
+.net-option:first-child { border-top-left-radius: var(--md-shape-l); border-top-right-radius: var(--md-shape-l); }
+.net-option:last-child { border-bottom-left-radius: var(--md-shape-l); border-bottom-right-radius: var(--md-shape-l); }
+.net-option:hover:not(:disabled) { background: var(--md-surface-highest); transform: none; }
+.net-option:active:not(:disabled) { border-radius: var(--md-shape-l); }
+.net-option .net-opt-sub { font-size: 13px; color: var(--md-on-surface-variant); }
+.net-option.active { background: var(--md-secondary-container); color: var(--md-on-secondary-container); border: none; }
+.net-option.active.vpn { background: var(--md-success-container); color: var(--md-on-success-container); }
+.net-option.active.warp { background: var(--md-warn-container); color: var(--md-on-warn-container); }
+.net-option:disabled { opacity: .38; }
+.net-note { font-size: 13px; color: var(--md-on-surface-variant); padding: 0 4px; }
+.net-note.error { color: var(--md-error); }
+.net-note.ok { color: #7ee29a; }
+
+/* ------------------------------------------------------------------ Raumauswahl */
+#room-picker-sheet {
+  top: calc(92px + var(--safe-top));
+  width: min(480px, calc(100vw - 24px));
+  padding: 8px 16px 20px;
+  gap: 8px;
+  border-radius: var(--md-shape-xl);
+  background: var(--md-surface-low);
+  border: none;
+  box-shadow: var(--md-elev-3);
+}
+#room-picker-sheet .shutter-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 56px;
+  font-size: 22px;
+  font-weight: 400;
+  padding-left: 8px;
+}
+#room-picker-sheet .shutter-close-btn {
+  width: 48px;
+  height: 48px;
+  border: none;
+  border-radius: var(--md-shape-full);
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  font-size: 18px;
+  cursor: pointer;
+}
+#room-picker-sheet .shutter-close-btn:hover { background: rgba(226, 226, 233, .08); }
+#room-picker-sheet > div[style] { color: var(--md-primary) !important; font-size: 14px !important; font-weight: 500 !important; margin: 12px 8px 0 !important; }
+.room-picker-grid { gap: 8px; }
+.room-picker-grid:empty { display: none; }
+.room-picker-item {
+  min-height: 56px;
+  padding: 0 16px 0 10px;
+  gap: 12px;
+  border-radius: var(--md-shape-l);
+  border: none;
+  background: var(--md-surface-high);
+  color: var(--md-on-surface);
+  font-size: 14px;
+  transition: background .15s, border-radius var(--md-dur) var(--md-spring);
+}
+.room-picker-item .gh-inline-icon {
+  width: 36px;
+  height: 36px;
+  padding: 8px;
+  box-sizing: border-box;
+  border-radius: var(--md-shape-full);
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+  vertical-align: 0;
+}
+.room-picker-item:hover, .room-picker-item:active { background: var(--md-surface-highest); color: var(--md-on-surface); transform: none; }
+.room-picker-item:active { border-radius: var(--md-shape-full); }
+
+/* ------------------------------------------------------------------ Snackbar */
+#ha-toast {
+  left: 16px;
+  bottom: calc(16px + var(--safe-bottom));
+  transform: translateY(24px);
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  border-radius: var(--md-shape-s);
+  background: var(--md-inverse-surface);
+  color: var(--md-inverse-on-surface);
+  border: none;
+  font: 400 14px/1.4 var(--md-font);
+  box-shadow: var(--md-elev-3);
+  transition: opacity .2s, transform .35s var(--md-spring);
+}
+#ha-toast.visible { transform: translateY(0); }
+
+/* ------------------------------------------------------------------ Handy */
+@media (max-width: 840px) {
+  #room-view-bar {
+    top: calc(8px + var(--safe-top));
+    width: calc(100vw - 16px);
+    min-width: calc(100vw - 16px);
+    max-width: calc(100vw - 16px);
+    height: 60px;
+    padding: 6px;
+  }
+  #room-view-title { font-size: 16px; }
+  #room-settings-btn { padding: 0 14px; }
+  #room-settings-btn span { display: none; }
+  .m3-back { width: 48px; height: 48px; }
+
+  .apt-label { height: 34px; padding: 0 12px 0 6px; font-size: 12.5px; gap: 6px; }
+  .apt-label .gh-inline-icon { width: 24px; height: 24px; padding: 4px; }
+
+  .shutter-badge, .light-badge, .screen-badge {
+    min-width: 0;
+    min-height: 48px;
+    padding: 5px 12px 5px 5px;
+    font-size: 12.5px;
+    gap: 8px;
+  }
+  .shutter-badge > .gh-tile-icon, .light-badge > .gh-tile-icon, .screen-badge > .gh-tile-icon { width: 20px; height: 20px; padding: 8px; }
+  .gh-tile-title { font-size: 13px; }
+  .gh-tile-sub { font-size: 11px; }
+
+  /* Menüs kommen als Bottom Sheet von unten, mit Griff */
+  #led-popup, #shutter-popup, #net-popup,
+  #led-popup.modal-center, #shutter-popup.modal-center, #net-popup.modal-center {
+    top: auto !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    max-height: 88dvh !important;
+    padding: 0 16px calc(20px + var(--safe-bottom)) !important;
+    border-radius: var(--md-shape-xl) var(--md-shape-xl) 0 0 !important;
+    box-shadow: var(--md-elev-3) !important;
+    transform: translateY(105%) !important;
+    opacity: 1 !important;
+    transition: transform .42s var(--md-emph) !important;
+  }
+  #led-popup.visible, #shutter-popup.visible, #net-popup.visible,
+  #led-popup.modal-center.visible, #shutter-popup.modal-center.visible, #net-popup.modal-center.visible {
+    transform: translateY(0) !important;
+    animation: m3-sheet-up .42s var(--md-emph);
+  }
+  #led-popup::before, #shutter-popup::before, #net-popup::before {
+    content: "";
+    display: block;
+    flex-shrink: 0;
+    width: 32px;
+    height: 4px;
+    margin: 16px auto 4px;
+    border-radius: 2px;
+    background: var(--md-on-surface-variant);
+    opacity: .4;
+  }
+  .gh-slider-row { min-height: 0; margin-bottom: 12px; }
+  .gh-pill-slider, .gh-shutter-pill-slider { height: min(300px, 38dvh); }
+
+  #room-picker-sheet {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    transform: none;
+    width: 100%;
+    animation: m3-sheet-up .42s var(--md-emph);
+    max-height: 80dvh;
+    border-radius: var(--md-shape-xl) var(--md-shape-xl) 0 0;
+    padding-bottom: calc(20px + var(--safe-bottom));
+  }
+  #ha-toast { left: 12px; right: 12px; max-width: none; }
+}

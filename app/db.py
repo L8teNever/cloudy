@@ -1,5 +1,6 @@
 import ipaddress
 import os
+import json
 import sqlite3
 import time
 from contextlib import closing
@@ -722,8 +723,54 @@ def devices() -> list[dict]:
         d["lease_name"] = d.get("hostname")
         d["hostname"] = d["fritz_name"] or d["hostname"]
     out = plain + list(by_mac.values())
+    _apply_custom_names(out)
     out.sort(key=lambda x: x["last_seen"], reverse=True)
     return out
+
+
+# --------------------------------------------------------------------------- Eigene Gerätenamen
+
+NAMES_KEY = "geraete_namen"  # JSON {mac oder "ip:1.2.3.4": "Name"}
+
+
+def device_key(d: dict) -> str:
+    """Stabiler Schlüssel eines Geräts: MAC, ohne MAC die IP."""
+    mac = (d.get("mac") or "").strip().lower()
+    return mac or (f"ip:{d['ip']}" if d.get("ip") else "")
+
+
+def custom_names() -> dict[str, str]:
+    try:
+        raw = json.loads(get_setting(NAMES_KEY) or "{}")
+    except ValueError:
+        return {}
+    return {str(k): str(v) for k, v in raw.items() if v} if isinstance(raw, dict) else {}
+
+
+def set_custom_name(key: str, name: str) -> None:
+    """Eigenen Namen setzen; leerer Name = wieder den Namen aus FRITZ!Box/DHCP nehmen."""
+    key = (key or "").strip().lower()
+    if not key:
+        raise ValueError("Gerät fehlt")
+    names = custom_names()
+    name = " ".join((name or "").split())[:60]
+    if name:
+        names[key] = name
+    else:
+        names.pop(key, None)
+    set_setting(NAMES_KEY, json.dumps(names, ensure_ascii=False, sort_keys=True) if names else "")
+
+
+def _apply_custom_names(rows: list[dict]) -> None:
+    names = custom_names()
+    if not names:
+        return
+    for d in rows:
+        n = names.get(device_key(d))
+        if n:
+            d["original_name"] = d.get("hostname")
+            d["custom_name"] = n
+            d["hostname"] = n
 
 
 def device(ip: str) -> dict | None:
@@ -742,6 +789,7 @@ def device(ip: str) -> dict | None:
                 (ip,),
             ).fetchone()
     res = dict(row) if row else {"ip": ip, "mac": None, "hostname": None}
+    _apply_custom_names([res])
     sites = current_sites()
     res["current_site"] = sites.get(ip)
     return res

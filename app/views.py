@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import autoswitch, blocklist, charts, db, dnsprofile, fritz, localdomain, policy, stats, system_info, warp
+from . import autoswitch, blocklist, charts, db, dnsprofile, fritz, localdomain, ordnung, policy, stats, system_info, warp
 from .settings import Settings
 
 BASE_DIR = Path(__file__).parent
@@ -194,6 +194,7 @@ def ctx_geraete(request: Request) -> dict:
     return {
         "settings": s,
         "devices": devices,
+        "sections": ordnung.sections(devices),
         "online": online_ips(request),
         "isolated": db.isolated_macs(),
         **_warp_ctx(request),
@@ -211,8 +212,12 @@ def ctx_geraet_kopf(request: Request, ip: str) -> dict:
         except Exception:
             pass
     current = db.current_sites().get(ip)
+    key = db.device_key(device)
     return {
         "device": device,
+        "device_key": key,
+        "view_groups": ordnung.groups(),
+        "view_group": ordnung.group_of().get(key),
         "current": current,
         "online": online_ips(request),
         **_warp_ctx(request),
@@ -224,6 +229,7 @@ def ctx_gruppen(request: Request) -> dict:
     counts = {g["id"]: len(db.group_members(g["id"])) for g in db.groups()}
     return {
         "groups": db.groups(),
+        "view_groups": ordnung.groups(),
         "group_colors": db.GROUP_COLORS,
         "group_member_counts": counts,
         **_warp_ctx(request),

@@ -17,7 +17,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import adblock, autoswitch, blocklist, certs, db, dnsprofile, fritz, homeassistant, karte, localdomain, policy, slots, stats, tunnel, views, warp, zertwechsel
+from . import adblock, assistent, autoswitch, blocklist, certs, db, dnsprofile, fritz, homeassistant, karte, localdomain, ordnung, policy, redirects, slots, stats, tunnel, views, warp, zertwechsel
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -1343,6 +1343,98 @@ async def device_set_isolate(request: Request, mac: str = Form(...), isolated: i
     return RedirectResponse(f"/geraete/{quote(ip)}" if ip else "/geraete", status_code=303)
 
 
+# --------------------------------------------------------------------------- Eigene Namen & Übersichtsgruppen
+
+@app.post("/geraete/name", dependencies=[Depends(require_password)])
+async def geraet_name(key: str = Form(...), name: str = Form(default=""), back: str = Form(default="")):
+    """Eigenen Namen für ein Gerät setzen (leer = Name aus FRITZ!Box/DHCP)."""
+    try:
+        await run_in_threadpool(db.set_custom_name, key, name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(_site_route_back(back, "/geraete"), status_code=303)
+
+
+@app.post("/geraete/uebersichtsgruppe", dependencies=[Depends(require_password)])
+async def geraet_uebersichtsgruppe(key: str = Form(...), gruppe: str = Form(default=""), back: str = Form(default="")):
+    """Gerät in eine Übersichtsgruppe legen (leer = ohne Gruppe)."""
+    try:
+        await run_in_threadpool(ordnung.assign, [key], gruppe or None)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(_site_route_back(back, "/geraete"), status_code=303)
+
+
+@app.post("/uebersichtsgruppen", dependencies=[Depends(require_password)])
+async def uebersichtsgruppe_neu(name: str = Form(default=""), color: str = Form(default="")):
+    try:
+        await run_in_threadpool(ordnung.create, name, color)
+    except ValueError as exc:
+        return RedirectResponse(f"/gruppen?fehler={quote(str(exc))}#uebersicht", status_code=303)
+    return RedirectResponse("/gruppen#uebersicht", status_code=303)
+
+
+@app.post("/uebersichtsgruppen/{group_id}", dependencies=[Depends(require_password)])
+async def uebersichtsgruppe_aendern(group_id: str, aktion: str = Form(default="speichern"), name: str = Form(default=""),
+                                    color: str = Form(default="")):
+    try:
+        if aktion == "loeschen":
+            await run_in_threadpool(ordnung.delete, group_id)
+        elif aktion in ("hoch", "runter"):
+            await run_in_threadpool(ordnung.move, group_id, -1 if aktion == "hoch" else 1)
+        else:
+            await run_in_threadpool(ordnung.update, group_id, name, color)
+    except ValueError as exc:
+        return RedirectResponse(f"/gruppen?fehler={quote(str(exc))}#uebersicht", status_code=303)
+    return RedirectResponse("/gruppen#uebersicht", status_code=303)
+
+
+# --------------------------------------------------------------------------- KI-Assistent (Gemini)
+
+@app.get("/assistent", response_class=HTMLResponse, dependencies=[Depends(require_password)])
+async def assistent_seite(request: Request):
+    key, model = await run_in_threadpool(assistent.config)
+    return await views.page(request, "seiten/assistent.html", "Assistent", "/assistent", [],
+                            has_key=bool(key), model=model)
+
+
+@app.post("/assistent/einstellungen", dependencies=[Depends(require_password)])
+async def assistent_einstellungen(key: str = Form(default=""), model: str = Form(default=""), aktion: str = Form(default="")):
+    if aktion == "trennen":
+        await run_in_threadpool(assistent.forget)
+        return RedirectResponse("/assistent", status_code=303)
+    try:
+        await run_in_threadpool(assistent.save_config, key, model)
+    except assistent.AssistError as exc:
+        return RedirectResponse(f"/assistent?fehler={quote(str(exc))}", status_code=303)
+    return RedirectResponse("/assistent?gespeichert=1", status_code=303)
+
+
+@app.get("/assistent/modelle", dependencies=[Depends(require_password)])
+async def assistent_modelle():
+    try:
+        return {"ok": True, "models": await run_in_threadpool(assistent.models)}
+    except assistent.AssistError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+
+@app.post("/assistent/chat", dependencies=[Depends(require_password)])
+async def assistent_chat(request: Request):
+    try:
+        data = await request.json()
+    except ValueError:
+        data = None
+    msgs = data.get("messages") if isinstance(data, dict) else None
+    if not isinstance(msgs, list):
+        raise HTTPException(status_code=400, detail="JSON erwartet")
+    try:
+        ctx = assistent.Ctx(online_ips(request), request.app.state.settings, lambda: _apply_redirects(request))
+        res = await run_in_threadpool(assistent.chat, [m for m in msgs if isinstance(m, dict)], ctx)
+    except assistent.AssistError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return {"ok": True, **res}
+
+
 @app.post("/mein-auswahl", dependencies=[Depends(require_password)])
 async def mein_auswahl(request: Request, choice: list[str] = Form(default=[]), order: list[str] = Form(default=[])):
     """Admin: Was darf jeder auf „Mein Gerät“ auswählen (Standard, Normal, einzelne Profile) und in welcher Reihenfolge?"""
@@ -1361,31 +1453,6 @@ def _site_route_back(next_url: str, fallback: str) -> str:
     return fallback
 
 
-def _parse_domains(text: str) -> tuple[list[str], list[str]]:
-    """Mehrere Seiten auf einmal: mit Komma, Semikolon, Leerzeichen oder Zeilenumbruch getrennt.
-    Rückgabe: (gültige, normalisiert und ohne Doppelte), (ungültige Eingaben)."""
-    from .redirects import normalize_source
-
-    ok: list[str] = []
-    bad: list[str] = []
-    for raw in re.split(r"[\s,;]+", text or ""):
-        # "*.netflix.com", ".netflix.com", "*netflix.com" = netflix.com – Subdomains sind ohnehin immer dabei.
-        raw = re.sub(r"^(\*\.?|\.)+", "", raw.strip())
-        if not raw:
-            continue
-        if "*" in raw:
-            bad.append(raw)  # Platzhalter nur vorne möglich (dnsmasq kennt keine Muster in der Mitte)
-            continue
-        try:
-            domain = normalize_source(raw)
-        except ValueError:
-            bad.append(raw)
-            continue
-        if domain not in ok:
-            ok.append(domain)
-    return ok, bad
-
-
 def _domains_error(bad: list[str], saved: int) -> str:
     shown = ", ".join(bad[:5]) + (" …" if len(bad) > 5 else "")
     hint = " – * geht nur vorne, z. B. *.netflix.com" if any("*" in b for b in bad) else ""
@@ -1401,7 +1468,7 @@ async def site_route_add(
     back = _site_route_back(next, "/vpn#seitenrouten")
     if slot != warp.DIRECT:
         _check_tunnel_slot(request, slot)
-    domains, bad = _parse_domains(domain)
+    domains, bad = redirects.parse_domains(domain)
     for d in domains:
         await run_in_threadpool(db.set_site_route, d, slot)
     if domains:
@@ -1426,7 +1493,7 @@ async def auto_switch_add(request: Request, domain: str = Form(...), slot: str =
     """Admin: Seite → festes Profil oder automatisch passende VPNs durchprobieren (lokal vor Cloudflare)."""
     if slot != autoswitch.AUTO:
         _check_tunnel_slot(request, slot)
-    domains, bad = _parse_domains(domain)
+    domains, bad = redirects.parse_domains(domain)
     for d in domains:
         await run_in_threadpool(autoswitch.set_rule, d, slot)
     if domains:
@@ -1565,7 +1632,7 @@ async def group_site_route_add(
         raise HTTPException(status_code=404, detail="Gruppe nicht gefunden")
     if slot != warp.DIRECT:
         _check_tunnel_slot(request, slot)
-    domains, bad = _parse_domains(domain)
+    domains, bad = redirects.parse_domains(domain)
     for d in domains:
         await run_in_threadpool(db.set_group_site_route, group_id, d, slot)
     if domains:

@@ -149,3 +149,26 @@ def timeseries(r: Range, ip: str | None = None, now: float | None = None) -> lis
         b["bytes_up"] = t["u"] if t else 0
         b["hits"] = hits.get(b["key"], 0)
     return buckets
+
+
+def activity(ip: str, days: int = 7, now: float | None = None) -> dict:
+    """Wann ist ein Gerät aktiv? Pro Tag die Spanne, dazu an wie vielen Tagen es zu welcher Uhrzeit aktiv war."""
+    now = time.time() if now is None else now
+    since = db.hour_of(int(now)) - days * 86400
+    with closing(db.connect()) as conn:
+        active = {x["hour"]: x["b"] for x in conn.execute(
+            "SELECT hour, SUM(bytes_down + bytes_up) b FROM traffic_hourly WHERE ip = ? AND hour >= ? GROUP BY hour", (ip, since))}
+        for x in conn.execute("SELECT hour FROM dns_hourly WHERE ip = ? AND hour >= ? AND hits > 0", (ip, since)):
+            active.setdefault(x["hour"], 0)
+    per_day: dict[str, dict] = {}
+    by_clock = [0] * 24
+    for hour in sorted(active):
+        lt = time.localtime(hour)
+        by_clock[lt.tm_hour] += 1
+        d = per_day.setdefault(time.strftime("%a %d.%m.", lt), {"von": lt.tm_hour, "bis": lt.tm_hour, "stunden": 0, "bytes": 0})
+        d["bis"], d["stunden"], d["bytes"] = lt.tm_hour, d["stunden"] + 1, d["bytes"] + active[hour]
+    return {
+        "tage": [{"tag": k, "von": f"{v['von']:02d}:00", "bis": f"{v['bis']:02d}:59", "aktive_stunden": v["stunden"],
+                  "mb": round(v["bytes"] / 1_000_000, 1)} for k, v in per_day.items()],
+        "aktive_tage_pro_uhrzeit": {f"{h:02d}": n for h, n in enumerate(by_clock) if n},
+    }
