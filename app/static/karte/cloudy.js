@@ -10,8 +10,7 @@
     'label-simon': 'simonszimmer',
     'label-arbeit': 'arbeitszimmer',
     'label-abstell': 'abstellkammer',
-    'label-flur1': 'fluroben',
-    'label-flur2': 'flurvorne',
+    'label-flur': 'flur',
     'label-bad': 'neuesbad',
     'label-martin': 'martinszimmer',
     'label-eingangsflur': 'eingangsflur',
@@ -24,6 +23,7 @@
     'label-melanie': 'melanieszimmer'
   };
   const SLUG_ROOMS = Object.fromEntries(Object.entries(ROOM_SLUGS).map(([id, slug]) => [slug, id]));
+  SLUG_ROOMS.fluroben = SLUG_ROOMS.flurvorne = 'label-flur'; // alte Adressen der zwei Flur-Hälften
 
   // ---------------------------------------------------------------- Raum- und Menü-Adressen
   // /simonszimmer/ = Raum, /simonszimmer/rollladen-fenster/ = Raum mit offenem Menü (Rollladen, LED, Internet).
@@ -162,7 +162,7 @@
     } catch (e) { /* offline – Zustand bleibt */ }
   }
   function tick() { syncScreens(); syncMein(); }
-  function start() { if (!timer) { tick(); timer = setInterval(tick, 15000); } }
+  function start() { if (!timer) { tick(); timer = setInterval(tick, 10000); } }
   function stop() { if (timer) { clearInterval(timer); timer = null; } }
   document.addEventListener('visibilitychange', () => (document.hidden ? stop() : start()));
   window.addEventListener('load', () => { if (!document.hidden) start(); });
@@ -174,6 +174,7 @@
   let meinOpen = false;   // Menü „Mein Gerät“ aus dem Header (nutzt dasselbe Popup wie die Fernseher)
   let mein = null;        // Antwort von /karte/mein
   let stackOpen = null;   // Buttons im offenen Sammel-Pop-up (Handy)
+  let sockOpen = null;    // Gerät im offenen Steckdosen-Menü (Zeitplan)
   let busy = false;
   let note = null; // { text, kind: 'error'|'ok' }
 
@@ -227,6 +228,7 @@
   }
 
   function renderPopup() {
+    if (sockOpen) return renderSocket(true);
     if (stackOpen) return renderStackPopup();
     if (meinOpen) return renderMein();
     const body = document.getElementById('net-popup-body');
@@ -376,7 +378,7 @@
     if (window.toggleRoomHeaderDropdown) window.toggleRoomHeaderDropdown(null, false);
     if (window.closeShutterPopup) window.closeShutterPopup();
     if (window.closeSimonLedPopup) window.closeSimonLedPopup();
-    openScreenId = null; meinOpen = true; stackOpen = null; note = null;
+    openScreenId = null; meinOpen = true; stackOpen = null; sockOpen = null; note = null;
     showNetPopup();
     syncMein();
   };
@@ -384,13 +386,13 @@
   window.openNetPopup = function (screenId) {
     if (window.closeShutterPopup) window.closeShutterPopup();
     if (window.closeSimonLedPopup) window.closeSimonLedPopup();
-    openScreenId = screenId; meinOpen = false; stackOpen = null; note = null;
+    openScreenId = screenId; meinOpen = false; stackOpen = null; sockOpen = null; note = null;
     showNetPopup();
     syncScreens();
   };
 
   window.closeNetPopup = function () {
-    openScreenId = null; meinOpen = false; stackOpen = null;
+    openScreenId = null; meinOpen = false; stackOpen = null; sockOpen = null;
     const pop = document.getElementById('net-popup');
     if (pop) pop.classList.remove('visible');
     if (typeof checkBackdrop === 'function') checkBackdrop();
@@ -407,7 +409,7 @@
     if (typeof orig !== 'function') return;
     window[name] = function (roomId) {
       const scr = (window.screensRegistry || []).find(s => s.id === openScreenId);
-      if ((openScreenId || meinOpen || stackOpen) && !(name === 'enterRoomView' && scr && scr.roomId === roomId)) window.closeNetPopup();
+      if ((openScreenId || meinOpen || stackOpen || sockOpen) && !(name === 'enterRoomView' && scr && scr.roomId === roomId)) window.closeNetPopup();
       return orig.apply(this, arguments);
     };
   });
@@ -639,7 +641,7 @@
   window.openStackPopup = function (els) {
     if (window.closeShutterPopup) window.closeShutterPopup();
     if (window.closeSimonLedPopup) window.closeSimonLedPopup();
-    openScreenId = null; meinOpen = false; note = null; stackOpen = [...els];
+    openScreenId = null; meinOpen = false; sockOpen = null; note = null; stackOpen = [...els];
     showNetPopup();
   };
 
@@ -709,15 +711,37 @@
     };
   }
 
+  // ---- Rollläden im echten Tempo: Fahrzeit (ganz auf -> ganz zu) lernt die Karte aus echten Fahrten
+  const TRAVEL_DEFAULT = 25;
+  const motion = {}; // Rollladen -> { t0, p0, seen, firstPct } während einer Fahrt
+  const travelKey = id => `karte-fahrzeit-${id}`;
+  function travelFor(id) {
+    const v = parseFloat(localStorage.getItem(travelKey(id)));
+    return v >= 5 && v <= 120 ? v : TRAVEL_DEFAULT;
+  }
+  function learnTravel(sh, m, endPct, now) {
+    const dist = Math.abs(endPct - m.p0);
+    const sec = (now - m.t0) / 1000;
+    if (!m.seen || dist < 40 || sec < 3) return; // nur deutliche Fahrten zählen
+    const est = Math.max(5, Math.min(120, (sec * 100) / dist));
+    const learned = localStorage.getItem(travelKey(sh.id)) ? travelFor(sh.id) : null;
+    sh.travelSec = learned ? (learned + est) / 2 : est;
+    try { localStorage.setItem(travelKey(sh.id), sh.travelSec.toFixed(1)); } catch (e) { /* privat */ }
+  }
+
   after('setActiveShutterPercent', (pct, shId) => {
     const id = shId || (typeof activeShutterId !== 'undefined' ? activeShutterId : null);
     const sh = (window.shuttersRegistry || []).find(s => s.id === id);
-    if (sh) haSend(sh.id, 'position', sh.targetPercent, 450);
+    if (!sh || !linked(sh.id) || haApplying) return;
+    sh.userGoal = sh.targetPercent;
+    motion[sh.id] = { t0: Date.now(), p0: sh.currentPercent, seen: false, firstPct: null };
+    haSend(sh.id, 'position', sh.targetPercent, 450);
   });
   after('toggleSimonRoomLight', () => haSend('light-simon', window.simonRoomLight.isOn ? 'on' : 'off'));
   after('toggleSchlafRoomLight', () => haSend('light-schlaf', window.schlafRoomLight.isOn ? 'on' : 'off'));
   after('toggleSimonPc', () => haSend('pc-simon', window.simonPc.isOn ? 'on' : 'off'));
   after('toggleKuecheSocket', () => haSend('plug-kueche', window.kuecheSocket.isOn ? 'on' : 'off'));
+  after('toggleFlurLed', () => haSend('led-flur', window.flurLed.isOn ? 'on' : 'off'));
   const sendLed = extra => {
     const t = typeof activeLedTarget !== 'undefined' ? activeLedTarget : 'simon';
     const led = ledObj(t);
@@ -729,6 +753,138 @@
   after('setSimonDeskLedColor', () => sendLed(led => ({ color: led.colorHex })));
   after('setSimonDeskLedBrightness', () => sendLed(led => ({ brightness: led.brightness })));
 
+  // ---- Nachfragen vor dem Schalten
+  // 1) Pro Gerät einstellbar (z. B. PC): vor dem AUSschalten fragen.
+  // 2) Nachtzeit (z. B. 22:00–07:00): bei jedem Licht, jeder LED, Steckdose, PC und Rollladen fragen – an wie aus.
+  // Die Hülle liegt außen um die Schalt-Funktionen: erst nach Bestätigen schaltet die Karte und schickt den Befehl.
+  const NAMES = { 'pc-simon': 'den PC', 'plug-kueche': 'die Steckdose in der Küche', 'light-simon': 'das Licht in Simons Zimmer',
+    'light-schlaf': 'das Licht im Schlafzimmer', 'led-simon': 'die Tisch-LED', 'led-schlaf': 'die Decken-LED', 'led-flur': 'das LED-Band im Flur' };
+  let askBypass = false;
+  const unlocked = {}; // Gerät -> bis wann ohne neue Frage (Schieberegler sollen nicht bei jedem Schritt fragen)
+
+  const toMin = t => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+  function nightActive() {
+    const n = ha.night;
+    if (!n || !n.from || !n.to) return false;
+    const d = new Date();
+    const m = d.getHours() * 60 + d.getMinutes();
+    const f = toMin(n.from), t = toMin(n.to);
+    return f < t ? m >= f && m < t : m >= f || m < t;
+  }
+
+  function askConfirm(title, text, yesLabel, danger, yes) {
+    let box = document.getElementById('confirm-off');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'confirm-off';
+      box.innerHTML = `<div class="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-off-title" aria-describedby="confirm-off-text">
+        <div class="confirm-title" id="confirm-off-title"></div><div class="confirm-text" id="confirm-off-text"></div>
+        <div class="confirm-actions"><button class="net-option" data-c="no">Abbrechen</button><button class="net-option confirm-yes" data-c="yes"></button></div></div>`;
+      document.body.appendChild(box);
+      box.addEventListener('click', e => { if (e.target === box) box.classList.remove('visible'); });
+      box.querySelector('[data-c="no"]').addEventListener('click', () => box.classList.remove('visible'));
+      window.addEventListener('keydown', e => { if (e.key === 'Escape') box.classList.remove('visible'); });
+    }
+    box.querySelector('#confirm-off-title').textContent = title;
+    box.querySelector('#confirm-off-text').textContent = text;
+    const yesBtn = box.querySelector('[data-c="yes"]');
+    yesBtn.textContent = yesLabel;
+    yesBtn.classList.toggle('danger', danger);
+    yesBtn.onclick = () => { box.classList.remove('visible'); yes(); };
+    box.classList.add('visible');
+    yesBtn.focus();
+  }
+  const askOpen = () => Boolean(document.getElementById('confirm-off')?.classList.contains('visible'));
+
+  // opts.isOn(dev): Gerät ist gerade an (für „vor dem Ausschalten“), opts.what(dev, args): was passieren soll (für die Frage),
+  // opts.sticky: nach Bestätigen 30 s ohne neue Frage (Regler), opts.offOnly: nur „ausschalten“-Frage, keine Nachtfrage.
+  function guard(name, devOf, opts) {
+    const orig = window[name];
+    if (typeof orig !== 'function') return;
+    let pending = null;
+    window[name] = function () {
+      const args = arguments;
+      const self = this;
+      const dev = devOf.apply(this, args);
+      const now = Date.now();
+      if (askBypass || haApplying || !dev || unlocked[`${name}|${dev}`] > now) return orig.apply(this, args);
+      const on = opts.isOn ? opts.isOn(dev) : false;
+      const offAsk = opts.isOn && on && (ha.confirm || []).includes(dev);
+      const nightAsk = nightActive();
+      if (!offAsk && !nightAsk) return orig.apply(this, args);
+      pending = { self, args };
+      if (askOpen()) return; // Frage ist schon offen (z. B. Regler wird weitergezogen) – nur den neuesten Wert merken
+      const what = opts.what(dev, args, on);
+      const n = ha.night || {};
+      askConfirm(
+        nightAsk ? 'Es ist Nachtzeit' : 'Wirklich ausschalten?',
+        nightAsk ? `Zwischen ${n.from} und ${n.to} frage ich lieber nach: Soll ich ${what}?` : `Soll ich ${what}?`,
+        opts.label ? opts.label(dev, args, on) : (on ? 'Ausschalten' : 'Einschalten'),
+        on || offAsk,
+        () => {
+          const p = pending || { self, args };
+          pending = null;
+          if (opts.sticky) unlocked[`${name}|${dev}`] = Date.now() + 30000;
+          askBypass = true;
+          try { orig.apply(p.self, p.args); } finally { askBypass = false; }
+          if (sockOpen) renderSocket(true);
+        }
+      );
+    };
+  }
+  const ledTarget = () => (typeof activeLedTarget !== 'undefined' ? activeLedTarget : 'simon');
+  const ledOn = dev => Boolean(ledObj(dev === 'led-schlaf' ? 'schlaf' : 'simon')?.isOn);
+  const switchWhat = (dev, args, on) => `${NAMES[dev] || 'das Gerät'} ${on ? 'ausschalten' : 'einschalten'}`;
+  guard('toggleSimonPc', () => 'pc-simon', { isOn: () => Boolean(window.simonPc?.isOn), what: switchWhat });
+  guard('toggleKuecheSocket', () => 'plug-kueche', { isOn: () => Boolean(window.kuecheSocket?.isOn), what: switchWhat });
+  guard('toggleSimonRoomLight', () => 'light-simon', { isOn: () => Boolean(window.simonRoomLight?.isOn), what: switchWhat });
+  guard('toggleSchlafRoomLight', () => 'light-schlaf', { isOn: () => Boolean(window.schlafRoomLight?.isOn), what: switchWhat });
+  guard('toggleFlurLed', () => 'led-flur', { isOn: () => Boolean(window.flurLed?.isOn), what: switchWhat });
+  guard('toggleSpecificLed', (t = 'simon') => LED_DEV[t], { isOn: ledOn, what: switchWhat });
+  guard('toggleSimonDeskLed', () => LED_DEV[ledTarget()], { isOn: ledOn, what: switchWhat });
+  // Farbe/Helligkeit schalten die LED auch ein -> nachts einmal fragen, dann 30 s frei regeln
+  const ledChange = (dev, args, on) => (on ? `${NAMES[dev]} ändern` : `${NAMES[dev]} einschalten`);
+  guard('setSimonDeskLedColor', () => LED_DEV[ledTarget()], { what: ledChange, sticky: true, label: (d, a, on) => (on ? 'Ändern' : 'Einschalten') });
+  guard('setSimonDeskLedBrightness', () => LED_DEV[ledTarget()], { what: ledChange, sticky: true, label: (d, a, on) => (on ? 'Ändern' : 'Einschalten') });
+  // Rollläden (Button, Menü, Regler, Klick ins 3D-Bild laufen alle über setActiveShutterPercent)
+  const shutterOf = (pct, shId) => shId || (typeof activeShutterId !== 'undefined' ? activeShutterId : null);
+  const shutterName = id => {
+    const sh = (window.shuttersRegistry || []).find(s => s.id === id);
+    return sh ? `den ${sh.name}` : 'den Rollladen';
+  };
+  guard('setActiveShutterPercent', shutterOf, {
+    sticky: true,
+    what: (dev, args) => {
+      const pct = Math.round(Number(args[0]));
+      return pct <= 0 ? `${shutterName(dev)} ganz öffnen` : pct >= 100 ? `${shutterName(dev)} ganz schließen` : `${shutterName(dev)} auf ${pct} % fahren`;
+    },
+    label: (dev, args) => (Math.round(Number(args[0])) >= 100 ? 'Schließen' : Math.round(Number(args[0])) <= 0 ? 'Öffnen' : 'Fahren')
+  });
+
+  // Hinweis im LED-Menü, wenn Home Assistant für die LED keine Farben meldet
+  function renderLedNote() {
+    const view = document.getElementById('gh-led-main-view');
+    if (!view) return;
+    let el = document.getElementById('led-ha-note');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'led-ha-note';
+      el.className = 'net-note';
+      view.appendChild(el);
+    }
+    const t = typeof activeLedTarget !== 'undefined' ? activeLedTarget : 'simon';
+    const st = (ha.devices || {})[LED_DEV[t]];
+    let text = '';
+    if (st && st.entity && !st.entity.startsWith('light.')) {
+      text = `In cloudy ist „${st.entity}“ zugeordnet – das ist ein Schalter, darum geht nur an/aus. Für Farben unter Einstellungen → 3D-Karte die light.-Entität der LED wählen.`;
+    } else if (st && st.color_ok === false) {
+      text = `Laut Home Assistant kann „${st.name || st.entity}“ keine Farben${st.dimmable ? ', nur an/aus und Helligkeit' : ', nur an/aus'}.`;
+    }
+    el.textContent = text;
+    el.style.display = text ? '' : 'none';
+  }
+  after('updateSimonDeskLedVisuals', renderLedNote);
+
   function applyHa() {
     const now = Date.now();
     const d = ha.devices || {};
@@ -737,7 +893,33 @@
     try {
       (window.shuttersRegistry || []).forEach(sh => {
         const st = d[sh.id];
-        if (fresh(sh.id) && !st.moving && typeof st.percent === 'number' && sh.targetPercent !== st.percent) sh.targetPercent = st.percent;
+        if (!st || !st.available) return;
+        if (!sh.travelSec) sh.travelSec = travelFor(sh.id);
+        const pct = typeof st.percent === 'number' ? st.percent : null;
+        if (!sh.haSynced && pct !== null) { // beim ersten Laden direkt die echte Stellung zeigen
+          sh.haSynced = true;
+          if (!st.moving) { sh.currentPercent = sh.targetPercent = pct; updateSingleShutter3D(sh); return; }
+        }
+        if (haHold[sh.id] > now) return;
+        const was = sh.haMoving;
+        sh.haMoving = st.moving ? (st.direction || 'closing') : null;
+        if (st.moving) {
+          const m = motion[sh.id] || (motion[sh.id] = { t0: now, p0: sh.currentPercent, seen: false, firstPct: null });
+          m.seen = true;
+          if (m.firstPct === null) m.firstPct = pct;
+          const end = sh.haMoving === 'opening' ? 0 : 100;
+          const sameWay = sh.userGoal != null && (end === 0 ? sh.userGoal <= sh.currentPercent : sh.userGoal >= sh.currentPercent);
+          sh.targetPercent = sameWay ? sh.userGoal : end;
+          // Meldet Home Assistant die Stellung schon während der Fahrt, daran ausrichten
+          if (pct !== null && pct !== m.firstPct && Math.abs(sh.currentPercent - pct) > 8) sh.currentPercent = pct;
+        } else {
+          const m = motion[sh.id];
+          if (m && pct !== null) learnTravel(sh, m, pct, now);
+          if (m && (m.seen || now - m.t0 > 6000)) delete motion[sh.id];
+          if (!motion[sh.id]) sh.userGoal = null;
+          if (pct !== null && sh.targetPercent !== pct && !motion[sh.id]) sh.targetPercent = pct;
+        }
+        if (was !== sh.haMoving && typeof updateSingleShutter3D === 'function') updateSingleShutter3D(sh);
       });
       let lights = false;
       [['light-simon', window.simonRoomLight], ['light-schlaf', window.schlafRoomLight]].forEach(([id, obj]) => {
@@ -752,6 +934,12 @@
         if (st.color && String(led.colorHex).toLowerCase() !== st.color) { led.colorHex = st.color; led.colorName = 'Eigene Farbe'; lights = true; }
       });
       if (lights && typeof updateSimonLightVisuals === 'function') updateSimonLightVisuals();
+      else renderLedNote();
+      const flur = window.flurLed;
+      if (flur && fresh('led-flur') && flur.isOn !== d['led-flur'].on) {
+        flur.isOn = d['led-flur'].on;
+        if (typeof updateFlurLedVisuals === 'function') updateFlurLedVisuals();
+      }
       const pc = window.simonPc;
       if (pc && fresh('pc-simon') && pc.isOn !== d['pc-simon'].on) {
         pc.isOn = d['pc-simon'].on;
@@ -769,8 +957,11 @@
     } finally {
       haApplying = false;
     }
+    renderSockBadge();
+    if (sockOpen) renderSocket(false);
   }
 
+  let haFast = null;
   async function syncHa() {
     try {
       const r = await fetch('/karte/ha', { cache: 'no-store' });
@@ -778,13 +969,162 @@
       ha = await r.json();
       if (!ha || !ha.devices) ha = { configured: false, devices: {} };
       applyHa();
-      if (!Object.keys(ha.devices).length) haStop(); // nichts verknüpft -> nicht weiter fragen
+      if (!Object.keys(ha.devices).length) { haStop(); return; } // nichts verknüpft -> nicht weiter fragen
+      // Fährt ein Rollladen, öfter nachfragen, damit die Karte im Takt bleibt
+      const moving = Object.values(ha.devices).some(st => st && st.moving) || Object.keys(motion).length > 0;
+      clearTimeout(haFast);
+      if (moving && haTimer) haFast = setTimeout(syncHa, 1500);
     } catch (e) { /* offline – Zustand bleibt */ }
   }
-  function haStart() { if (!haTimer) { syncHa(); haTimer = setInterval(syncHa, 8000); } }
-  function haStop() { if (haTimer) { clearInterval(haTimer); haTimer = null; } }
+  function haStart() { if (!haTimer) { syncHa(); haTimer = setInterval(syncHa, 4000); } }
+  function haStop() { if (haTimer) { clearInterval(haTimer); haTimer = null; } clearTimeout(haFast); }
   document.addEventListener('visibilitychange', () => (document.hidden ? haStop() : haStart()));
   window.addEventListener('load', () => { if (!document.hidden) haStart(); });
+  window.addEventListener('focus', () => { if (!document.hidden) { syncHa(); syncScreens(); } });
+
+  // ---------------------------------------------------------------- Steckdose: Einmal-Zeitplan
+  // Klick auf die Steckdose öffnet dieses Menü: um <Uhrzeit> an, nach <Minuten> wieder aus – einmal, dann ist der Plan weg.
+  // cloudy führt den Plan selbst aus (läuft also auch, wenn die Karte zu ist).
+  const SOCK_NAMES = { 'plug-kueche': 'Steckdose Küche' };
+  const SOCK_DEFAULT = { time: '16:00', minutes: 120 };
+  const sockForm = { ...SOCK_DEFAULT };
+  let sockBusy = false;
+  let sockSig = '';
+  const pad2 = n => String(n).padStart(2, '0');
+  const hhmm = d => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  function dayWord(d) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const day = new Date(d); day.setHours(0, 0, 0, 0);
+    const diff = Math.round((day - today) / 86400000);
+    return diff === 0 ? 'heute' : diff === 1 ? 'morgen' : day.toLocaleDateString('de-DE', { weekday: 'long' });
+  }
+  function nextStart(time) {
+    const [h, m] = String(time || '').split(':').map(Number);
+    const d = new Date();
+    d.setHours(h || 0, m || 0, 0, 0);
+    if (d.getTime() < Date.now() - 60000) d.setDate(d.getDate() + 1); // schon vorbei -> morgen
+    return d;
+  }
+  const sockTimer = dev => ((ha.timers || {})[dev]) || null;
+  const sockOn = dev => (dev === 'plug-kueche' && window.kuecheSocket ? window.kuecheSocket.isOn : false);
+
+  function timerText(t) {
+    const st = new Date(t.start * 1000);
+    const en = new Date(t.end * 1000);
+    return t.phase === 'on'
+      ? `Läuft – geht ${dayWord(en)} um ${hhmm(en)} aus`
+      : `Geplant: ${dayWord(st)} ${hhmm(st)} an, ${hhmm(en)} wieder aus`;
+  }
+
+  function renderSockBadge() {
+    const t = sockTimer('plug-kueche');
+    ['badge-plug-kueche', 'top-btn-kueche-plug'].forEach(id => {
+      const el = document.getElementById(id);
+      const sub = el && el.querySelector(id.startsWith('badge') ? '.gh-tile-sub' : 'span');
+      if (!sub) return;
+      const on = sockOn('plug-kueche');
+      const extra = !t ? '' : t.phase === 'on' ? ` · bis ${hhmm(new Date(t.end * 1000))}` : ` · ⏱ ${hhmm(new Date(t.start * 1000))}`;
+      const base = id.startsWith('badge') ? (on ? 'An' : 'Aus') : `Steckdose · ${on ? 'An' : 'Aus'}`;
+      if (sub.textContent !== base + extra) sub.textContent = base + extra;
+    });
+  }
+  after('updateKuecheSocketVisuals', renderSockBadge);
+
+  function renderSocket(force) {
+    const body = document.getElementById('net-popup-body');
+    if (!body || !sockOpen) return;
+    const dev = sockOpen;
+    const t = sockTimer(dev);
+    const on = sockOn(dev);
+    const isLinked = linked(dev);
+    const sig = JSON.stringify([t, on, isLinked, sockBusy, note]);
+    if (!force && sig === sockSig) return; // nicht neu zeichnen, sonst gehen Eingaben verloren
+    sockSig = sig;
+    document.getElementById('net-popup-title').textContent = SOCK_NAMES[dev] || 'Steckdose';
+    let html = `<div class="net-device"><span class="net-dot ${on ? 'on' : ''}"></span><div><div class="net-dev-name">${esc(SOCK_NAMES[dev] || dev)}</div>
+      <div class="net-dev-sub">Jetzt ${on ? 'an' : 'aus'}</div></div></div>`;
+    if (!isLinked) {
+      html += '<div class="net-note">Die Steckdose ist in cloudy keinem Home-Assistant-Gerät zugeordnet (Einstellungen → 3D-Karte), darum geht der Zeitplan nicht.</div>';
+    }
+    if (t) {
+      html += `<div class="net-section">Zeitplan</div><div class="sock-plan">⏱ ${esc(timerText(t))}</div>
+        <div class="net-options"><button class="net-option" data-sock="cancel" ${sockBusy ? 'disabled' : ''}><span>Zeitplan abbrechen${t.phase === 'on' ? ' und ausschalten' : ''}</span></button></div>`;
+    } else {
+      const st = nextStart(sockForm.time);
+      const en = new Date(st.getTime() + (Number(sockForm.minutes) || 0) * 60000);
+      html += `<div class="net-section">Einmal einschalten</div>
+        <div class="sock-form">
+          <label>Um <input type="time" class="sock-input" id="sock-time" value="${esc(sockForm.time)}"></label>
+          <label>für <input type="number" class="sock-input sock-min" id="sock-min" min="1" max="1440" step="5" value="${esc(sockForm.minutes)}"> Min.</label>
+        </div>
+        <div class="net-dev-sub" id="sock-preview">${esc(`${dayWord(st)} ${hhmm(st)} an, ${dayWord(en) === dayWord(st) ? '' : dayWord(en) + ' '}${hhmm(en)} wieder aus – läuft einmal`)}</div>
+        <div class="net-options"><button class="net-option active" data-sock="start" ${sockBusy || !isLinked ? 'disabled' : ''}><span>Zeitplan starten</span></button>
+        ${(sockForm.time !== SOCK_DEFAULT.time || Number(sockForm.minutes) !== SOCK_DEFAULT.minutes) ? '<button class="net-option" data-sock="reset"><span>Zurück auf Standard (16:00 · 120 Min.)</span></button>' : ''}</div>`;
+    }
+    html += `<div class="net-options"><button class="net-option" data-sock="toggle" ${sockBusy ? 'disabled' : ''}><span>Jetzt ${on ? 'ausschalten' : 'einschalten'}</span></button></div>`;
+    if (sockBusy) html += '<div class="net-note">Einen Moment …</div>';
+    else if (note) html += `<div class="net-note ${note.kind}">${esc(note.text)}</div>`;
+    body.innerHTML = html;
+    const time = document.getElementById('sock-time');
+    const min = document.getElementById('sock-min');
+    const preview = () => {
+      const p = document.getElementById('sock-preview');
+      const st = nextStart(sockForm.time);
+      const en = new Date(st.getTime() + (Number(sockForm.minutes) || 0) * 60000);
+      if (p) p.textContent = `${dayWord(st)} ${hhmm(st)} an, ${dayWord(en) === dayWord(st) ? '' : dayWord(en) + ' '}${hhmm(en)} wieder aus – läuft einmal`;
+    };
+    if (time) time.addEventListener('input', () => { sockForm.time = time.value || SOCK_DEFAULT.time; preview(); });
+    if (min) min.addEventListener('input', () => { sockForm.minutes = min.value; preview(); });
+    body.querySelectorAll('[data-sock]:not(:disabled)').forEach(b => b.addEventListener('click', () => sockAction(dev, b.dataset.sock)));
+  }
+
+  async function sockAction(dev, what) {
+    if (what === 'reset') { Object.assign(sockForm, SOCK_DEFAULT); note = null; renderSocket(true); return; }
+    if (what === 'toggle') {
+      note = null;
+      if (dev === 'plug-kueche' && window.toggleKuecheSocket) window.toggleKuecheSocket();
+      renderSocket(true);
+      return;
+    }
+    const minutes = Math.round(Number(sockForm.minutes));
+    if (what === 'start' && !(minutes >= 1 && minutes <= 1440)) {
+      note = { kind: 'error', text: 'Die Dauer muss zwischen 1 und 1440 Minuten liegen.' };
+      renderSocket(true);
+      return;
+    }
+    sockBusy = true; note = null; renderSocket(true);
+    try {
+      const body = what === 'cancel' ? { device: dev, cancel: true }
+        : { device: dev, start: Math.floor(nextStart(sockForm.time).getTime() / 1000), minutes };
+      const r = await fetch('/karte/zeitplan', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(body)
+      });
+      let data = null;
+      try { data = await r.json(); } catch (e) { /* kein JSON */ }
+      if (!r.ok || !data || !data.ok) note = { kind: 'error', text: (data && (data.error || data.detail)) || 'Hat nicht geklappt.' };
+      else {
+        ha.timers = data.timers || {};
+        const t = ha.timers[dev];
+        note = what === 'cancel' ? { kind: 'ok', text: 'Zeitplan abgebrochen.' }
+          : { kind: 'ok', text: t ? `Erstellt für ${dayWord(new Date(t.start * 1000))}. Danach ist der Plan weg – zum Wiederholen einfach neu starten.` : 'Erstellt.' };
+      }
+    } catch (e) {
+      note = { kind: 'error', text: 'cloudy ist gerade nicht erreichbar.' };
+    } finally {
+      sockBusy = false;
+      renderSockBadge();
+      renderSocket(true);
+      setTimeout(syncHa, 1500);
+    }
+  }
+
+  window.openSocketPopup = function (dev) {
+    if (window.closeShutterPopup) window.closeShutterPopup();
+    if (window.closeSimonLedPopup) window.closeSimonLedPopup();
+    openScreenId = null; meinOpen = false; stackOpen = null; sockOpen = dev; note = null;
+    showNetPopup();
+    if (!haTimer && !document.hidden) haStart(); else syncHa();
+  };
 
   installRouting();
 })();

@@ -112,7 +112,7 @@ def test_karte_home_assistant(client, monkeypatch):
         return entities if path == "/api/states" else {"message": "API running."}
 
     monkeypatch.setattr(ha, "_call", fake_call)
-    assert client.get("/karte/ha").json() == {"configured": False, "devices": {}, "error": ""}
+    assert client.get("/karte/ha").json() == {"configured": False, "devices": {}, "error": "", "timers": {}, "confirm": [], "night": None}
     assert "ha_fehler" in client.post("/karte/einstellungen/ha", data={"aktion": "verbinden", "ha_url": "ftp://x"},
                                       follow_redirects=False).headers["location"]
     r = client.post("/karte/einstellungen/ha", data={"aktion": "verbinden", "ha_url": "http://ha.local:8123/", "ha_token": "abc"},
@@ -150,6 +150,46 @@ def test_karte_home_assistant(client, monkeypatch):
     client.post("/karte/ha", json={"device": "light-simon", "action": "on"})
     assert calls[-1] == ("POST", "/api/services/homeassistant/turn_on", {"entity_id": "fan.luefter"})
     ha.save_mapping({k: v for k, v in ha.mapping().items() if k != "light-simon"})
+    # LED, die keine Farben kann: einschalten klappt, die Karte bekommt einen verständlichen Hinweis
+    entities[1]["attributes"]["supported_color_modes"] = ["brightness"]
+    assert client.get("/karte/ha").json()["devices"]["led-simon"]["color_ok"] is False
+    r = client.post("/karte/ha", json={"device": "led-simon", "action": "on", "value": {"color": "#00ff00"}})
+    assert r.status_code == 400 and "keine Farben" in r.json()["error"]
+    assert calls[-1] == ("POST", "/api/services/light/turn_on", {"entity_id": "light.tisch_led"})
+
+    # Steckdose: einmal um <start> an, nach <minutes> aus, danach ist der Plan weg
+    import time as _time
+    now = _time.time()
+    assert client.post("/karte/zeitplan", json={"device": "shutter-simon-win", "start": now, "minutes": 5}).status_code == 400
+    assert client.post("/karte/zeitplan", json={"device": "plug-kueche", "start": now + 3600, "minutes": 0}).status_code == 400
+    r = client.post("/karte/zeitplan", json={"device": "plug-kueche", "start": now + 3600, "minutes": 120}).json()
+    assert r["ok"] and r["timers"]["plug-kueche"]["phase"] == "wait"
+    assert r["timers"]["plug-kueche"]["end"] - r["timers"]["plug-kueche"]["start"] == 7200
+    assert client.get("/karte/ha").json()["timers"]["plug-kueche"]["phase"] == "wait"
+    calls.clear()
+    ha.timer_tick(now + 3601)
+    assert calls[-1] == ("POST", "/api/services/switch/turn_on", {"entity_id": "switch.kueche"})
+    assert ha.timers()["plug-kueche"]["phase"] == "on"
+    ha.timer_tick(now + 3600 + 7201)
+    assert calls[-1] == ("POST", "/api/services/switch/turn_off", {"entity_id": "switch.kueche"}) and ha.timers() == {}
+    client.post("/karte/zeitplan", json={"device": "plug-kueche", "start": now + 60, "minutes": 10})
+    assert client.post("/karte/zeitplan", json={"device": "plug-kueche", "cancel": True}).json()["timers"] == {}
+
+    # Vor dem Ausschalten fragen: pro Gerät in den Einstellungen, Rollläden nicht
+    client.post("/karte/einstellungen/ha", data={"aktion": "zuordnen", **{f"ha_{k}": v for k, v in ha.mapping().items()},
+                                                 "confirm_pc-simon": "1", "confirm_shutter-simon-win": "1"})
+    assert client.get("/karte/ha").json()["confirm"] == ["pc-simon"]
+    assert 'name="confirm_pc-simon" value="1" checked' in client.get("/karte/einstellungen").text
+    # Nachtzeit: über Mitternacht erlaubt, gleiche Zeiten nicht, ohne Haken aus
+    form = {"aktion": "zuordnen", **{f"ha_{k}": v for k, v in ha.mapping().items()}}
+    client.post("/karte/einstellungen/ha", data={**form, "nacht_an": "1", "nacht_von": "22:30", "nacht_bis": "06:45"})
+    assert client.get("/karte/ha").json()["night"] == {"from": "22:30", "to": "06:45"}
+    r = client.post("/karte/einstellungen/ha", data={**form, "nacht_an": "1", "nacht_von": "22:00", "nacht_bis": "22:00"},
+                    follow_redirects=False)
+    assert "ha_fehler" in r.headers["location"] and ha.night() == {"from": "22:30", "to": "06:45"}
+    client.post("/karte/einstellungen/ha", data={**form, "nacht_von": "22:30", "nacht_bis": "06:45"})
+    assert client.get("/karte/ha").json()["night"] is None
+
     monkeypatch.setenv("DASHBOARD_PASSWORD", "geheim")  # Schalten geht für alle im Heimnetz auch mit Passwort
     assert client.post("/karte/ha", json={"device": "plug-kueche", "action": "on"}).json()["ok"]
     assert client.get("/karte/einstellungen").status_code == 401

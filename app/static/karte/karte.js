@@ -1570,6 +1570,66 @@ function registerScreen(cfg) {
 })();
 
 // 3. WOHNUNG 2 — UNTEN / SÜD (px: 486..954, py: 372..704)
+// ============================================================================
+// LED-BAND IM FLUR (Wohnung 1) – kann nur an/aus, warmweiß
+// ============================================================================
+(function buildFlurLed() {
+  const ledY = 2.68; // knapp unter der Decke
+  const group = new THREE.Group();
+  scene.add(group);
+  const stripMat = new THREE.MeshStandardMaterial({ color: 0x334155, emissive: 0x000000, emissiveIntensity: 0, roughness: 0.4 });
+  const glowCanvas = document.createElement('canvas');
+  glowCanvas.width = 64;
+  glowCanvas.height = 64;
+  const gctx = glowCanvas.getContext('2d');
+  const grad = gctx.createRadialGradient(32, 32, 2, 32, 32, 31);
+  grad.addColorStop(0, 'rgba(255,255,255,0.55)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  gctx.fillStyle = grad;
+  gctx.fillRect(0, 0, 64, 64);
+  const floorGlowMat = new THREE.MeshBasicMaterial({ color: 0xffd9a0, map: new THREE.CanvasTexture(glowCanvas), transparent: true, opacity: 0.38, depthWrite: false });
+
+  // Leiste entlang des Flurs: vorderer Teil, Durchgang neben der Abstellkammer, oberer Teil
+  const runs = [
+    [661, 300, 661, 438],
+    [650, 311, 705, 311],
+    [719, 289, 805, 289]
+  ];
+  const strips = [];
+  const glows = [];
+  runs.forEach(([x1, y1, x2, y2]) => {
+    const len = Math.hypot(x2 - x1, y2 - y1) * SCALE;
+    const alongX = Math.abs(x2 - x1) > Math.abs(y2 - y1);
+    const strip = new THREE.Mesh(
+      new THREE.BoxGeometry(alongX ? len : 0.05, 0.02, alongX ? 0.05 : len),
+      stripMat
+    );
+    strip.position.set(toX((x1 + x2) / 2), ledY, toZ((y1 + y2) / 2));
+    group.add(strip);
+    strips.push(strip);
+    const glow = new THREE.Mesh(new THREE.PlaneGeometry(alongX ? len + 0.6 : 1.2, alongX ? 1.2 : len + 0.6), floorGlowMat);
+    glow.rotation.x = -Math.PI / 2;
+    glow.position.set(toX((x1 + x2) / 2), 0.03, toZ((y1 + y2) / 2));
+    group.add(glow);
+    glows.push(glow);
+  });
+  const pointLight = new THREE.PointLight(0xffd9a0, 0, 8.0, 1.4);
+  pointLight.position.set(toX(690), 2.4, toZ(330));
+  scene.add(pointLight);
+
+  window.flurLed = {
+    isOn: false,
+    roomId: 'label-flur',
+    // Button oben an der Wandecke zwischen Abstellkammer-Tür und oberem Flur
+    worldPos: new THREE.Vector3(toX(704), 2.55, toZ(292)),
+    stripMat,
+    strips,
+    glows,
+    pointLight,
+    meshes: strips
+  };
+})();
+
 (function buildWohnung2() {
   // West Room & Entrance Foyer (px: 486..638, py: 372..498)
   addRectFloor('w2', 486, 372, 638, 498);
@@ -2360,24 +2420,31 @@ const roomLabels = [
     cutawayDir: [1, 1]
   },
   {
-    id: 'label-flur1',
+    // Ganzer Flur als ein Raum (L-Form): oberer Teil vor Simons Zimmer/Arbeitszimmer, Durchgang neben der
+    // Abstellkammer und der vordere Teil bis zur Wohnungstür – inklusive der Ecke über dem Bad.
+    id: 'label-flur',
     apt: 'w1',
-    text: 'Flur (Oben)',
+    text: 'Flur',
     color: '#2563eb',
-    x: 762,
-    z: 292,
-    bounds: [712, 248, 812, 330],
-    cutawayDir: [-1, 1]
-  },
-  {
-    id: 'label-flur2',
-    apt: 'w1',
-    text: 'Flur (Vorne)',
-    color: '#2563eb',
-    x: 661,
-    z: 335,
-    bounds: [638, 292, 684, 445],
-    // Kamera von Süd-West -> Nordecke (Telefon-Eckregal) & Ostwand (Jackenhaken) sichtbar
+    x: 668,
+    z: 340,
+    bounds: [638, 248, 812, 445],
+    poly: [
+      [712, 248],
+      [812, 248],
+      [812, 330],
+      [760, 330],
+      [760, 386],
+      [714, 386],
+      [714, 362],
+      [684, 362],
+      [684, 445],
+      [638, 445],
+      [638, 292],
+      [712, 292]
+    ],
+    polyHit: true, // Zugehörigkeit über die Form statt über das Rechteck (sonst gehörten Bad & Abstellkammer dazu)
+    // Kamera von Süd-West -> Nordecke (Telefon-Eckregal) & Ostwand sichtbar
     cutawayDir: [-1, 1]
   },
   {
@@ -2518,7 +2585,8 @@ const CONTROL_ROOM_IDS = new Set([
   ...(window.screensRegistry || []).map(s => s.roomId),
   ...(window.simonRoomLight || window.simonDeskLed || window.simonPc ? ['label-simon'] : []),
   ...(window.schlafRoomLight || window.schlafCeilingLed ? ['label-schlaf'] : []),
-  ...(window.kuecheSocket ? ['label-kueche'] : [])
+  ...(window.kuecheSocket ? ['label-kueche'] : []),
+  ...(window.flurLed ? ['label-flur'] : [])
 ].filter(Boolean));
 window.isControlRoom = id => CONTROL_ROOM_IDS.has(id);
 
@@ -2622,10 +2690,32 @@ function doesPointBelongToRoom(px, py, room, margin = 0) {
   if (room.id === 'label-bad' && px > 714 + margin && py < 386 - margin) {
     return false;
   }
-  if (room.id === 'label-flur2' && px > 684 + margin && py > 362 - margin) {
-    return false;
+  if (room.polyHit && room.poly) {
+    return pointInPoly(px, py, room.poly) || distToPoly(px, py, room.poly) <= margin;
   }
   return true;
+}
+
+function pointInPoly(px, py, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i];
+    const [xj, yj] = poly[j];
+    if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+function distToPoly(px, py, poly) {
+  let best = Infinity;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [x1, y1] = poly[j];
+    const [x2, y2] = poly[i];
+    const len2 = (x2 - x1) ** 2 + (y2 - y1) ** 2;
+    const t = len2 ? Math.max(0, Math.min(1, ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / len2)) : 0;
+    best = Math.min(best, Math.hypot(px - (x1 + t * (x2 - x1)), py - (y1 + t * (y2 - y1))));
+  }
+  return best;
 }
 
 // Tag all furniture & floor meshes once with their original material and owning roomId
@@ -2941,6 +3031,7 @@ function updateSimonLightVisuals() {
   }
 
   updateSimonDeskLedVisuals();
+  updateFlurLedVisuals();
 }
 
 window.toggleSimonRoomLight = function() {
@@ -3564,10 +3655,53 @@ function updateKuecheSocketVisuals() {
   }
 }
 
+// Klick auf die Steckdose öffnet das Zeitplan-Menü aus cloudy.js (ohne cloudy: direkt umschalten)
+function openKuecheSocketMenu() {
+  if (typeof window.openSocketPopup === 'function') window.openSocketPopup('plug-kueche');
+  else window.toggleKuecheSocket();
+}
+
 window.toggleKuecheSocket = function() {
   if (!window.kuecheSocket) return;
   window.kuecheSocket.isOn = !window.kuecheSocket.isOn;
   updateKuecheSocketVisuals();
+};
+
+function updateFlurLedVisuals() {
+  const led = window.flurLed;
+  if (!led) return;
+  const inView = !activeRoomId || activeRoomId === led.roomId;
+  led.strips.forEach(m => { m.visible = inView; });
+  led.glows.forEach(m => { m.visible = inView && led.isOn; });
+  led.pointLight.intensity = led.isOn && inView ? (activeRoomId ? 1.8 : 1.0) : 0;
+  if (led.isOn) {
+    led.stripMat.color.setHex(0xfff1d6);
+    led.stripMat.emissive.setHex(0xffc978);
+    led.stripMat.emissiveIntensity = 1.8;
+  } else {
+    led.stripMat.color.setHex(0x334155);
+    led.stripMat.emissive.setHex(0x000000);
+    led.stripMat.emissiveIntensity = 0;
+  }
+  const svg = led.isOn
+    ? `<svg class="gh-tile-icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="9.5" r="6.2" fill="currentColor"/><path d="M9.2 17.5h5.6M10.4 20.2h3.2" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg>`
+    : `<svg class="gh-tile-icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="9.5" r="5.5" stroke="currentColor" stroke-width="2.1"/><path d="M9.2 17.5h5.6M10.4 20.2h3.2" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg>`;
+  const badge = document.getElementById('badge-led-flur');
+  if (badge) {
+    badge.classList.toggle('on', led.isOn);
+    badge.innerHTML = `${svg}<div class="gh-tile-text"><span class="gh-tile-title">LED-Band</span><span class="gh-tile-sub">${led.isOn ? 'An' : 'Aus'}</span></div>`;
+  }
+  const topBtn = document.getElementById('top-btn-flur-led');
+  if (topBtn) {
+    topBtn.classList.toggle('active', led.isOn);
+    topBtn.innerHTML = `${svg.replace('gh-tile-icon', 'gh-inline-icon')}<span>LED-Band · ${led.isOn ? 'An' : 'Aus'}</span>`;
+  }
+}
+
+window.toggleFlurLed = function() {
+  if (!window.flurLed) return;
+  window.flurLed.isOn = !window.flurLed.isOn;
+  updateFlurLedVisuals();
 };
 
 function toggleRoomHeaderDropdown(e, forceState) {
@@ -3675,8 +3809,17 @@ function updateRoomBarButtons(room) {
       ? `<svg class="gh-inline-icon" viewBox="0 0 24 24" fill="none"><path d="M9 3v5M15 3v5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M6.5 8h11v4.5a5.5 5.5 0 0 1-11 0V8z" fill="currentColor"/><path d="M12 18v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`
       : `<svg class="gh-inline-icon" viewBox="0 0 24 24" fill="none"><path d="M9 3v5M15 3v5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M6.5 8h11v4.5a5.5 5.5 0 0 1-11 0V8z" stroke="currentColor" stroke-width="2"/><path d="M12 18v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
     btnPlug.innerHTML = `${plugSvg}<span>Steckdose · ${window.kuecheSocket.isOn ? 'An' : 'Aus'}</span>`;
-    btnPlug.onclick = () => toggleKuecheSocket();
+    btnPlug.onclick = () => openKuecheSocketMenu();
     btnsEl.appendChild(btnPlug);
+  }
+
+  if (room.id === 'label-flur' && window.flurLed) {
+    const btnFlur = document.createElement('button');
+    btnFlur.id = 'top-btn-flur-led';
+    btnFlur.className = 'door-pill';
+    btnFlur.onclick = () => toggleFlurLed();
+    btnsEl.appendChild(btnFlur);
+    updateFlurLedVisuals();
   }
 
   // Rollläden dieses Raumes ebenfalls in die Raum-Aktionen aufnehmen
@@ -3836,21 +3979,14 @@ renderer.domElement.addEventListener('pointerup', e => {
   );
   raycaster.setFromCamera(mouse, camera);
 
-  // Wenn man in einem Raum ist: Direkter Klick auf 3D-Objekte im Raum schaltet diese sofort um!
+  // Wenn man in einem Raum ist: Klick auf einen Rollladen oder die Steckdose bedient diese direkt.
   if (activeRoomId) {
     const isTouch = e.pointerType === 'touch' || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches && window.innerWidth <= 1024);
 
-    // 1. Screens / Monitore
-    const roomScreens = (window.screensRegistry || []).filter(s => s.roomId === activeRoomId);
-    const screenMeshes = roomScreens.map(s => s.mesh).filter(Boolean);
-    const screenHits = raycaster.intersectObjects(screenMeshes, false);
-    if (screenHits.length > 0) {
-      const hitScr = roomScreens.find(s => s.mesh === screenHits[0].object);
-      if (hitScr) toggleScreenPower(hitScr.id);
-      return;
-    }
+    // Bildschirme, Lampen, LEDs und PC schalten nur über ihre Buttons – ein Klick ins 3D-Bild (z. B. in den
+    // Lichtkegel) soll nichts aus Versehen umschalten.
 
-    // 2. 3D Rollläden (Fenster / Tür Vorhänge & Lamellen) direkt anklicken zum Auf/Zu-Toggeln
+    // 1. 3D Rollläden (Fenster / Tür Vorhänge & Lamellen) direkt anklicken zum Auf/Zu-Toggeln
     const roomShutters = (window.shuttersRegistry || []).filter(s => s.roomId === activeRoomId);
     const shutterMeshes = [];
     roomShutters.forEach(sh => {
@@ -3875,66 +4011,12 @@ renderer.domElement.addEventListener('pointerup', e => {
       return;
     }
 
-    // 3. 3D Schreibtisch & Tisch-LED in Simons Zimmer
-    if (activeRoomId === 'label-simon' && window.simonDeskLed) {
-      const deskMeshes = (window.simonDeskLed.meshes || []).filter(Boolean);
-      const deskHits = raycaster.intersectObjects(deskMeshes, true);
-      if (deskHits.length > 0) {
-        toggleSimonDeskLed();
-        if (!isTouch && window.openSimonLedPopup) {
-          window.openSimonLedPopup('simon', false);
-        }
-        return;
-      }
-    }
-
-    // 4. 3D Decken-LED im Schlafzimmer
-    if (activeRoomId === 'label-schlaf' && window.schlafCeilingLed) {
-      const ceilingMeshes = (window.schlafCeilingLed.meshes || []).filter(Boolean);
-      const cHits = raycaster.intersectObjects(ceilingMeshes, true);
-      if (cHits.length > 0) {
-        window.toggleSpecificLed('schlaf');
-        if (!isTouch && window.openSchlafLedPopup) {
-          window.openSchlafLedPopup(false);
-        }
-        return;
-      }
-    }
-
-    // 5. 3D Deckenlampen (Simons Zimmer & Schlafzimmer)
-    if (activeRoomId === 'label-simon' && window.simonRoomLight) {
-      const lMeshes = (window.simonRoomLight.meshes || []).filter(Boolean);
-      const lHits = raycaster.intersectObjects(lMeshes, false);
-      if (lHits.length > 0) {
-        toggleSimonRoomLight();
-        return;
-      }
-    }
-    if (activeRoomId === 'label-schlaf' && window.schlafRoomLight) {
-      const lMeshes = (window.schlafRoomLight.meshes || []).filter(Boolean);
-      const lHits = raycaster.intersectObjects(lMeshes, false);
-      if (lHits.length > 0) {
-        toggleSchlafRoomLight();
-        return;
-      }
-    }
-
-    // 6. 3D PC-Tower
-    if (activeRoomId === 'label-simon' && window.simonPc) {
-      const pcMeshes = (window.simonPc.meshes || []).filter(Boolean);
-      const pcHits = raycaster.intersectObjects(pcMeshes, false);
-      if (pcHits.length > 0) {
-        toggleSimonPc();
-        return;
-      }
-    }
-
-    // 7. 3D Küchen-Steckdose
+    // 2. 3D Küchen-Steckdose -> Zeitplan-Menü
     if (activeRoomId === 'label-kueche' && window.kuecheSocket) {
       const sockMeshes = (window.kuecheSocket.meshes || []).filter(Boolean);
       const sockHits = raycaster.intersectObjects(sockMeshes, false);
       if (sockHits.length > 0) {
-        toggleKuecheSocket();
+        openKuecheSocketMenu();
         return;
       }
     }
@@ -3952,9 +4034,7 @@ renderer.domElement.addEventListener('pointerup', e => {
       ...roomLabels.filter(r => r.id === 'label-bad'),
       ...roomLabels.filter(r => r.id !== 'label-bad')
     ];
-    const hitRoom = orderedRooms.find(r =>
-      r.bounds && px >= r.bounds[0] && px <= r.bounds[2] && py >= r.bounds[1] && py <= r.bounds[3]
-    );
+    const hitRoom = orderedRooms.find(r => r.bounds && doesPointBelongToRoom(px, py, r));
     if (hitRoom && activeRoomId !== hitRoom.id) {
       enterRoomView(hitRoom.id, 'cutaway');
     }
@@ -4299,14 +4379,27 @@ function initShuttersUI() {
     kPlugBtn.id = 'badge-plug-kueche';
     kPlugBtn.title = 'Steckdose an der Küchenwand neben dem Tisch an- und ausschalten';
     makeSmartButton(kPlugBtn, {
-      onShortClick: () => toggleKuecheSocket()
+      onShortClick: () => openKuecheSocketMenu()
     });
     layer.appendChild(kPlugBtn);
+  }
+
+  // Schwebender Button für das LED-Band im Flur (nur an/aus)
+  if (window.flurLed) {
+    const fLedBtn = document.createElement('div');
+    fLedBtn.className = 'light-badge';
+    fLedBtn.id = 'badge-led-flur';
+    fLedBtn.title = 'LED-Band im Flur an- und ausschalten';
+    makeSmartButton(fLedBtn, {
+      onShortClick: () => toggleFlurLed()
+    });
+    layer.appendChild(fLedBtn);
   }
 
   updateSimonLightVisuals();
   updateSimonPcVisuals();
   updateKuecheSocketVisuals();
+  updateFlurLedVisuals();
   updateAllScreensVisuals();
 }
 
@@ -4325,8 +4418,11 @@ function updateSingleShutter3D(sh) {
   const rounded = Math.round(sh.currentPercent);
   if (badgeEl) badgeEl.classList.toggle('on', rounded < 100);
   if (fillEl) fillEl.style.height = `${rounded}%`;
+  const moving = Math.abs(sh.targetPercent - sh.currentPercent) > 0.5 || Boolean(sh.haMoving);
+  const goingUp = sh.haMoving ? sh.haMoving === 'opening' : sh.targetPercent < sh.currentPercent;
   if (txtEl) {
-    txtEl.textContent = rounded === 0 ? 'Offen · 0%' : (rounded === 100 ? 'Zu · 100%' : `${rounded}%`);
+    txtEl.textContent = moving ? `${rounded}% · fährt ${goingUp ? 'auf' : 'zu'}`
+      : rounded === 0 ? 'Offen · 0%' : (rounded === 100 ? 'Zu · 100%' : `${rounded}%`);
   }
   const topShBtn = document.getElementById(`top-btn-shutter-${sh.id}`);
   if (topShBtn) {
@@ -4427,9 +4523,21 @@ function updateShuttersAndBadges() {
   const halfW = window.innerWidth / 2;
   const halfH = window.innerHeight / 2;
 
+  const nowMs = performance.now();
+  const dtSec = Math.min(0.25, (nowMs - (updateShuttersAndBadges.lastMs || nowMs)) / 1000);
+  updateShuttersAndBadges.lastMs = nowMs;
+
   window.shuttersRegistry.forEach(sh => {
-    // Smooth electric motor animation towards targetPercent
-    if (Math.abs(sh.currentPercent - sh.targetPercent) > 0.15) {
+    if (sh.travelSec) {
+      // Mit Home Assistant verknüpft: gleichmäßig im echten Motor-Tempo (travelSec = ganz auf bis ganz zu)
+      const step = (100 / sh.travelSec) * dtSec;
+      const diff = sh.targetPercent - sh.currentPercent;
+      if (Math.abs(diff) > 0.01) {
+        sh.currentPercent = Math.abs(diff) <= step ? sh.targetPercent : sh.currentPercent + Math.sign(diff) * step;
+        updateSingleShutter3D(sh);
+      }
+    } else if (Math.abs(sh.currentPercent - sh.targetPercent) > 0.15) {
+      // Ohne Home Assistant: kurze, weiche Animation
       sh.currentPercent += (sh.targetPercent - sh.currentPercent) * 0.12;
       updateSingleShutter3D(sh);
     } else if (sh.currentPercent !== sh.targetPercent) {
@@ -4584,6 +4692,24 @@ function updateShuttersAndBadges() {
       kuechePlugBadge.style.display = 'inline-flex';
       kuechePlugBadge.style.left = `${kx}px`;
       kuechePlugBadge.style.top = `${ky}px`;
+    }
+  }
+
+  // LED-Band-Button im Flur oben an der Wandecke
+  const flurBadge = document.getElementById('badge-led-flur');
+  if (flurBadge && window.flurLed) {
+    if (activeRoomId !== 'label-flur') {
+      flurBadge.style.display = 'none';
+    } else {
+      const fp = window.flurLed.worldPos.clone();
+      fp.y *= groups.w1.walls.scale.y;
+      fp.project(camera);
+      const padX = Math.min(85, window.innerWidth * 0.2);
+      const fx = Math.max(padX, Math.min(window.innerWidth - padX, (fp.x * halfW) + halfW));
+      const fy = Math.max(82, Math.min(window.innerHeight - 95, -(fp.y * halfH) + halfH));
+      flurBadge.style.display = 'inline-flex';
+      flurBadge.style.left = `${fx}px`;
+      flurBadge.style.top = `${fy}px`;
     }
   }
 }

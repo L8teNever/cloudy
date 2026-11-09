@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import autoswitch, blocklist, charts, db, dnsprofile, festeip, fritz, localdomain, ordnung, policy, stats, system_info, warp
+from . import autoswitch, blocklist, charts, db, dnsprofile, fernzugriff, festeip, fritz, localdomain, ordnung, policy, stats, system_info, warp
 from .settings import Settings
 
 BASE_DIR = Path(__file__).parent
@@ -602,6 +602,8 @@ def localdomain_ctx(request: Request) -> dict:
         "cert": info,
         "redirect_certs": sorted(localdomain.real_cert_hosts(s) - set(localdomain.domains())),
         "status": localdomain.status(),
+        "fern": {**fernzugriff.load(), "pages": fernzugriff.PAGES, "tunnel": fernzugriff.tunnel_status(s),
+                 "error": request.query_params.get("fern_fehler", ""), "default_days": fernzugriff.DEFAULT_DAYS},
     }
 
 

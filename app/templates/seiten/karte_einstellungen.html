@@ -79,19 +79,33 @@
     <div style="display:grid;gap:.5rem">
       {% for dev, label in devices %}
       {% set cur = ha.map.get(dev, '') %}
-      <label class="small" style="display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,2fr);gap:.6rem;align-items:center">
-        <span><strong>{{ label }}</strong></span>
+      <div class="small" style="display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,2fr);gap:.6rem;align-items:center">
+        <span><strong>{{ label }}</strong>
+          {% if kind != 'cover' %}<br><label class="muted" style="display:inline-flex;gap:.35rem;align-items:center;font-weight:400;margin-top:.2rem">
+            <input type="checkbox" name="confirm_{{ dev }}" value="1" {% if dev in ha.confirm %}checked{% endif %}> Vor dem Ausschalten fragen</label>{% endif %}
+        </span>
         <select name="ha_{{ dev }}" data-ha-kind="{{ kind }}" style="width:100%">
           <option value="">– nicht verknüpft (nur Anzeige auf der Karte) –</option>
           {% if cur %}<option value="{{ cur }}" selected>{{ cur }}</option>{% endif %}
         </select>
-      </label>
+      </div>
       {% endfor %}
     </div>
     {% endfor %}
+    <h3 style="margin:1.1rem 0 .5rem">Nachtzeit</h3>
+    {% set nacht = ha.night or {} %}
+    <div class="small" style="display:flex;flex-wrap:wrap;gap:.6rem 1rem;align-items:center">
+      <label style="display:inline-flex;gap:.4rem;align-items:center"><input type="checkbox" name="nacht_an" value="1" {% if ha.night %}checked{% endif %}> In der Nacht immer nachfragen</label>
+      <label style="display:inline-flex;gap:.4rem;align-items:center">von <input type="time" name="nacht_von" value="{{ nacht.get('from', '22:00') }}"></label>
+      <label style="display:inline-flex;gap:.4rem;align-items:center">bis <input type="time" name="nacht_bis" value="{{ nacht.get('to', '07:00') }}"></label>
+    </div>
+    <div class="muted small" style="margin:.4rem 0 0">
+      In dieser Zeit fragt die Karte bei jedem Licht, jeder LED, der Steckdose, dem PC und jedem Rollladen nach – beim Ein- und beim Ausschalten –, damit nachts nichts aus Versehen passiert.
+    </div>
     <div class="muted small" style="margin:.75rem 0">
       Rollläden ohne Positionsangabe fahren nur ganz auf oder ganz zu. Bei den LEDs gehen Farbe und Helligkeit mit, wenn das Licht Farben kann.
       Schalten auf der Karte kann jeder im Heimnetz, ohne Passwort – aber nur die hier verknüpften Geräte.
+      Mit „Vor dem Ausschalten fragen“ (z. B. beim PC) zeigt die Karte vor dem Ausschalten ein Pop-up, erst nach „Ausschalten“ geht das Gerät aus.
     </div>
     <button type="submit">Zuordnung speichern</button>
   </form>

@@ -41,6 +41,8 @@ jobs:
           - { context: vpn,  tag: vpn,    scope: vpn,      platform: linux/arm64, runner: ubuntu-24.04-arm }
           - { context: warp, tag: warp,   scope: warp,     platform: linux/amd64, runner: ubuntu-latest }
           - { context: warp, tag: warp,   scope: warp,     platform: linux/arm64, runner: ubuntu-24.04-arm }
+          - { context: tunnel, tag: tunnel, scope: tunnel, platform: linux/amd64, runner: ubuntu-latest }
+          - { context: tunnel, tag: tunnel, scope: tunnel, platform: linux/arm64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v4
 
@@ -82,7 +84,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Digests zu Multi-Arch-Tags zusammenführen (latest / vpn / warp).
+  # Digests zu Multi-Arch-Tags zusammenführen (latest / vpn / warp / tunnel).
   merge:
     needs: [build]
     runs-on: ubuntu-latest
@@ -96,6 +98,7 @@ jobs:
           - { tag: latest, sha_prefix: "sha-" }
           - { tag: vpn,    sha_prefix: "vpn-" }
           - { tag: warp,   sha_prefix: "warp-" }
+          - { tag: tunnel, sha_prefix: "tunnel-" }
     steps:
       - uses: actions/download-artifact@v4
         with:

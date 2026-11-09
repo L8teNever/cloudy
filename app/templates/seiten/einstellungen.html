@@ -20,6 +20,7 @@
 <div class="jump" role="navigation" aria-label="Abschnitte">
   <a href="#zugriff">Zugriff &amp; Links</a>
   <a href="#lokale-domain">Eigene Domains</a>
+  <a href="#fernzugriff">Von außen</a>
   {% if settings.https_port %}<a href="#zertifikat">Stammzertifikat</a>{% endif %}
   <a href="#system">System &amp; Pi-IP</a>
 </div>
@@ -177,11 +178,75 @@
   {% endif %}
 
   <div class="info small" style="margin:1rem 0 0">
-    <b>Wichtig:</b> Bei Cloudflare darf es für diese Domains keinen öffentlichen DNS-Eintrag auf deine Zuhause-Adresse geben.
+    <b>Wichtig:</b> Bei Cloudflare darf es für diese Domains keinen öffentlichen DNS-Eintrag auf deine Zuhause-Adresse geben (die Namen unter „Von außen erreichbar“ zeigen dort auf den Tunnel – das ist gewollt).
     Geräte mit dem echten WARP-Client (Cloudflare One) fragen Cloudflare statt des Pi und lösen die Domains deshalb nicht auf –
     Geräte, die der Pi per VPN/WARP-Container leitet, funktionieren.
   </div>
 </section>
+
+<section class="card" id="fernzugriff">
+  {% set fz = ld.fern %}
+  <div class="card-head">
+    <div class="card-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+    </div>
+    <div>
+      <h2>Von außen erreichbar (Zero Trust)</h2>
+      <div class="muted small">
+        Zu Hause gehen diese Namen direkt zum Pi, ohne Anmeldung. Von unterwegs laufen sie über einen Cloudflare-Tunnel,
+        und vorher fragt Cloudflare nach der E-Mail (Einmal-Code). Nur die Adressen unten kommen rein.
+      </div>
+    </div>
+  </div>
+
+  <div class="status-row" style="margin:0 0 1rem">
+    {% if fz.error %}<span class="pill warn">{{ fz.error }}</span>{% endif %}
+    {% if fz.state %}<span class="pill {{ 'warn' if fz.state == 'fehler' else 'on' }}">{{ fz.text }}</span>{% endif %}
+    {% if fz.hosts %}<span class="pill {{ 'on' if fz.tunnel == 'Connected' else 'warn' }}">Tunnel: {{ fz.tunnel or 'Container läuft nicht (cloudy update)' }}</span>{% endif %}
+  </div>
+
+  <form method="post" action="/fernzugriff" style="display:grid;gap:.75rem">
+    <div class="field-group">
+      <div class="fg-title">Adressen</div>
+      <div class="fg-hint">Name und welche Seite dort erscheinen soll. Er wird auch als eigene Domain im Heimnetz eingetragen.</div>
+      <div id="fern-rows" style="display:grid;gap:.35rem">
+        {% for host, seite in (fz.hosts.items() | list) or [('', 'karte')] %}
+        <div class="field-row" style="flex-wrap:wrap;gap:.4rem">
+          <input name="fern_host" data-keep autocomplete="off" value="{{ host }}" placeholder="karte.kulbarts.com" style="flex:1 1 14rem">
+          <select name="fern_seite">{% for key, label in fz.pages.items() %}<option value="{{ key }}" {% if key == seite %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+          {% if host %}<label class="small muted" style="display:inline-flex;gap:.3rem;align-items:center"><input type="checkbox" name="fern_ersetzen" value="{{ host }}"> vorhandenen DNS-Eintrag ersetzen</label>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      <button type="button" class="secondary add-btn" onclick="document.getElementById('fern-rows').append(document.getElementById('tpl-fern').content.cloneNode(true))">+ weitere</button>
+      <template id="tpl-fern"><div class="field-row" style="flex-wrap:wrap;gap:.4rem">
+        <input name="fern_host" data-keep autocomplete="off" placeholder="cloudy.kulbarts.com" style="flex:1 1 14rem">
+        <select name="fern_seite">{% for key, label in fz.pages.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+      </div></template>
+      <div class="fg-hint">Zum Abschalten den Namen leeren und speichern – dann ist er von außen wieder weg.</div>
+    </div>
+
+    <div class="grid" style="margin:0;gap:.75rem;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">
+      <label class="small">Wer darf rein? (E-Mails, eine pro Zeile)
+        <textarea name="fern_emails" data-keep rows="3" style="width:100%;margin-top:.25rem" placeholder="du@example.com">{{ fz.emails | join('\n') }}</textarea>
+      </label>
+      <label class="small">Anmeldung hält (Tage)
+        <input name="fern_tage" type="number" min="1" max="365" data-keep value="{{ fz.days or fz.default_days }}" style="width:100%;margin-top:.25rem">
+        <span class="fg-hint">Danach einmal neu anmelden (pro Gerät und Browser).{% if fz.hours %} Bei Cloudflare eingestellt: {{ (fz.hours / 24) | round | int }} Tage.{% endif %}</span>
+      </label>
+    </div>
+
+    <div class="actions"><button type="submit">Speichern &amp; bei Cloudflare einrichten</button></div>
+  </form>
+
+  <div class="info small" style="margin:1rem 0 0">
+    Nutzt den Cloudflare-Token von oben. Er braucht dafür zusätzlich: Konto → Cloudflare Tunnel → Bearbeiten,
+    Konto → Access: Apps und Richtlinien → Bearbeiten, Konto → Access: Organisationen … → Lesen.
+    Geräte mit „Privatem DNS“ oder iCloud Private Relay fragen auch zu Hause Cloudflare und sehen dann die Anmeldung – geht trotzdem.
+    Von außen gesperrt bleibt „Mein Gerät“.
+  </div>
+</section>
+
 
 {% if settings.https_port %}
 <section class="card" id="zertifikat">

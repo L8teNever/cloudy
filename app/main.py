@@ -17,7 +17,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import adblock, assistent, autoswitch, blocklist, certs, db, dnsprofile, festeip, fritz, homeassistant, karte, localdomain, ordnung, policy, redirects, slots, stats, tunnel, views, warp, zertwechsel
+from . import adblock, assistent, autoswitch, blocklist, certs, db, dnsprofile, fernzugriff, festeip, fritz, homeassistant, karte, localdomain, ordnung, policy, redirects, slots, stats, tunnel, views, warp, zertwechsel
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner, read_leases
 from .presence import PresenceMonitor
@@ -178,6 +178,7 @@ async def lifespan(app: FastAPI):
         threading.Thread(target=tunnel.start, args=(settings,), daemon=True).start()
         threading.Thread(target=localdomain.renew_loop, args=(settings, renew_stop), daemon=True).start()
         threading.Thread(target=fritz.retry_loop, args=(settings, renew_stop), daemon=True).start()
+        threading.Thread(target=homeassistant.timer_loop, args=(renew_stop,), daemon=True).start()
     yield
     renew_stop.set()
     if https_server:
@@ -264,7 +265,7 @@ async def redirect_middleware(request: Request, call_next):
         if request.url.scheme == "http" and settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
             port = "" if settings.https_port == 443 else f":{settings.https_port}"
             return RedirectResponse(f"https://{raw_host}{port}{path}", status_code=302)
-        if path in ("/healthz", "/favicon.ico", "/karte/status", "/karte/internet", "/karte/ha", "/karte/mein") or path.startswith("/static/"):
+        if path in ("/healthz", "/favicon.ico", "/karte/status", "/karte/internet", "/karte/ha", "/karte/mein", "/karte/zeitplan") or path.startswith("/static/"):
             return await call_next(request)
         raum = path.strip("/")
         if path == "/karte" or path.startswith("/karte/"):  # alte Links auf /karte bzw. /karte/<raum>
@@ -272,7 +273,7 @@ async def redirect_middleware(request: Request, call_next):
             if not raum:
                 return RedirectResponse("/", status_code=302)
             return RedirectResponse(f"/{raum}/", status_code=302) if karte.valid_path(raum) else Response("Nicht gefunden.", status_code=404)
-        if raum.split("/")[0] in ("einstellungen", "status", "internet", "ha", "mein") or (raum and not karte.valid_path(raum)):
+        if raum.split("/")[0] in ("einstellungen", "status", "internet", "ha", "mein", "zeitplan") or (raum and not karte.valid_path(raum)):
             return Response("Nicht gefunden.", status_code=404)
         request.scope["path"] = f"/karte/{raum}" if raum else "/karte"
         request.state.karte_base = ""
@@ -339,6 +340,40 @@ async def redirect_middleware(request: Request, call_next):
         if rule:
             return RedirectResponse(rule[1], status_code=302)
 
+    return await call_next(request)
+
+
+def from_tunnel(request: Request) -> bool:
+    """Kommt die Anfrage über den Cloudflare Tunnel (von außen) statt aus dem Heimnetz?"""
+    return bool(request.client and request.client.host == fernzugriff.TUNNEL_IP)
+
+
+def _tunnel_denied(title: str, text: str) -> HTMLResponse:
+    body = (
+        '<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
+        f"<title>cloudy – {title}</title><body style=\"font-family:system-ui;max-width:32rem;margin:4rem auto;padding:0 1rem\">"
+        f"<h1>🔒 {title}</h1><p>{text}</p></body></html>"
+    )
+    return HTMLResponse(body, status_code=403)
+
+
+# Wird nach redirect_middleware registriert und läuft damit zuerst.
+@app.middleware("http")
+async def tunnel_guard(request: Request, call_next):
+    """Von außen: nur freigegebene Namen und nur mit gültiger Zero-Trust-Anmeldung – auch wenn bei Cloudflare
+    etwas falsch eingestellt ist."""
+    if not from_tunnel(request):
+        return await call_next(request)
+    host = request.headers.get("host", "").split(":")[0].strip().lower()
+    path = request.url.path
+    if path == "/mein" or path.startswith("/mein/") or path == "/karte/mein":
+        return _tunnel_denied("Nur im Heimnetz", "„Mein Gerät“ erkennt dein Gerät im WLAN und geht deshalb nur zu Hause.")
+    token = request.headers.get("cf-access-jwt-assertion") or request.cookies.get("CF_Authorization") or ""
+    ok, info = await run_in_threadpool(fernzugriff.check_request, host, token)
+    if not ok:
+        return _tunnel_denied("Kein Zugriff", info)
+    request.state.access_email = info
+    request.scope["scheme"] = "https"  # beim Browser ist es https (Cloudflare) – keine Umleitung auf den Heim-Port
     return await call_next(request)
 
 
@@ -644,6 +679,7 @@ def _ha_settings_context() -> dict:
     """Home Assistant in den Karten-Einstellungen: Verbindung, Entitäten zur Auswahl, aktuelle Zuordnung."""
     url, token = homeassistant.config()
     ctx = {"url": url, "has_token": bool(token), "error": "", "kinds": homeassistant.DOMAINS, "map": homeassistant.mapping(),
+           "confirm": homeassistant.confirm_devices(), "night": homeassistant.night(),
            "groups": [(kind, homeassistant.KIND_TITLES[kind], [(d, label) for d, label, k in homeassistant.DEVICES if k == kind])
                       for kind in homeassistant.DOMAINS],
            "entities": [], "rooms": [], "domains": []}
@@ -679,6 +715,12 @@ async def karte_ha_einstellungen(request: Request):
         return RedirectResponse("/karte/einstellungen?ha=verbunden#ha", status_code=303)
     data = {dev: str(form.get(f"ha_{dev}") or "") for dev, _, _ in homeassistant.DEVICES}
     await run_in_threadpool(homeassistant.save_mapping, data)
+    await run_in_threadpool(homeassistant.save_confirm, [dev for dev, _, _ in homeassistant.DEVICES if form.get(f"confirm_{dev}")])
+    try:
+        await run_in_threadpool(homeassistant.save_night, bool(form.get("nacht_an")),
+                                str(form.get("nacht_von") or ""), str(form.get("nacht_bis") or ""))
+    except homeassistant.HAError as exc:
+        return RedirectResponse(f"/karte/einstellungen?ha_fehler={quote(str(exc))}#ha", status_code=303)
     return RedirectResponse("/karte/einstellungen?ha=gespeichert#ha", status_code=303)
 
 
@@ -706,6 +748,28 @@ async def karte_ha_befehl(request: Request):
     except homeassistant.HAError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     return {"ok": True}
+
+
+@app.post("/karte/zeitplan")
+async def karte_zeitplan(request: Request):
+    """Einmal-Zeitplan für ein Gerät der Karte: {device, start (Unix-Sekunden), minutes} – oder {device, cancel: true}.
+
+    Wie /karte/ha ohne Passwort: nur zugeordnete Geräte, nur an → nach X Minuten aus."""
+    try:
+        data = await request.json()
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="JSON erwartet")
+    device = str(data.get("device") or "")
+    try:
+        if data.get("cancel"):
+            timers = await run_in_threadpool(homeassistant.cancel_timer, device)
+        else:
+            timers = await run_in_threadpool(homeassistant.set_timer, device, data.get("start"), data.get("minutes"))
+    except homeassistant.HAError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return {"ok": True, "timers": timers}
 
 
 @app.post("/karte/einstellungen", dependencies=[Depends(require_password)])
@@ -1289,6 +1353,7 @@ async def lokale_domain_set(
     await run_in_threadpool(localdomain.set_block_domains, blocks)
     await run_in_threadpool(localdomain.set_switch_domains, switches)
     await run_in_threadpool(localdomain.set_karte_domains, karten)
+    await run_in_threadpool(fernzugriff.sync_local)  # von außen erreichbare Namen bleiben bei ihrer Seite
     await run_in_threadpool(db.set_setting, localdomain.HA_URL_KEY, ha)
     await run_in_threadpool(db.set_setting, localdomain.EMAIL_KEY, email)
     if cf_token:
@@ -1298,6 +1363,26 @@ async def lokale_domain_set(
     await run_in_threadpool(_apply_redirects, request)  # schreibt auch die DNS-Zeilen für die Domains
     localdomain.start_in_background(request.app.state.settings)
     return RedirectResponse("/einstellungen#lokale-domain", status_code=303)
+
+
+@app.post("/fernzugriff", dependencies=[Depends(require_password)])
+async def fernzugriff_set(request: Request):
+    """Von außen erreichbar: Namen + Seite, erlaubte E-Mails, Anmeldedauer – dann Cloudflare einrichten."""
+    form = await request.form()
+    entries = list(zip(form.getlist("fern_host"), form.getlist("fern_seite")))
+    try:
+        try:
+            replace = [localdomain.normalize_domain(h) for h in form.getlist("fern_ersetzen") if h.strip()]
+        except ValueError as exc:
+            raise fernzugriff.FernError(str(exc)) from exc
+        emails = fernzugriff.parse_emails(str(form.get("fern_emails") or ""))
+        await run_in_threadpool(fernzugriff.set_config, entries, emails, form.get("fern_tage") or fernzugriff.DEFAULT_DAYS, replace)
+    except fernzugriff.FernError as exc:
+        return RedirectResponse(f"/einstellungen?fern_fehler={quote(str(exc))}#fernzugriff", status_code=303)
+    await run_in_threadpool(_apply_redirects, request)  # lokale DNS-Zeilen für die Namen
+    localdomain.start_in_background(request.app.state.settings)  # Zertifikat auch für neue Namen
+    await run_in_threadpool(fernzugriff.apply, request.app.state.settings)
+    return RedirectResponse("/einstellungen#fernzugriff", status_code=303)
 
 
 @app.post("/lokale-domain/neu", dependencies=[Depends(require_password)])

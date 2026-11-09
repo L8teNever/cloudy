@@ -73,6 +73,21 @@ services:
         ipv4_address: 172.29.86.22
         ipv6_address: fd29:86::22
 
+
+  # Cloudflare Tunnel: macht ausgewählte cloudy-Seiten (z. B. die 3D-Karte) von außen erreichbar – nur mit
+  # Zero-Trust-Anmeldung. Den Token legt cloudy selbst ab (Einstellungen → Von außen erreichbar). Ohne Token: aus.
+  tunnel:
+    image: ghcr.io/l8tenever/cloudy:tunnel
+    container_name: cloudy-tunnel
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Berlin
+    volumes:
+      - ./data/warp/tunnel:/cloudy
+    networks:
+      cloudy-tunnel:
+        ipv4_address: 172.29.88.10
+
 networks:
   cloudy-warp:
     name: cloudy-warp
@@ -83,3 +98,11 @@ networks:
       config:
         - subnet: 172.29.86.0/24
         - subnet: fd29:86::/64
+  # Der Tunnel erreicht cloudy (Host-Netz des Pi) über 172.29.88.1. cloudy erkennt Tunnel-Anfragen an 172.29.88.10.
+  cloudy-tunnel:
+    name: cloudy-tunnel
+    driver_opts:
+      com.docker.network.bridge.name: cloudy-tunnel
+    ipam:
+      config:
+        - subnet: 172.29.88.0/24

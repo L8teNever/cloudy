@@ -97,6 +97,16 @@
 .net-note.error { color: #fca5a5; }
 .net-note.ok { color: #86efac; }
 
+/* Steckdose: Einmal-Zeitplan */
+.sock-form { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin: 4px 0 8px; font-size: 13.5px; color: #e3e3e3; }
+.sock-form label { display: inline-flex; align-items: center; gap: 8px; }
+.sock-input { background: #232428; color: #e3e3e3; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; padding: 7px 9px; font: inherit; color-scheme: dark; }
+.sock-input:focus { outline: none; border-color: rgba(253, 224, 141, 0.5); }
+.sock-min { width: 72px; }
+.sock-plan { padding: 10px 12px; border-radius: 12px; background: #4d4327; color: #fde08d; font-size: 13.5px; margin-bottom: 4px; }
+#sock-preview { margin-bottom: 4px; }
+#led-ha-note { padding: 0 16px 12px; }
+
 @media (max-width: 840px) {
   #net-popup:not(.modal-center) {
     left: 10px;
@@ -117,3 +127,14 @@
   opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 9999;
 }
 #ha-toast.visible { opacity: 1; transform: translate(-50%, 0); }
+
+/* Nachfrage vor dem Ausschalten */
+#confirm-off { position: fixed; inset: 0; z-index: 9999; display: none; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.55); padding: 16px; }
+#confirm-off.visible { display: flex; }
+#confirm-off .confirm-card { width: min(340px, 100%); background: #1b1c1f; color: #e3e3e3; border-radius: 22px; padding: 20px; box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5); }
+#confirm-off .confirm-title { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
+#confirm-off .confirm-text { font-size: 13.5px; color: #c4c7c5; line-height: 1.45; margin-bottom: 16px; }
+#confirm-off .confirm-actions { display: flex; gap: 10px; }
+#confirm-off .confirm-actions .net-option { flex: 1; justify-content: center; text-align: center; }
+#confirm-off .confirm-yes { background: #4d4327; color: #fde08d; border-color: rgba(253, 224, 141, 0.18); }
+#confirm-off .confirm-yes.danger { background: #5c1f1f; color: #fecaca; border-color: rgba(254, 202, 202, 0.2); }
