@@ -147,3 +147,20 @@ def test_karte_home_assistant(client, monkeypatch):
     h = {"host": "haus.kulbarts.com"}
     assert client.get("/karte/ha", headers=h).status_code == 200
     assert client.get("/ha", headers=h).status_code == 404
+
+
+def test_karte_mein_profil(client, monkeypatch):
+    monkeypatch.setattr("app.main.client_ip", lambda request: "192.168.178.77")
+    assert client.get("/karte/mein").json()["known"] is False
+    assert client.post("/karte/mein", json={"slot": "direct"}).status_code == 400
+
+    db.upsert_devices([("192.168.178.77", "aa:bb:cc:dd:ee:77", "handy")])
+    st = client.get("/karte/mein").json()
+    assert st["known"] and st["device"] == "handy" and st["label"] == "Normal" and st["choice"] == ""
+    assert any(o["slot"] == "direct" for o in st["options"])
+
+    r = client.post("/karte/mein", json={"slot": "direct"})
+    assert r.status_code == 200 and r.json()["mein"]["choice"] == "direct"
+    assert db.device_warp()["aa:bb:cc:dd:ee:77"] == "direct"
+    assert client.post("/karte/mein", json={"slot": "gibtsnicht"}).status_code == 404
+    assert client.post("/karte/mein", json={"slot": ""}).json()["mein"]["choice"] == ""

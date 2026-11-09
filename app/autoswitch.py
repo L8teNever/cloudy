@@ -13,8 +13,13 @@ kann der Pi ohne installiertes Zertifikat keine Seite anzeigen.
 
 from __future__ import annotations
 
+import http.client
 import json
-import subprocess
+import re
+import secrets
+import socket
+import ssl
+import struct
 import threading
 import time
 
@@ -34,6 +39,9 @@ SEEN_STEP = 5
 SETTLE = 5.0  # kurz warten, bis Markierung/DNS greifen; die Wechselseite zeigt sowieso ≥5 s
 PROBE_TTL = 45.0  # Ergebnis „Seite über Slot erreichbar?“ so lange merken
 PROBE_TIMEOUT = 8
+PROBE_DNS = ("1.1.1.1", "8.8.8.8")
+PROBE_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+HOST_RE = re.compile(r"^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$")
 CERT_FALLBACK = 20.0  # Gerät mit Zertifikat: kommt die Wechselseite nicht (z. B. IPv6), still wechseln
 _rules_gen = 0  # steigt bei jeder Regel-Änderung → Cache im AutoSwitcher verwerfen
 
@@ -217,54 +225,138 @@ def vpn_slots(settings) -> list[str]:
     return [name for name, _ in settings.warp_slots if warp.kind(name) == "vpn"]
 
 
-def container_pid(slot: str) -> int | None:
-    name = f"cloudy-{slot}"
+def _slot_mark(settings, slot: str) -> int | None:
+    """Markierung, mit der Pakete in die Routing-Tabelle dieses Profils laufen (wie bei den Geräten)."""
+    for index, (name, _) in enumerate(settings.warp_slots, start=1):
+        if name == slot:
+            return int(warp.mark(index), 16)
+    return None
+
+
+def _remaining(deadline: float) -> float:
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise TimeoutError("Probe-Zeit abgelaufen")
+    return left
+
+
+def _marked_socket(kind: int, mark: int, timeout: float) -> socket.socket:
+    sock = socket.socket(socket.AF_INET, kind)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, mark)
+    sock.settimeout(timeout)
+    return sock
+
+
+def _dns_query(host: str, txid: int) -> bytes:
+    qname = b"".join(bytes([len(p)]) + p.encode("ascii") for p in host.split(".")) + b"\0"
+    return struct.pack(">HHHHHH", txid, 0x0100, 1, 0, 0, 0) + qname + struct.pack(">HH", 1, 1)
+
+
+def _skip_name(data: bytes, pos: int) -> int:
+    while True:
+        length = data[pos]
+        if length & 0xC0 == 0xC0:
+            return pos + 2
+        pos += 1 + length
+        if length == 0:
+            return pos
+
+
+def _parse_a(data: bytes, txid: int) -> list[str]:
+    """IPv4-Adressen aus einer DNS-Antwort (leer bei Fehler oder fremder Antwort)."""
     try:
-        out = subprocess.run(
-            ["docker", "inspect", "-f", "{{.State.Pid}}", name],
-            capture_output=True, text=True, timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if out.returncode != 0:
-        return None
+        rid, flags, questions, answers = struct.unpack(">HHHH", data[:8])
+        if rid != txid or flags & 0x000F:
+            return []
+        pos = 12
+        for _ in range(questions):
+            pos = _skip_name(data, pos) + 4
+        out = []
+        for _ in range(answers):
+            pos = _skip_name(data, pos)
+            rtype, rclass, _ttl, length = struct.unpack(">HHIH", data[pos:pos + 10])
+            pos += 10
+            if rtype == 1 and rclass == 1 and length == 4:
+                out.append(socket.inet_ntoa(data[pos:pos + 4]))
+            pos += length
+        return out
+    except (struct.error, IndexError, OSError):
+        return []
+
+
+def _resolve_via(mark: int, host: str, deadline: float) -> list[str]:
+    """Namen durch den Tunnel auflösen – so wie ihn das VPN sieht, nicht wie der Provider im Heimnetz."""
+    for server in PROBE_DNS:
+        txid = secrets.randbelow(0x10000)
+        try:
+            with _marked_socket(socket.SOCK_DGRAM, mark, min(2.5, _remaining(deadline))) as sock:
+                sock.connect((server, 53))
+                sock.send(_dns_query(host, txid))
+                ips = _parse_a(sock.recv(1500), txid)
+        except OSError:
+            continue
+        if ips:
+            return ips
+    # Tunnel lässt kein fremdes DNS durch: normal auflösen. Eine gefälschte Sperr-Adresse fällt bei der TLS-Prüfung auf.
     try:
-        pid = int((out.stdout or "").strip())
-    except ValueError:
-        return None
-    return pid if pid > 0 else None
+        _remaining(deadline)
+        return socket.gethostbyname_ex(host)[2]
+    except OSError:
+        return []
+
+
+def site_answered(status: int, headers) -> bool:
+    """Hat die Seite wirklich geantwortet? 403/429/451/5xx = über dieses VPN gesperrt oder kaputt."""
+    if headers.get("cf-mitigated"):  # Browser-Prüfung von Cloudflare: das schafft der Browser des Geräts
+        return True
+    return status < 500 and status not in (403, 429, 451)
+
+
+def _https_status(mark: int, ip: str, host: str, deadline: float) -> tuple[int, http.client.HTTPMessage]:
+    context = ssl.create_default_context()
+
+    class Conn(http.client.HTTPSConnection):
+        def connect(self):
+            raw = _marked_socket(socket.SOCK_STREAM, mark, _remaining(deadline))
+            try:
+                raw.connect((ip, 443))
+                self.sock = context.wrap_socket(raw, server_hostname=host)
+            except Exception:
+                raw.close()
+                raise
+
+    conn = Conn(host, 443, timeout=_remaining(deadline))
+    try:
+        conn.request("GET", "/", headers={"User-Agent": PROBE_AGENT, "Accept": "text/html,*/*", "Connection": "close"})
+        resp = conn.getresponse()
+        return resp.status, resp.headers
+    finally:
+        conn.close()
 
 
 def probe_via(settings, slot: str, host: str, timeout: float = PROBE_TIMEOUT) -> bool:
-    """Erreicht man https://host/ über das Netzwerk dieses VPN-Containers?"""
+    """Erreicht man https://host/ durch den Tunnel dieses Profils? (Eine Adresse pro Versuch, TLS wird geprüft.)"""
     host = (host or "").lower().rstrip(".")
-    if not host or not slot:
+    if not HOST_RE.match(host) or not settings.gateway_enabled:
+        return False  # ohne Gateway fehlen die Routing-Tabellen, der Test ginge am VPN vorbei
+    mark = _slot_mark(settings, slot)
+    if mark is None:
         return False
-    pid = container_pid(slot)
-    if not pid:
-        return False
-    # Nur Netz-Namespace des Containers – Python bleibt das vom Host (cloudy-Image).
-    code = (
-        "import sys,urllib.request\n"
-        f"req=urllib.request.Request('https://{host}/',method='HEAD')\n"
-        "try:\n"
-        f"  urllib.request.urlopen(req,timeout={int(timeout)})\n"
-        "  sys.exit(0)\n"
-        "except Exception:\n"
-        "  try:\n"
-        f"    urllib.request.urlopen(urllib.request.Request('https://{host}/'),timeout={int(timeout)})\n"
-        "    sys.exit(0)\n"
-        "  except Exception:\n"
-        "    sys.exit(1)\n"
-    )
+    deadline = time.monotonic() + timeout
+    names = [host] if host.startswith("www.") else [host, f"www.{host}"]
     try:
-        r = subprocess.run(
-            ["nsenter", "-t", str(pid), "-n", "python3", "-c", code],
-            capture_output=True, timeout=timeout + 4,
-        )
-        return r.returncode == 0
-    except (OSError, subprocess.SubprocessError):
+        for name in names:
+            ips = _resolve_via(mark, name, deadline)
+            if not ips:
+                continue
+            try:
+                status, headers = _https_status(mark, ips[0], name, deadline)
+            except (OSError, ssl.SSLError, http.client.HTTPException):
+                continue  # keine Verbindung: www-Variante versuchen
+            return site_answered(status, headers)
+    except TimeoutError:
         return False
+    return False
 
 
 # --------------------------------------------------------------------------- Laufzeit
@@ -282,6 +374,7 @@ class AutoSwitcher:
         self._ip_mac: dict[str, tuple[float, str]] = {}
         self._probe_cache: dict[tuple[str, str], tuple[float, bool]] = {}
         self._picking: set[str] = set()  # MACs, für die gerade ein VPN gesucht wird
+        self._no_vpn: dict[tuple[str, str], float] = {}  # (MAC, Seite) -> wann zuletzt kein VPN die Seite erreichte
         self.async_auto = True
         self.on_intercept = None  # bekommt die MACs, deren HTTPS zur Wechselseite umgeleitet wird
         self._intercept_last: list[str] | None = None
@@ -450,7 +543,7 @@ class AutoSwitcher:
     def _auto_switch(self, mac: str, host: str, apex: str, shown: bool = False) -> None:
         try:
             now = time.time()
-            host = host.lower().rstrip(".")
+            host = apex or host.lower().rstrip(".")  # die Hauptseite testen, Unter-/CDN-Adressen haben oft keine Startseite
             picked = None
             current = db.device_warp().get(mac, "")
             if (
@@ -462,10 +555,17 @@ class AutoSwitcher:
                 picked = self._pick_vpn(mac, host, now)
             if not picked:
                 print(f"cloudy: Auto-Wechsel: kein VPN erreicht {host}", flush=True)
+                with self._lock:
+                    if len(self._no_vpn) > 500:
+                        self._no_vpn.clear()
+                    self._no_vpn[(mac, apex)] = time.time()
                 return
             with self._lock:
+                self._no_vpn.pop((mac, apex), None)
                 db.set_device_warp(mac, picked)
-                self.state[mac] = {"slot": picked, "seen": now, "since": now, "host": apex, "shown": shown}
+                # War das Gerät schon auf diesem VPN, muss nichts mehr einschwingen.
+                since = now - SETTLE if picked == current else now
+                self.state[mac] = {"slot": picked, "seen": now, "since": since, "host": apex, "shown": shown}
                 self._save()
                 changed = set_pass(apex, picked)
             if changed:
@@ -506,6 +606,16 @@ class AutoSwitcher:
             st = self.state.get(mac)
             apex = rule_apex(host)
 
+            # „auto“: Ist das gewählte VPN weg, neu suchen – das nächste Profil übernimmt.
+            if (
+                st and st.get("host") == apex and slot == AUTO and not st.get("normal") and self.settings
+                and st["slot"] not in ("", warp.DIRECT, warp.STANDARD)
+                and not warp.read_status(self.settings, st["slot"], now).connected
+            ):
+                del self.state[mac]
+                self._save()
+                st = None
+
             # Schon durchgelassen (VPN oder normales Internet) für diese Seite
             if st and st.get("host") == apex:
                 self._touch(mac, now)
@@ -528,27 +638,29 @@ class AutoSwitcher:
                 return {"state": "ready", "slot": chosen}
 
             if slot == AUTO:
-                # VPN schon an und Seite erreichbar → ready (Wechselseite zeigt trotzdem 5-s-Countdown)
-                current = db.device_warp().get(mac, "")
-                if current and warp.kind(current) == "vpn" and warp.may_use(mac, current):
-                    if self.settings and warp.read_status(self.settings, current, now).connected:
-                        if self._probe(current, host, now):
-                            self.state[mac] = {
-                                "slot": current, "seen": now, "since": now - SETTLE, "host": apex,
-                            }
-                            self._save()
-                            if set_pass(apex, current):
-                                self._dns_changed()
-                            return {"state": "ready", "slot": current}
-
-                picked = self._pick_vpn(mac, host, now)
-                if not picked:
+                if mac in self._picking:
+                    return {"state": "probing", "slot": ""}
+                failed = self._no_vpn.get((mac, apex))
+                if failed and now - failed < PROBE_TTL:
                     return {"state": "none_found", "slot": ""}
-                db.set_device_warp(mac, picked)
-                self.state[mac] = {"slot": picked, "seen": now, "since": now, "host": apex}
-                self._save()
-                return {"state": "wait", "slot": picked}
+                self._picking.add(mac)
+                search = True
+            else:
+                search = False
 
+        if search:
+            # Die Suche dauert mehrere Sekunden: außerhalb der Sperre, die Wechselseite fragt weiter nach.
+            if self.async_auto:
+                threading.Thread(target=self._auto_switch, args=(mac, host, apex, False), daemon=True).start()
+                return {"state": "probing", "slot": ""}
+            self._auto_switch(mac, host, apex, False)
+            st = self.state.get(mac)
+            if st and st.get("host") == apex:
+                return {"state": "wait", "slot": st["slot"]}
+            return {"state": "none_found", "slot": ""}
+
+        with self._lock:
+            st = self.state.get(mac)
             # Festes Profil – Wechsel erst hier (Wechselseite pollt), nicht schon bei DNS
             if not warp.may_use(mac, slot):
                 return {"state": "blocked", "slot": slot}

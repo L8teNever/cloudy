@@ -1,5 +1,11 @@
 """Auto-Wechsel: Gerät wechselt still beim DNS-Aufruf aufs VPN."""
 
+import struct
+import time
+import types
+
+import pytest
+
 from app import autoswitch, db, warp, zertwechsel
 from app.dnsmasq import sync_redirects_hosts
 from app.settings import Settings
@@ -85,6 +91,7 @@ def test_auto_picks_vpn_and_normal_fallback(client, monkeypatch):
     autoswitch.set_normal_slot(warp.DIRECT)
     settings = client.app.state.settings
     sw = autoswitch.AutoSwitcher(settings=settings)
+    sw.async_auto = False
     client.app.state.autoswitcher = sw
     dns = []
     sw.on_dns_change = lambda: dns.append(1)
@@ -100,6 +107,7 @@ def test_auto_picks_vpn_and_normal_fallback(client, monkeypatch):
 
     monkeypatch.setattr(autoswitch, "probe_via", lambda s, slot, host, timeout=8: False)
     sw2 = autoswitch.AutoSwitcher(settings=settings)
+    sw2.async_auto = False
     client.app.state.autoswitcher = sw2
     db.set_device_warp(mac, None)
     autoswitch.clear_pass("aniworld.to")
@@ -209,3 +217,76 @@ def test_auto_domains_in_intercept_set(client, monkeypatch):
     conf = open(s.redirects_path, encoding="utf-8").read()
     assert f"ipset=/s.to/{zertwechsel.SET}" in conf
     assert f"address=/{zertwechsel.CHECK_HOST}/{s.pi_ip}" in conf
+
+
+def test_auto_search_does_not_block_and_reports_probing(client, monkeypatch):
+    """Die Suche läuft im Hintergrund: Wechselseite sieht „probing“, danach das zweite VPN."""
+    import threading
+
+    mac = "aa:bb:cc:dd:ee:21"
+    db.upsert_devices([("testclient", mac, "tv")])
+    autoswitch.set_rule("aniworld.to", autoswitch.AUTO)
+    sw = autoswitch.AutoSwitcher(settings=client.app.state.settings)
+    go, tried = threading.Event(), []
+
+    def probe(s, slot, host, timeout=8):
+        tried.append((slot, host))
+        go.wait(5)
+        return slot == "vpn2"
+
+    monkeypatch.setattr(warp, "read_status", lambda s, slot, now=None: warp.SlotStatus(True, "verbunden"))
+    monkeypatch.setattr(autoswitch, "vpn_slots", lambda s: ["vpn1", "vpn2"])
+    monkeypatch.setattr(autoswitch, "probe_via", probe)
+    assert sw.status_for("testclient", "cdn.aniworld.to")["state"] == "probing"
+    assert sw.status_for("testclient", "cdn.aniworld.to")["state"] == "probing"
+    go.set()
+    for _ in range(200):
+        if mac not in sw._picking:
+            break
+        time.sleep(0.01)
+    assert tried == [("vpn1", "aniworld.to"), ("vpn2", "aniworld.to")]  # immer die Hauptseite, in Reihenfolge
+    assert sw.status_for("testclient", "aniworld.to") == {"state": "wait", "slot": "vpn2"}
+
+
+def test_auto_takes_next_vpn_when_current_drops(client, monkeypatch):
+    mac = "aa:bb:cc:dd:ee:22"
+    db.upsert_devices([("testclient", mac, "tv")])
+    autoswitch.set_rule("aniworld.to", autoswitch.AUTO)
+    sw = autoswitch.AutoSwitcher(settings=client.app.state.settings)
+    sw.async_auto = False
+    up = {"vpn1": True, "vpn2": True}
+    monkeypatch.setattr(warp, "read_status", lambda s, slot, now=None: warp.SlotStatus(up.get(slot, False), ""))
+    monkeypatch.setattr(autoswitch, "vpn_slots", lambda s: ["vpn1", "vpn2"])
+    monkeypatch.setattr(autoswitch, "probe_via", lambda s, slot, host, timeout=8: True)
+    assert sw.status_for("testclient", "aniworld.to")["slot"] == "vpn1"
+    up["vpn1"] = False
+    assert sw.status_for("testclient", "aniworld.to")["slot"] == "vpn2"
+    assert db.device_warp()[mac] == "vpn2"
+
+
+def test_probe_rejects_bad_hosts_and_needs_gateway(monkeypatch):
+    s = types.SimpleNamespace(gateway_enabled=True, warp_slots=[("warp1", "a"), ("vpn1", "b")])
+    monkeypatch.setattr(autoswitch, "_resolve_via", lambda *a: pytest.fail("darf nicht auflösen"))
+    assert not autoswitch.probe_via(s, "vpn1", "x');import os;#.aniworld.to")
+    assert not autoswitch.probe_via(s, "vpn9", "aniworld.to")
+    assert not autoswitch.probe_via(types.SimpleNamespace(gateway_enabled=False, warp_slots=s.warp_slots), "vpn1", "aniworld.to")
+    assert autoswitch._slot_mark(s, "vpn1") == 0x102  # dieselbe Markierung wie Plan/ip rule
+
+
+@pytest.mark.parametrize("status,headers,ok", [
+    (200, {}, True), (301, {}, True), (404, {}, True), (403, {}, False), (451, {}, False), (429, {}, False),
+    (503, {}, False), (403, {"cf-mitigated": "challenge"}, True),
+])
+def test_site_answered(status, headers, ok):
+    assert autoswitch.site_answered(status, headers) is ok
+
+
+def test_dns_answer_parsing():
+    query = autoswitch._dns_query("aniworld.to", 0x1234)
+    assert b"\x08aniworld\x02to\x00" in query
+    answer = struct.pack(">HHHHHH", 0x1234, 0x8180, 1, 2, 0, 0) + query[12:]
+    answer += b"\xc0\x0c" + struct.pack(">HHIH", 5, 1, 60, 2) + b"\xc0\x0c"  # CNAME wird übersprungen
+    answer += b"\xc0\x0c" + struct.pack(">HHIH", 1, 1, 60, 4) + bytes([1, 2, 3, 4])
+    assert autoswitch._parse_a(answer, 0x1234) == ["1.2.3.4"]
+    assert autoswitch._parse_a(answer, 0x9999) == []
+    assert autoswitch._parse_a(answer[:20], 0x1234) == []

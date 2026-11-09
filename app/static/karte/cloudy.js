@@ -161,7 +161,8 @@
       if (data && data.internet) { netInfo = data.internet; renderNet(); }
     } catch (e) { /* offline – Zustand bleibt */ }
   }
-  function start() { if (!timer) { syncScreens(); timer = setInterval(syncScreens, 15000); } }
+  function tick() { syncScreens(); syncMein(); }
+  function start() { if (!timer) { tick(); timer = setInterval(tick, 15000); } }
   function stop() { if (timer) { clearInterval(timer); timer = null; } }
   document.addEventListener('visibilitychange', () => (document.hidden ? stop() : start()));
   window.addEventListener('load', () => { if (!document.hidden) start(); });
@@ -170,6 +171,9 @@
   const GLOBE = '<svg class="gh-tile-icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="2"/><path d="M3.5 12h17M12 3.5c2.4 2.6 3.6 5.4 3.6 8.5s-1.2 5.9-3.6 8.5c-2.4-2.6-3.6-5.4-3.6-8.5s1.2-5.9 3.6-8.5z" stroke="currentColor" stroke-width="1.8"/></svg>';
   const SHIELD = '<svg class="gh-tile-icon" viewBox="0 0 24 24" fill="none"><path d="M12 3l7.5 3v5.6c0 4.4-3.1 8.2-7.5 9.4-4.4-1.2-7.5-5-7.5-9.4V6L12 3z" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8.8 12.2l2.2 2.2 4.3-4.6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   let openScreenId = null;
+  let meinOpen = false;   // Menü „Mein Gerät“ aus dem Header (nutzt dasselbe Popup wie die Fernseher)
+  let mein = null;        // Antwort von /karte/mein
+  let stackOpen = null;   // Buttons im offenen Sammel-Pop-up (Handy)
   let busy = false;
   let note = null; // { text, kind: 'error'|'ok' }
 
@@ -223,6 +227,8 @@
   }
 
   function renderPopup() {
+    if (stackOpen) return renderStackPopup();
+    if (meinOpen) return renderMein();
     const body = document.getElementById('net-popup-body');
     const scr = (window.screensRegistry || []).find(s => s.id === openScreenId);
     if (!body || !scr) return;
@@ -279,10 +285,84 @@
     }
   }
 
-  window.openNetPopup = function (screenId) {
-    if (window.closeShutterPopup) window.closeShutterPopup();
-    if (window.closeSimonLedPopup) window.closeSimonLedPopup();
-    openScreenId = screenId; note = null;
+  // ---------------------------------------------------------------- Eigenes Profil im Header
+  function renderMeinBtn() {
+    const btn = document.getElementById('mein-profil-btn');
+    const label = document.getElementById('mein-profil-label');
+    if (!btn || !label) return;
+    label.textContent = mein && mein.known ? mein.label : 'Internet';
+    btn.classList.toggle('vpn', Boolean(mein && mein.kind === 'vpn'));
+    btn.classList.toggle('warp', Boolean(mein && mein.kind === 'warp'));
+    btn.classList.toggle('dns', Boolean(mein && mein.kind === 'dns'));
+    btn.classList.toggle('busy', busy && meinOpen);
+  }
+
+  async function syncMein() {
+    try {
+      const r = await fetch('/karte/mein', { cache: 'no-store' });
+      if (!r.ok) return;
+      mein = await r.json();
+      renderMeinBtn();
+      if (meinOpen && !busy) renderMein();
+    } catch (e) { /* offline – Anzeige bleibt */ }
+  }
+
+  function renderMein() {
+    const body = document.getElementById('net-popup-body');
+    if (!body) return;
+    document.getElementById('net-popup-title').textContent = 'Mein Internet';
+    if (!mein) { body.innerHTML = '<div class="net-note">Wird geladen …</div>'; return; }
+    if (!mein.known) {
+      body.innerHTML = `<div class="net-device"><span class="net-dot"></span><div><div class="net-dev-name">Gerät nicht erkannt</div><div class="net-dev-sub">${esc(mein.ip || 'keine Adresse')}</div></div></div>
+        <div class="net-note">Das eigene Profil lässt sich nur im Heimnetz wählen. Bist du im WLAN, warte kurz oder verbinde dich neu.</div>`;
+      return;
+    }
+    const disabled = busy || Boolean(mein.locked);
+    const cur = mein.choice || '';
+    let html = `<div class="net-device"><span class="net-dot on"></span><div><div class="net-dev-name">${esc(mein.device)}</div>
+      <div class="net-dev-sub">Dieses Gerät · jetzt: ${esc(mein.label)}</div></div></div>
+      <div class="net-section">Internet über</div><div class="net-options">`;
+    if (mein.show_standard) html += option('', 'Standard', `wie alle Geräte (${mein.default_label})`, '', cur, disabled);
+    mein.options.forEach(p => {
+      const cls = p.kind === 'vpn' || p.kind === 'warp' ? p.kind : '';
+      const sub = p.kind === 'direct' ? 'direkt über die FRITZ!Box'
+        : !p.ready ? 'noch nicht eingerichtet'
+        : p.kind === 'vpn' ? 'VPN' : p.kind === 'warp' ? 'Cloudflare WARP' : 'DNS-Profil';
+      html += option(p.slot, p.label, sub, cls, cur, disabled || !p.ready);
+    });
+    html += '</div>';
+    if (mein.locked) html += `<div class="net-note">🔒 Festgelegt durch die Gruppe „${esc(mein.locked)}“ – ändern geht nur dort.</div>`;
+    if (busy) html += '<div class="net-note">Wird umgestellt …</div>';
+    else if (note) html += `<div class="net-note ${note.kind}">${esc(note.text)}</div>`;
+    body.innerHTML = html;
+    body.querySelectorAll('.net-option:not(:disabled)').forEach(b => b.addEventListener('click', () => setMein(b.dataset.slot)));
+  }
+
+  async function setMein(slot) {
+    if (busy) return;
+    busy = true; note = null; renderMeinBtn(); renderMein();
+    try {
+      const r = await fetch('/karte/mein', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ slot })
+      });
+      let data = null;
+      try { data = await r.json(); } catch (e) { /* kein JSON */ }
+      if (!r.ok || !data || !data.ok) note = { kind: 'error', text: (data && (data.error || data.detail)) || 'Umstellen hat nicht geklappt.' };
+      else {
+        mein = data.mein;
+        note = { kind: 'ok', text: `Umgestellt auf ${mein.label} – greift in wenigen Sekunden.` };
+      }
+    } catch (e) {
+      note = { kind: 'error', text: 'cloudy ist gerade nicht erreichbar.' };
+    } finally {
+      busy = false; renderMeinBtn(); if (meinOpen) renderMein();
+    }
+  }
+
+  function showNetPopup() {
     const pop = document.getElementById('net-popup');
     const bd = document.getElementById('popup-backdrop');
     const isModal = (navigator.maxTouchPoints > 0) || window.innerWidth <= 840;
@@ -290,11 +370,27 @@
     renderPopup();
     pop.classList.add('visible');
     if (bd) bd.classList.toggle('visible', isModal);
+  }
+
+  window.openMeinPopup = function () {
+    if (window.toggleRoomHeaderDropdown) window.toggleRoomHeaderDropdown(null, false);
+    if (window.closeShutterPopup) window.closeShutterPopup();
+    if (window.closeSimonLedPopup) window.closeSimonLedPopup();
+    openScreenId = null; meinOpen = true; stackOpen = null; note = null;
+    showNetPopup();
+    syncMein();
+  };
+
+  window.openNetPopup = function (screenId) {
+    if (window.closeShutterPopup) window.closeShutterPopup();
+    if (window.closeSimonLedPopup) window.closeSimonLedPopup();
+    openScreenId = screenId; meinOpen = false; stackOpen = null; note = null;
+    showNetPopup();
     syncScreens();
   };
 
   window.closeNetPopup = function () {
-    openScreenId = null;
+    openScreenId = null; meinOpen = false; stackOpen = null;
     const pop = document.getElementById('net-popup');
     if (pop) pop.classList.remove('visible');
     if (typeof checkBackdrop === 'function') checkBackdrop();
@@ -311,7 +407,7 @@
     if (typeof orig !== 'function') return;
     window[name] = function (roomId) {
       const scr = (window.screensRegistry || []).find(s => s.id === openScreenId);
-      if (openScreenId && !(name === 'enterRoomView' && scr && scr.roomId === roomId)) window.closeNetPopup();
+      if ((openScreenId || meinOpen || stackOpen) && !(name === 'enterRoomView' && scr && scr.roomId === roomId)) window.closeNetPopup();
       return orig.apply(this, arguments);
     };
   });
@@ -345,6 +441,209 @@
   }
 
   window.addEventListener('load', () => { initNetBadges(); requestAnimationFrame(placeNetBadges); });
+
+  // ---------------------------------------------------------------- Gestapelte Buttons am Handy
+  // Liegen Buttons im Raum zu dicht, zeigt das Handy einen Sammel-Button; das Pop-up schaltet sie einzeln.
+  const STACK_W = 140, STACK_H = 48, STACK_TICK = 200;
+  const STACK_REACH = { shutter: 28, power: 3 }; // erlaubter Abstand in px, damit gleiche Geräte zusammengehen
+  const STACK_ICON = '<svg class="gh-tile-icon" viewBox="0 0 24 24" fill="none"><path d="M12 3.5l8.5 4.6-8.5 4.6-8.5-4.6L12 3.5z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M3.5 12.2l8.5 4.6 8.5-4.6M3.5 16.2l8.5 4.6 8.5-4.6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const stacks = new Map(); // Mitglieder-IDs -> Sammel-Button
+  let stackPairs = new Set();
+  let stackAt = 0;
+  let stackSig = '';
+
+  const badgeKind = el => el.classList.contains('shutter-badge') ? 'shutter' : el.classList.contains('net-badge') ? 'net' : 'power';
+  const pairKey = (a, b) => [a.id, b.id].sort().join('|');
+  const nodeGap = (a, b) => Math.max(Math.abs(a.x - b.x) - (a.w + b.w) / 2, Math.abs(a.y - b.y) - (a.h + b.h) / 2);
+  const wasStacked = (a, b) => a.els.some(x => b.els.some(y => stackPairs.has(pairKey(x, y))));
+
+  function stackNode(els) {
+    const padX = STACK_W / 2 + 4;
+    const x = els.reduce((s, e) => s + e._sx, 0) / els.length;
+    const y = els.reduce((s, e) => s + e._sy, 0) / els.length;
+    return { els, x: Math.max(padX, Math.min(window.innerWidth - padX, x)), y, w: STACK_W, h: STACK_H };
+  }
+
+  // Sammel-Button ein Stück weg vom Nachbarn schieben; geht das nicht, gehören beide zusammen.
+  function shiftStack(a, b, nodes) {
+    const needX = (a.w + b.w) / 2 + 4 - Math.abs(a.x - b.x);
+    const needY = (a.h + b.h) / 2 + 4 - Math.abs(a.y - b.y);
+    const alongX = needX <= needY;
+    const need = alongX ? needX : needY;
+    if (need > 34) return false;
+    const dir = (alongX ? a.x - b.x : a.y - b.y) >= 0 ? 1 : -1;
+    const moved = { ...a, x: alongX ? a.x + dir * need : a.x, y: alongX ? a.y : a.y + dir * need };
+    const padX = a.w / 2 + 4;
+    if (moved.x < padX || moved.x > window.innerWidth - padX || moved.y < 82 || moved.y > window.innerHeight - 40) return false;
+    if (nodes.some(n => n !== a && n !== b && nodeGap(moved, n) < 3)) return false;
+    a.x = moved.x; a.y = moved.y;
+    return true;
+  }
+
+  function computeStacks(els) {
+    els.forEach(el => {
+      el._sx = parseFloat(el.style.left) || 0;
+      el._sy = parseFloat(el.style.top) || 0;
+      el._kind = badgeKind(el);
+    });
+    // 1) Gleichartiges, das nah beieinander liegt
+    const parent = els.map((_, i) => i);
+    const find = i => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+    const box = el => ({ x: el._sx, y: el._sy, w: el.offsetWidth, h: el.offsetHeight });
+    for (let i = 0; i < els.length; i++) {
+      for (let j = i + 1; j < els.length; j++) {
+        const reach = STACK_REACH[els[i]._kind];
+        if (reach === undefined || els[i]._kind !== els[j]._kind) continue;
+        if (nodeGap(box(els[i]), box(els[j])) <= reach + (stackPairs.has(pairKey(els[i], els[j])) ? 12 : 0)) parent[find(i)] = find(j);
+      }
+    }
+    const byRoot = new Map();
+    els.forEach((el, i) => { const r = find(i); byRoot.set(r, [...(byRoot.get(r) || []), el]); });
+    let nodes = [...byRoot.values()].map(g => (g.length > 1 ? stackNode(g) : { els: g, ...box(g[0]) }));
+    // 2) Was sich dann noch überdeckt: Sammel-Button verschieben oder zusammenlegen
+    for (let round = 0; round < 16; round++) {
+      let hit = null;
+      for (let i = 0; i < nodes.length && !hit; i++) {
+        for (let j = i + 1; j < nodes.length && !hit; j++) {
+          if (nodeGap(nodes[i], nodes[j]) < 3 + (wasStacked(nodes[i], nodes[j]) ? 12 : 0)) hit = [nodes[i], nodes[j]];
+        }
+      }
+      if (!hit) break;
+      const [a, b] = hit;
+      const free = !wasStacked(a, b) && ((a.els.length > 1 && shiftStack(a, b, nodes)) || (b.els.length > 1 && shiftStack(b, a, nodes)));
+      if (!free) nodes = [...nodes.filter(n => n !== a && n !== b), stackNode([...a.els, ...b.els])];
+    }
+    return nodes.filter(n => n.els.length > 1);
+  }
+
+  function clearStacks() {
+    stacks.forEach(s => s.btn.remove());
+    stacks.clear();
+    stackPairs = new Set();
+    document.querySelectorAll('[data-stacked]').forEach(el => el.removeAttribute('data-stacked'));
+  }
+
+  const memberText = (el, cls) => (el.querySelector(cls) || {}).textContent || '';
+
+  function stackLabel(els) {
+    const on = els.filter(el => el.classList.contains('on')).length;
+    if (els.every(el => el._kind === 'shutter')) {
+      const subs = [...new Set(els.map(el => memberText(el, '.gh-tile-sub')))];
+      return { title: `${els.length} Rollläden`, sub: subs.length === 1 ? subs[0] : 'gemischt', on };
+    }
+    return { title: `${els.length} Geräte`, sub: `${on} an`, on };
+  }
+
+  function renderStackBtn(btn, els) {
+    const { title, sub, on } = stackLabel(els);
+    btn.classList.toggle('on', on > 0);
+    const html = `${STACK_ICON}<div class="gh-tile-text"><span class="gh-tile-title">${esc(title)}</span><span class="gh-tile-sub">${esc(sub)}</span></div>`;
+    if (btn.dataset.html !== html) { btn.innerHTML = html; btn.dataset.html = html; }
+  }
+
+  function applyStacks(nodes) {
+    const keep = new Set();
+    const hidden = new Set();
+    const pairs = new Set();
+    nodes.forEach(n => {
+      n.els.sort((a, b) => a.id.localeCompare(b.id));
+      const key = n.els.map(el => el.id).join('|');
+      keep.add(key);
+      let s = stacks.get(key);
+      if (!s) {
+        const btn = document.createElement('div');
+        btn.className = 'screen-badge badge-stack';
+        s = { btn, els: n.els };
+        btn.addEventListener('click', e => { e.stopPropagation(); window.openStackPopup(s.els); });
+        document.getElementById('shutters-layer').appendChild(btn);
+        stacks.set(key, s);
+      }
+      s.els = n.els;
+      s.btn.style.left = `${n.x}px`;
+      s.btn.style.top = `${n.y}px`;
+      renderStackBtn(s.btn, n.els);
+      n.els.forEach((a, i) => { hidden.add(a); n.els.slice(i + 1).forEach(b => pairs.add(pairKey(a, b))); });
+    });
+    stacks.forEach((s, key) => { if (!keep.has(key)) { s.btn.remove(); stacks.delete(key); } });
+    document.querySelectorAll('[data-stacked]').forEach(el => { if (!hidden.has(el)) el.removeAttribute('data-stacked'); });
+    hidden.forEach(el => el.setAttribute('data-stacked', ''));
+    stackPairs = pairs;
+  }
+
+  function updateStacks(now) {
+    requestAnimationFrame(updateStacks);
+    if (now - stackAt < STACK_TICK) return;
+    stackAt = now;
+    if (stackOpen) refreshStackPopup();
+    const room = typeof activeRoomId !== 'undefined' ? activeRoomId : null;
+    const moving = typeof camAnim !== 'undefined' && camAnim; // während der Kamerafahrt nichts umsortieren
+    if (!room || moving || window.innerWidth > 840) {
+      if (stacks.size || document.querySelector('[data-stacked]')) clearStacks();
+      return;
+    }
+    const els = [...document.querySelectorAll('#shutters-layer > :not(.badge-stack), #net-layer > *')]
+      .filter(el => el.style.display === 'inline-flex');
+    applyStacks(computeStacks(els));
+  }
+
+  function stackRowHtml(el, i) {
+    const kind = badgeKind(el);
+    const iconEl = el.querySelector('.gh-tile-icon, .shutter-mini-win');
+    let icon = '';
+    if (iconEl) {
+      const copy = iconEl.cloneNode(true);
+      copy.removeAttribute('id');
+      copy.querySelectorAll('[id]').forEach(n => n.removeAttribute('id')); // IDs bleiben beim Original auf der Karte
+      icon = copy.outerHTML;
+    }
+    const sub = memberText(el, '.gh-tile-sub');
+    const actions = el._actions || {};
+    const on = kind === 'shutter' ? parseInt(sub, 10) <= 20 : el.classList.contains('on');
+    const tune = kind !== 'net' && actions.onLongPress
+      ? `<button class="gh-icon-btn stack-tune" data-tune="${i}" title="Einstellen" aria-label="Einstellen"><svg viewBox="0 0 24 24" fill="none"><path d="M4 7h9M18 7h2M4 17h2M11 17h9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="15.5" cy="7" r="2.5" stroke="currentColor" stroke-width="2.2"/><circle cx="8.5" cy="17" r="2.5" stroke="currentColor" stroke-width="2.2"/></svg></button>`
+      : '';
+    const end = kind === 'net'
+      ? '<svg class="stack-chevron" viewBox="0 0 24 24" fill="none"><path d="M9.5 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+      : `<span class="stack-switch${on ? ' on' : ''}"><span></span></span>`;
+    return `<div class="stack-row${on && kind !== 'net' ? ' on' : ''}">
+      <button class="stack-main" data-run="${i}" ${kind === 'net' ? '' : `role="switch" aria-checked="${on}"`}>
+        <span class="stack-icon">${icon}</span>
+        <span class="stack-text"><span class="stack-title">${esc(memberText(el, '.gh-tile-title'))}</span><span class="stack-sub">${esc(sub)}</span></span>
+        ${end}
+      </button>${tune}</div>`;
+  }
+
+  function renderStackPopup() {
+    const body = document.getElementById('net-popup-body');
+    if (!body || !stackOpen) return;
+    document.getElementById('net-popup-title').textContent = stackLabel(stackOpen).title;
+    stackSig = stackOpen.map((el, i) => stackRowHtml(el, i)).join('');
+    body.innerHTML = `<div class="stack-list">${stackSig}</div>`;
+    body.querySelectorAll('[data-run]').forEach(b => b.addEventListener('click', () => {
+      const el = stackOpen[Number(b.dataset.run)];
+      if (el && el._actions && el._actions.onShortClick) el._actions.onShortClick();
+      if (stackOpen) refreshStackPopup();
+    }));
+    body.querySelectorAll('[data-tune]').forEach(b => b.addEventListener('click', () => {
+      const el = stackOpen[Number(b.dataset.tune)];
+      window.closeNetPopup();
+      if (el && el._actions && el._actions.onLongPress) el._actions.onLongPress(true);
+    }));
+  }
+
+  // Nur neu zeichnen, wenn sich etwas geändert hat (sonst gehen Fingertipps verloren)
+  function refreshStackPopup() {
+    if (stackOpen.map((el, i) => stackRowHtml(el, i)).join('') !== stackSig) renderStackPopup();
+  }
+
+  window.openStackPopup = function (els) {
+    if (window.closeShutterPopup) window.closeShutterPopup();
+    if (window.closeSimonLedPopup) window.closeSimonLedPopup();
+    openScreenId = null; meinOpen = false; note = null; stackOpen = [...els];
+    showNetPopup();
+  };
+
+  window.addEventListener('load', () => requestAnimationFrame(updateStacks));
 
   // ---------------------------------------------------------------- Home Assistant
   // Geräte, die in cloudy (Einstellungen → 3D-Karte → Home Assistant) einer Entität zugeordnet sind, schalten echt:

@@ -264,7 +264,7 @@ async def redirect_middleware(request: Request, call_next):
         if request.url.scheme == "http" and settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
             port = "" if settings.https_port == 443 else f":{settings.https_port}"
             return RedirectResponse(f"https://{raw_host}{port}{path}", status_code=302)
-        if path in ("/healthz", "/favicon.ico", "/karte/status", "/karte/internet", "/karte/ha") or path.startswith("/static/"):
+        if path in ("/healthz", "/favicon.ico", "/karte/status", "/karte/internet", "/karte/ha", "/karte/mein") or path.startswith("/static/"):
             return await call_next(request)
         raum = path.strip("/")
         if path == "/karte" or path.startswith("/karte/"):  # alte Links auf /karte bzw. /karte/<raum>
@@ -272,7 +272,7 @@ async def redirect_middleware(request: Request, call_next):
             if not raum:
                 return RedirectResponse("/", status_code=302)
             return RedirectResponse(f"/{raum}/", status_code=302) if karte.valid_path(raum) else Response("Nicht gefunden.", status_code=404)
-        if raum.split("/")[0] in ("einstellungen", "status", "internet", "ha") or (raum and not karte.valid_path(raum)):
+        if raum.split("/")[0] in ("einstellungen", "status", "internet", "ha", "mein") or (raum and not karte.valid_path(raum)):
             return Response("Nicht gefunden.", status_code=404)
         request.scope["path"] = f"/karte/{raum}" if raum else "/karte"
         request.state.karte_base = ""
@@ -710,6 +710,27 @@ async def karte_einstellungen_speichern(request: Request):
     return RedirectResponse("/karte/einstellungen?gespeichert=1", status_code=303)
 
 
+@app.get("/karte/mein")
+async def karte_mein(request: Request):
+    """Internet-Profil des aufrufenden Geräts (Auswahl im Header, ohne Passwort wie „Mein Gerät“)."""
+    return await run_in_threadpool(_mein_state, request.app.state.settings, client_ip(request))
+
+
+@app.post("/karte/mein")
+async def karte_mein_setzen(request: Request):
+    """Internet-Profil nur für das aufrufende Gerät umstellen."""
+    try:
+        data = await request.json()
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="JSON erwartet")
+    err = await _mein_apply(request, str(data.get("slot") or "").strip().lower())
+    if err:
+        return JSONResponse({"ok": False, "error": err}, status_code=400)
+    return {"ok": True, "mein": await run_in_threadpool(_mein_state, request.app.state.settings, client_ip(request))}
+
+
 @app.get("/karte/{raum}")
 @app.get("/karte/{raum}/")
 @app.get("/karte/{raum}/{menue}")
@@ -887,30 +908,93 @@ async def hub_statistik(request: Request, zeitraum: str | None = None):
     )
 
 
+def _mein_choices(settings, mac: str, current: str) -> dict:
+    """Was ein Gerät für sich selbst auswählen darf (Seite „Mein Gerät“ und Header der Karte)."""
+    allowed = warp.mein_allowed()
+    profiles = warp_profiles(settings)
+    if allowed is not None:
+        profiles = [w for w in profiles if w["slot"] in allowed or w["slot"] == current]
+    # Eingeschränkte Profile nur für freigegebene Geräte anzeigen.
+    allow = warp.slot_allowlists([w["slot"] for w in profiles])
+    profiles = [w for w in profiles if warp.may_use(mac, w["slot"], allow)]
+    show_direct = allowed is None or warp.DIRECT in allowed or current == warp.DIRECT
+    return {
+        "profiles": profiles,
+        # „Normal“ und die Profile in der Reihenfolge, die der Admin festgelegt hat (Standard: Normal zuerst).
+        "options": warp.sort_mein(
+            ([{"slot": warp.DIRECT, "kind": "direct", "label": "Normal", "has_token": True}] if show_direct else []) + profiles
+        ),
+        "show_standard": allowed is None or warp.STANDARD in allowed or not current,
+        "show_direct": show_direct,
+    }
+
+
+def _mein_state(settings, ip: str) -> dict:
+    """Internet-Profil des aufrufenden Geräts für das Auswahlmenü im Header der Karte."""
+    device = db.device(ip) if ip else None
+    mac = ((device or {}).get("mac") or "").strip().lower()
+    if not warp.MAC_RE.match(mac):
+        return {"known": False, "device": "", "ip": ip, "choice": "", "label": "", "kind": "", "locked": "",
+                "default_label": "", "show_standard": False, "options": []}
+    current = db.device_warp().get(mac, "")
+    choices = _mein_choices(settings, mac, current)
+    every = {p["slot"]: p for p in warp_profiles(settings)}
+    default = db.get_setting(warp.DEFAULT_KEY)
+    name = lambda s: "Normal" if not s or s == warp.DIRECT else (every[s]["label"] if s in every else s)
+    eff = policy.resolve(mac)
+    slot = eff.slot or default
+    return {
+        "known": True,
+        "device": (device.get("hostname") or "").strip() or ip,
+        "ip": ip,
+        "choice": current,  # "" = Standard, "direct" = normal
+        "label": name(slot),
+        "kind": every[slot]["kind"] if slot in every else "",
+        "locked": eff.group_name if eff.locked else "",
+        "default_label": name(default),
+        "show_standard": choices["show_standard"],
+        "options": [
+            {"slot": o["slot"], "kind": o["kind"], "label": o["label"], "ready": bool(o["has_token"])}
+            for o in choices["options"]
+        ],
+    }
+
+
+async def _mein_apply(request: Request, slot: str) -> str:
+    """Profil nur für das aufrufende Gerät umstellen (MAC aus Client-IP). Rückgabe: Fehlertext oder ""."""
+    ip = client_ip(request)
+    device = await run_in_threadpool(db.device, ip) if ip else None
+    mac = ((device or {}).get("mac") or "").strip().lower()
+    if not warp.MAC_RE.match(mac):
+        return "Gerät noch nicht erkannt – bitte kurz warten oder WLAN neu verbinden."
+    locked = await run_in_threadpool(policy.locked_for, mac)
+    if locked:
+        return f"Festgelegt durch Gruppe „{locked.group_name}“."
+    if slot and slot != warp.DIRECT:
+        _check_slot(request, slot)
+    current = (await run_in_threadpool(db.device_warp)).get(mac, "")
+    if not await run_in_threadpool(warp.mein_choice_ok, slot, current):
+        return "Diese Auswahl ist nicht freigegeben."
+    if not await run_in_threadpool(warp.may_use, mac, slot):
+        return "Dieses Gerät darf dieses Profil nicht nutzen."
+    await run_in_threadpool(db.set_device_warp, mac, slot or None)
+    return ""
+
+
 @app.get("/mein", response_class=HTMLResponse)
 async def mein_geraet(request: Request, ok: int | None = None, fehler: str | None = None):
     """Öffentliche Self-Service-Seite: nur das eigene Gerät, erkannt über die Client-IP."""
     ip = client_ip(request)
     device = await run_in_threadpool(db.device, ip) if ip else None
     settings = request.app.state.settings
-    profiles = await run_in_threadpool(warp_profiles, settings)
     warp_by_mac = await run_in_threadpool(db.device_warp)
     warp_default = await run_in_threadpool(db.get_setting, warp.DEFAULT_KEY)
-    allowed = await run_in_threadpool(warp.mein_allowed)
     mac = ((device or {}).get("mac") or "").strip().lower()
     current = warp_by_mac.get(mac, "")
     eff = await run_in_threadpool(policy.resolve, mac) if mac else policy.Effective("", "default")
-    if allowed is not None:
-        profiles = [w for w in profiles if w["slot"] in allowed or w["slot"] == current]
-    # Eingeschränkte Profile nur für freigegebene Geräte anzeigen.
-    allow = await run_in_threadpool(warp.slot_allowlists, [w["slot"] for w in profiles])
-    profiles = [w for w in profiles if warp.may_use(mac, w["slot"], allow)]
+    choices = await run_in_threadpool(_mein_choices, settings, mac, current)
+    profiles, options = choices["profiles"], choices["options"]
     labels = {w["slot"]: w["label"] for w in profiles}
-    show_direct = allowed is None or warp.DIRECT in allowed or current == warp.DIRECT
-    # „Normal“ und die Profile in der Reihenfolge, die der Admin festgelegt hat (Standard: Normal zuerst).
-    options = warp.sort_mein(
-        ([{"slot": warp.DIRECT, "kind": "direct", "label": "Normal", "has_token": True}] if show_direct else []) + profiles
-    )
     online = online_ips(request)
     hub_href = "/hub"
     hubs = await run_in_threadpool(localdomain.hub_domains)
@@ -937,8 +1021,8 @@ async def mein_geraet(request: Request, ok: int | None = None, fehler: str | Non
             "warp_names": labels,
             "warp_by_mac": warp_by_mac,
             "warp_default": warp_default,
-            "show_standard": allowed is None or warp.STANDARD in allowed or not current,
-            "show_direct": show_direct,
+            "show_standard": choices["show_standard"],
+            "show_direct": choices["show_direct"],
             "settings": settings,
             "ok": bool(ok),
             "fehler": fehler,
@@ -957,31 +1041,9 @@ async def mein_geraet(request: Request, ok: int | None = None, fehler: str | Non
 @app.post("/mein/warp")
 async def mein_set_warp(request: Request, slot: str = Form("")):
     """VPN/WARP nur für das Gerät umstellen, das gerade die Seite aufruft (MAC aus Client-IP)."""
-    ip = client_ip(request)
-    device = await run_in_threadpool(db.device, ip) if ip else None
-    mac = (device or {}).get("mac") or ""
-    mac = mac.strip().lower()
-    if not warp.MAC_RE.match(mac):
-        return RedirectResponse(
-            f"/mein?fehler={quote('Gerät noch nicht erkannt – bitte kurz warten oder WLAN neu verbinden.')}",
-            status_code=303,
-        )
-    locked = await run_in_threadpool(policy.locked_for, mac)
-    if locked:
-        return RedirectResponse(
-            f"/mein?fehler={quote(f'Festgelegt durch Gruppe „{locked.group_name}“.')}",
-            status_code=303,
-        )
-    if slot and slot != warp.DIRECT:
-        _check_slot(request, slot)
-    current = (await run_in_threadpool(db.device_warp)).get(mac, "")
-    if not await run_in_threadpool(warp.mein_choice_ok, slot, current):
-        return RedirectResponse(f"/mein?fehler={quote('Diese Auswahl ist nicht freigegeben.')}", status_code=303)
-    if not await run_in_threadpool(warp.may_use, mac, slot):
-        return RedirectResponse(
-            f"/mein?fehler={quote('Dieses Gerät darf dieses Profil nicht nutzen.')}", status_code=303
-        )
-    await run_in_threadpool(db.set_device_warp, mac, slot or None)
+    err = await _mein_apply(request, slot)
+    if err:
+        return RedirectResponse(f"/mein?fehler={quote(err)}", status_code=303)
     return RedirectResponse("/mein?ok=1", status_code=303)
 
 

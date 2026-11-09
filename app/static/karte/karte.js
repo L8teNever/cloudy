@@ -4089,6 +4089,7 @@ function updateFloatingLabels() {
 // Handy/Tablet (Touch): Klick toggelt NUR (An/Aus bzw. Auf/Zu) · Halten (Long-Press) öffnet zentriertes Pop-up!
 // ============================================================================
 function makeSmartButton(el, { onShortClick, onLongPress }) {
+  el._actions = { onShortClick, onLongPress }; // cloudy.js: gestapelte Buttons rufen dieselben Aktionen auf
   let pressTimer = null;
   let isLongPress = false;
   let startX = 0, startY = 0;

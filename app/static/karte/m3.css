@@ -68,15 +68,22 @@ button { font-family: var(--md-font); }
   border: none;
   box-shadow: var(--md-elev-3);
   color: var(--md-on-surface);
+  display: flex;
 }
 #room-view-title {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-left: 12px;
   font-size: 18px;
   font-weight: 500;
   letter-spacing: 0;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 46vw;
+  text-align: left;
 }
+body.in-room #room-view-title { padding-left: 4px; }
+.room-header-right { flex: none; gap: 8px; }
 /* Zurück-Pfeil links, nur im Raum sichtbar */
 .m3-back {
   grid-column: 1;
@@ -97,8 +104,109 @@ button { font-family: var(--md-font); }
   transition: opacity .2s var(--md-emph), transform var(--md-dur) var(--md-spring), border-radius var(--md-dur) var(--md-spring);
 }
 .m3-back svg { width: 24px; height: 24px; }
+body:not(.in-room) .m3-back { display: none; }
 body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
 .m3-back:active { border-radius: var(--md-shape-s); }
+
+/* Gestapelte Buttons am Handy: Sammel-Button statt überlappender Einzel-Buttons */
+[data-stacked] { visibility: hidden !important; pointer-events: none !important; }
+.badge-stack { width: 140px; box-sizing: border-box; pointer-events: auto; cursor: pointer; }
+.badge-stack .gh-tile-text { min-width: 0; }
+.badge-stack .gh-tile-title, .badge-stack .gh-tile-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stack-list { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.stack-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 6px;
+  border-radius: var(--md-shape-xs);
+  background: var(--md-surface-high);
+  transition: background .2s var(--md-emph);
+}
+.stack-row:first-child { border-top-left-radius: var(--md-shape-l); border-top-right-radius: var(--md-shape-l); }
+.stack-row:last-child { border-bottom-left-radius: var(--md-shape-l); border-bottom-right-radius: var(--md-shape-l); }
+.stack-main {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 8px 10px 14px;
+  border: none;
+  background: none;
+  color: var(--md-on-surface);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.stack-icon {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--md-shape-full);
+  background: var(--md-surface-highest);
+  color: var(--md-on-surface-variant);
+  transition: background .2s, color .2s;
+}
+.stack-row.on .stack-icon { background: var(--md-primary); color: var(--md-on-primary); }
+.stack-icon .gh-tile-icon { width: 24px; height: 24px; }
+.stack-text { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.stack-title { font-size: 16px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stack-sub { font-size: 13px; color: var(--md-on-surface-variant); }
+.stack-chevron { flex: none; width: 22px; height: 22px; margin-right: 6px; color: var(--md-on-surface-variant); }
+.stack-tune { flex: none; }
+.stack-switch {
+  flex: none;
+  position: relative;
+  width: 52px;
+  height: 32px;
+  box-sizing: border-box;
+  border-radius: var(--md-shape-full);
+  border: 2px solid var(--md-outline);
+  background: var(--md-surface-highest);
+  transition: background .2s, border-color .2s;
+}
+.stack-switch > span {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--md-shape-full);
+  background: var(--md-outline);
+  transition: left var(--md-dur) var(--md-spring), top var(--md-dur) var(--md-spring), width var(--md-dur) var(--md-spring), height var(--md-dur) var(--md-spring), background .2s;
+}
+.stack-switch.on { background: var(--md-primary); border-color: var(--md-primary); }
+.stack-switch.on > span { top: 2px; left: 22px; width: 24px; height: 24px; background: var(--md-on-primary); }
+
+/* Eigenes Internet-Profil: Auswahl-Chip neben dem Titel */
+#mein-profil-btn {
+  height: 48px;
+  padding: 0 10px 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  border-radius: var(--md-shape-full);
+  background: var(--md-surface-highest);
+  color: var(--md-on-surface);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-radius var(--md-dur) var(--md-spring), background .2s, color .2s;
+}
+#mein-profil-btn:hover { background: color-mix(in srgb, var(--md-surface-highest), white 8%); }
+#mein-profil-btn:active { border-radius: var(--md-shape-s); }
+#mein-profil-btn.vpn { background: var(--md-success-container); color: var(--md-on-success-container); }
+#mein-profil-btn.warp { background: var(--md-warn-container); color: var(--md-on-warn-container); }
+#mein-profil-btn.dns { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+#mein-profil-btn.busy { opacity: .6; }
+#mein-profil-label { max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m3-pill-icon, .m3-pill-chevron { width: 20px; height: 20px; flex: none; }
 
 /* Einstellungen-Knopf: tonaler Button, rund */
 #room-settings-btn {
@@ -510,6 +618,9 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
   }
   #room-view-title { font-size: 16px; }
   #room-settings-btn { padding: 0 14px; }
+  #mein-profil-btn { padding: 0 6px 0 10px; gap: 4px; font-size: 13px; }
+  #mein-profil-label { max-width: 76px; }
+  .m3-pill-chevron { width: 18px; height: 18px; }
   #room-settings-btn span { display: none; }
   .m3-back { width: 48px; height: 48px; }
 
