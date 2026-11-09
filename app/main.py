@@ -757,6 +757,7 @@ async def karte_ha_befehl(request: Request):
 @app.post("/karte/zeitplan")
 async def karte_zeitplan(request: Request):
     """Einmal-Zeitplan für ein Gerät der Karte: {device, start (Unix-Sekunden), minutes} – oder {device, cancel: true}.
+    Täglicher Plan: {device, daily: {enabled, time: "HH:MM", minutes}}.
 
     Wie /karte/ha ohne Passwort: nur zugeordnete Geräte, nur an → nach X Minuten aus."""
     try:
@@ -767,13 +768,17 @@ async def karte_zeitplan(request: Request):
         raise HTTPException(status_code=400, detail="JSON erwartet")
     device = str(data.get("device") or "")
     try:
+        if isinstance(data.get("daily"), dict):
+            d = data["daily"]
+            plans = await run_in_threadpool(homeassistant.set_daily, device, bool(d.get("enabled")), d.get("time"), d.get("minutes"))
+            return {"ok": True, "timers": homeassistant.timers(), "daily": plans}
         if data.get("cancel"):
             timers = await run_in_threadpool(homeassistant.cancel_timer, device)
         else:
             timers = await run_in_threadpool(homeassistant.set_timer, device, data.get("start"), data.get("minutes"))
     except homeassistant.HAError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-    return {"ok": True, "timers": timers}
+    return {"ok": True, "timers": timers, "daily": homeassistant.daily()}
 
 
 @app.post("/karte/einstellungen", dependencies=[Depends(require_password)])
@@ -1396,10 +1401,12 @@ async def fernzugriff_set(request: Request):
         emails = fernzugriff.parse_emails(str(form.get("fern_emails") or ""))
         await run_in_threadpool(fernzugriff.set_config, entries, emails, form.get("fern_tage") or fernzugriff.DEFAULT_DAYS, replace)
     except fernzugriff.FernError as exc:
-        return RedirectResponse(f"/einstellungen?fern_fehler={quote(str(exc))}#fernzugriff", status_code=303)
+        return RedirectResponse(f"/einstellungen?fehler={quote(str(exc))}#fernzugriff", status_code=303)
     await run_in_threadpool(_apply_redirects, request)  # lokale DNS-Zeilen für die Namen
     localdomain.start_in_background(request.app.state.settings)  # Zertifikat auch für neue Namen
-    await run_in_threadpool(fernzugriff.apply, request.app.state.settings)
+    cfg = await run_in_threadpool(fernzugriff.apply, request.app.state.settings)
+    if cfg.get("state") == "fehler":  # Daten sind gespeichert, nur Cloudflare hat nicht geklappt -> als Fehler melden
+        return RedirectResponse(f"/einstellungen?fehler={quote(cfg.get('text', ''))}#fernzugriff", status_code=303)
     return RedirectResponse("/einstellungen#fernzugriff", status_code=303)
 
 

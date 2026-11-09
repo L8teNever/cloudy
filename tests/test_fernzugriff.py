@@ -128,10 +128,10 @@ def test_lange_anmeldung_abgelehnt():
 def test_eingaben_pruefen(client):
     r = client.post("/fernzugriff", data={"fern_host": ["karte.kulbarts.com"], "fern_seite": ["karte"], "fern_emails": ""},
                     follow_redirects=False)
-    assert "fern_fehler" in r.headers["location"]
+    assert "fehler=" in r.headers["location"]
     r = client.post("/fernzugriff", data={"fern_host": ["karte.kulbarts.com"], "fern_seite": ["karte"],
                                           "fern_emails": "kaputt"}, follow_redirects=False)
-    assert "fern_fehler" in r.headers["location"] and fz.hosts() == {}
+    assert "fehler=" in r.headers["location"] and fz.hosts() == {}
 
 
 def _jwt(key, claims):

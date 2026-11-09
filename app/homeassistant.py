@@ -282,17 +282,17 @@ def karte_state() -> dict:
     """{"configured": bool, "devices": {karten_geraet: zustand}, "error": ""} für die Karte."""
     mp = mapping()
     if not configured() or not mp:
-        return {"configured": configured(), "devices": {}, "error": "", "timers": timers(), "confirm": confirm_devices(), "night": night()}
+        return {"configured": configured(), "devices": {}, "error": "", "timers": timers(), "daily": daily(), "confirm": confirm_devices(), "night": night()}
     try:
         by_id = {s.get("entity_id"): s for s in states()}
     except HAError as exc:
-        return {"configured": True, "devices": {}, "error": str(exc), "timers": timers(), "confirm": confirm_devices(), "night": night()}
+        return {"configured": True, "devices": {}, "error": str(exc), "timers": timers(), "daily": daily(), "confirm": confirm_devices(), "night": night()}
     devices = {}
     for dev, ent in mp.items():
         st = device_state(DEVICE_KIND[dev], by_id.get(ent))
         st["entity"] = ent
         devices[dev] = st
-    return {"configured": True, "devices": devices, "error": "", "timers": timers(), "confirm": confirm_devices(), "night": night()}
+    return {"configured": True, "devices": devices, "error": "", "timers": timers(), "daily": daily(), "confirm": confirm_devices(), "night": night()}
 
 
 def _service(domain: str, service: str, data: dict) -> None:
@@ -425,6 +425,11 @@ def cancel_timer(device: str) -> dict:
     return timers()
 
 
+def _daily_holds(device: str, now: float) -> bool:
+    run = _json_setting(DAILY_RUN_KEY).get(device)
+    return isinstance(run, dict) and bool(run.get("end")) and now < float(run["end"])
+
+
 def timer_tick(now: float | None = None) -> None:
     """Fällige Zeitpläne ausführen: einschalten, nach Ablauf ausschalten und den Plan entfernen."""
     now = time.time() if now is None else now
@@ -435,7 +440,7 @@ def timer_tick(now: float | None = None) -> None:
             start, end = float(t.get("start") or 0), float(t.get("end") or 0)
             try:
                 if now >= end:
-                    if t.get("phase") == "on":
+                    if t.get("phase") == "on" and not _daily_holds(dev, now):
                         command(dev, "off")
                     del data[dev]
                     changed = True
@@ -449,10 +454,129 @@ def timer_tick(now: float | None = None) -> None:
             _save_timers(data)
 
 
+# --------------------------------------------------------------------------- Täglicher Plan (jeden Tag um HH:MM an → nach X Minuten aus)
+# Unabhängig vom Einmal-Zeitplan. Ohne Eintrag gilt der Standard (Steckdose Küche: jeden Tag 04:00).
+
+DAILY_KEY = "karte_taeglich"        # JSON {geraet: {"enabled": bool, "time": "HH:MM", "minutes": int}}
+DAILY_RUN_KEY = "karte_taeglich_lauf"  # JSON {geraet: {"last": "YYYY-MM-DD", "end": epoch}} – läuft gerade / zuletzt gelaufen
+DAILY_DEFAULT = {"plug-kueche": {"enabled": True, "time": "04:00", "minutes": 120}}
+
+
+def _json_setting(key: str) -> dict:
+    try:
+        raw = json.loads(db.get_setting(key) or "{}")
+    except ValueError:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def daily() -> dict:
+    """{geraet: {"enabled", "time", "minutes", "running_until"}} – nur Geräte mit Plan (oder Standard)."""
+    saved = _json_setting(DAILY_KEY)
+    runs = _json_setting(DAILY_RUN_KEY)
+    out = {}
+    for dev in set(DAILY_DEFAULT) | set(saved):
+        if dev not in DEVICE_KIND:
+            continue
+        cfg = {**DAILY_DEFAULT.get(dev, {"enabled": False, "time": "04:00", "minutes": 120}),
+               **(saved.get(dev) if isinstance(saved.get(dev), dict) else {})}
+        if not TIME_RE.match(str(cfg.get("time"))):
+            cfg["time"] = "04:00"
+        try:
+            cfg["minutes"] = max(1, min(24 * 60, int(cfg.get("minutes"))))
+        except (TypeError, ValueError):
+            cfg["minutes"] = 120
+        run = runs.get(dev) if isinstance(runs.get(dev), dict) else {}
+        out[dev] = {"enabled": bool(cfg.get("enabled")), "time": cfg["time"], "minutes": cfg["minutes"],
+                    "running_until": int(run["end"]) if run.get("end") else None}
+    return out
+
+
+def set_daily(device: str, enabled: bool, start: str, minutes) -> dict:
+    if DEVICE_KIND.get(device) not in ("switch", "light", "led"):
+        raise HAError("Für dieses Gerät gibt es keinen Zeitplan.")
+    start = str(start or "").strip()
+    if not TIME_RE.match(start):
+        raise HAError("Bitte eine Uhrzeit wie 04:00 angeben.")
+    try:
+        minutes = int(round(float(minutes)))
+    except (TypeError, ValueError) as exc:
+        raise HAError("Ungültige Dauer.") from exc
+    if not 1 <= minutes <= 24 * 60:
+        raise HAError("Die Dauer muss zwischen 1 Minute und 24 Stunden liegen.")
+    if enabled and device not in mapping():
+        raise HAError("Diesem Gerät ist in cloudy keine Home-Assistant-Entität zugeordnet.")
+    with _timer_lock:
+        saved = _json_setting(DAILY_KEY)
+        saved[device] = {"enabled": bool(enabled), "time": start, "minutes": minutes}
+        db.set_setting(DAILY_KEY, json.dumps(saved, sort_keys=True))
+    if not enabled:  # läuft er gerade, Gerät ausschalten (außer ein Einmal-Plan hält es an)
+        _daily_stop(device)
+    daily_tick()
+    return daily()
+
+
+def _daily_stop(device: str) -> None:
+    with _timer_lock:
+        runs = _json_setting(DAILY_RUN_KEY)
+        run = runs.get(device) if isinstance(runs.get(device), dict) else {}
+        if not run.get("end"):
+            return
+        run.pop("end", None)
+        db.set_setting(DAILY_RUN_KEY, json.dumps(runs, sort_keys=True))
+        once_on = (_load_timers().get(device) or {}).get("phase") == "on"
+    if not once_on:
+        try:
+            command(device, "off")
+        except HAError:
+            pass
+
+
+def daily_tick(now: float | None = None) -> None:
+    """Fällige Tagespläne ausführen. Startet cloudy mitten im Zeitfenster neu, wird trotzdem noch eingeschaltet."""
+    now = time.time() if now is None else now
+    plans = daily()
+    if not any(p["enabled"] or p["running_until"] for p in plans.values()):
+        return
+    lt = time.localtime(now)
+    today = time.strftime("%Y-%m-%d", lt)
+    with _timer_lock:
+        runs = _json_setting(DAILY_RUN_KEY)
+        once = _load_timers()
+        changed = False
+        for dev, p in plans.items():
+            run = runs.get(dev) if isinstance(runs.get(dev), dict) else {}
+            try:
+                if run.get("end"):
+                    if now >= float(run["end"]):
+                        if (once.get(dev) or {}).get("phase") != "on":  # Einmal-Plan läuft noch -> anlassen
+                            command(dev, "off")
+                        run.pop("end")
+                        changed = True
+                    continue
+                if not p["enabled"] or run.get("last") == today or dev not in mapping():
+                    continue
+                h, m = map(int, p["time"].split(":"))
+                start = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, h, m, 0, 0, 0, -1))
+                end = start + p["minutes"] * 60
+                if start <= now < end:
+                    command(dev, "on")
+                    run.update({"last": today, "end": int(end)})
+                    changed = True
+            except HAError as exc:  # Home Assistant gerade weg -> beim nächsten Durchlauf noch mal
+                print(f"cloudy: Tagesplan {dev}: {exc}", flush=True)
+            finally:
+                if run:
+                    runs[dev] = run
+        if changed:
+            db.set_setting(DAILY_RUN_KEY, json.dumps(runs, sort_keys=True))
+
+
 def timer_loop(stop: threading.Event, interval: float = 15.0) -> None:
     while not stop.wait(interval):
-        if _load_timers():
-            try:
+        try:
+            if _load_timers():
                 timer_tick()
-            except Exception as exc:  # noqa: BLE001 – Schleife darf nie sterben
-                print(f"cloudy: Zeitplan-Fehler: {exc}", flush=True)
+            daily_tick()
+        except Exception as exc:  # noqa: BLE001 – Schleife darf nie sterben
+            print(f"cloudy: Zeitplan-Fehler: {exc}", flush=True)

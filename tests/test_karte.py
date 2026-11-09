@@ -112,7 +112,7 @@ def test_karte_home_assistant(client, monkeypatch):
         return entities if path == "/api/states" else {"message": "API running."}
 
     monkeypatch.setattr(ha, "_call", fake_call)
-    assert client.get("/karte/ha").json() == {"configured": False, "devices": {}, "error": "", "timers": {}, "confirm": [], "night": None}
+    assert client.get("/karte/ha").json() == {"configured": False, "devices": {}, "error": "", "timers": {}, "daily": {"plug-kueche": {"enabled": True, "time": "04:00", "minutes": 120, "running_until": None}}, "confirm": [], "night": None}
     assert "ha_fehler" in client.post("/karte/einstellungen/ha", data={"aktion": "verbinden", "ha_url": "ftp://x"},
                                       follow_redirects=False).headers["location"]
     r = client.post("/karte/einstellungen/ha", data={"aktion": "verbinden", "ha_url": "http://ha.local:8123/", "ha_token": "abc"},
@@ -174,6 +174,39 @@ def test_karte_home_assistant(client, monkeypatch):
     assert calls[-1] == ("POST", "/api/services/switch/turn_off", {"entity_id": "switch.kueche"}) and ha.timers() == {}
     client.post("/karte/zeitplan", json={"device": "plug-kueche", "start": now + 60, "minutes": 10})
     assert client.post("/karte/zeitplan", json={"device": "plug-kueche", "cancel": True}).json()["timers"] == {}
+
+    # Jeden Tag: Standard 04:00 · 120 Min., unabhängig vom Einmal-Plan
+    import datetime as _dt
+    def at(h, m, day=10):
+        return _dt.datetime(2026, 11, day, h, m).timestamp()
+    assert ha.daily()["plug-kueche"]["enabled"] and ha.daily()["plug-kueche"]["time"] == "04:00"
+    calls.clear()
+    ha.daily_tick(at(3, 59))
+    assert calls == []
+    ha.daily_tick(at(4, 0))
+    assert calls[-1] == ("POST", "/api/services/switch/turn_on", {"entity_id": "switch.kueche"})
+    assert ha.daily()["plug-kueche"]["running_until"] == int(at(6, 0))
+    calls.clear()
+    ha.daily_tick(at(4, 30))  # läuft schon -> nicht noch mal einschalten
+    assert calls == []
+    ha.daily_tick(at(6, 0))
+    assert calls[-1] == ("POST", "/api/services/switch/turn_off", {"entity_id": "switch.kueche"})
+    calls.clear()
+    ha.daily_tick(at(5, 0))  # heute schon gelaufen
+    assert calls == []
+    ha.daily_tick(at(4, 1, day=11))  # nächster Tag wieder
+    assert calls[-1] == ("POST", "/api/services/switch/turn_on", {"entity_id": "switch.kueche"})
+    ha.daily_tick(at(6, 1, day=11))
+    # ändern und ausschalten über die Karte
+    r = client.post("/karte/zeitplan", json={"device": "plug-kueche", "daily": {"enabled": True, "time": "05:30", "minutes": 30}}).json()
+    assert r["ok"] and r["daily"]["plug-kueche"]["time"] == "05:30" and r["daily"]["plug-kueche"]["minutes"] == 30
+    assert client.post("/karte/zeitplan", json={"device": "plug-kueche", "daily": {"enabled": True, "time": "25:00", "minutes": 30}}).status_code == 400
+    r = client.post("/karte/zeitplan", json={"device": "plug-kueche", "daily": {"enabled": False, "time": "05:30", "minutes": 30}}).json()
+    assert r["daily"]["plug-kueche"]["enabled"] is False
+    calls.clear()
+    ha.daily_tick(at(5, 31, day=12))
+    assert calls == []
+    assert client.get("/karte/ha").json()["daily"]["plug-kueche"]["enabled"] is False
 
     # Vor dem Ausschalten fragen: pro Gerät in den Einstellungen, Rollläden nicht
     client.post("/karte/einstellungen/ha", data={"aktion": "zuordnen", **{f"ha_{k}": v for k, v in ha.mapping().items()},
@@ -261,6 +294,7 @@ def test_karte_als_app(client):
     sw = client.get("/karte/pwa/sw.js")
     assert sw.headers["service-worker-allowed"] == "/" and "__V__" not in sw.text and "karte-" in sw.text
     assert 'rel="manifest" href="/karte/pwa/manifest.webmanifest"' in client.get("/karte").text
+    assert 'manifest.webmanifest" crossorigin="use-credentials"' in client.get("/karte").text  # von außen (Cloudflare Access) nötig
     # Eigene Domain: eine App für zu Hause und unterwegs, Bereich /
     client.post("/lokale-domain", data={"karte": "haus.kulbarts.com"})
     h = {"host": "haus.kulbarts.com"}

@@ -603,7 +603,7 @@ def localdomain_ctx(request: Request) -> dict:
         "redirect_certs": sorted(localdomain.real_cert_hosts(s) - set(localdomain.domains())),
         "status": localdomain.status(),
         "fern": {**fernzugriff.load(), "pages": fernzugriff.PAGES, "tunnel": fernzugriff.tunnel_status(s),
-                 "error": request.query_params.get("fern_fehler", ""), "default_days": fernzugriff.DEFAULT_DAYS},
+                 "error": "", "default_days": fernzugriff.DEFAULT_DAYS},
     }
 
 

@@ -1008,6 +1008,8 @@
   const sockForm = { ...SOCK_DEFAULT };
   let sockBusy = false;
   let sockSig = '';
+  let sockPick = null; // eigene Uhrzeit-Auswahl offen: 'once' | 'daily' | null (statt der Browser-Auswahl, die je Gerät anders aussieht)
+  let dailyForm = null; // Tagesplan wird gerade bearbeitet: {time, minutes}
   const pad2 = n => String(n).padStart(2, '0');
   const hhmm = d => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   function dayWord(d) {
@@ -1048,71 +1050,150 @@
   }
   after('updateKuecheSocketVisuals', renderSockBadge);
 
+  const sockDaily = dev => ((ha.daily || {})[dev]) || { enabled: false, time: '04:00', minutes: 120, running_until: null };
+  const endTime = (time, minutes) => { const [h, m] = time.split(':').map(Number); return hhmm(new Date(2000, 0, 1, h, m + (Number(minutes) || 0))); };
+  const timeBtn = (target, time) => `<button type="button" class="sock-input sock-time-btn ${sockPick === target ? 'open' : ''}" data-time="${target}" aria-expanded="${sockPick === target}">${esc(time)}<span class="sock-caret">▾</span></button>`;
+
   function renderSocket(force) {
     const body = document.getElementById('net-popup-body');
     if (!body || !sockOpen) return;
     const dev = sockOpen;
     const t = sockTimer(dev);
+    const d = sockDaily(dev);
     const on = sockOn(dev);
     const isLinked = linked(dev);
-    const sig = JSON.stringify([t, on, isLinked, sockBusy, note]);
+    const sig = JSON.stringify([t, d, on, isLinked, sockBusy, note]);
     if (!force && sig === sockSig) return; // nicht neu zeichnen, sonst gehen Eingaben verloren
     sockSig = sig;
     document.getElementById('net-popup-title').textContent = SOCK_NAMES[dev] || 'Steckdose';
+    const dis = sockBusy || !isLinked ? 'disabled' : '';
     let html = `<div class="net-device"><span class="net-dot ${on ? 'on' : ''}"></span><div><div class="net-dev-name">${esc(SOCK_NAMES[dev] || dev)}</div>
       <div class="net-dev-sub">Jetzt ${on ? 'an' : 'aus'}</div></div></div>`;
     if (!isLinked) {
       html += '<div class="net-note">Die Steckdose ist in cloudy keinem Home-Assistant-Gerät zugeordnet (Einstellungen → 3D-Karte), darum geht der Zeitplan nicht.</div>';
     }
+
+    // Jeden Tag (fest, läuft von selbst weiter)
+    html += '<div class="net-section">Jeden Tag</div>';
+    if (dailyForm) {
+      html += `<div class="sock-form">
+          <label>Um ${timeBtn('daily', dailyForm.time)}</label>
+          <label>für <input type="number" class="sock-input sock-min" id="sock-dmin" min="1" max="1440" step="5" value="${esc(dailyForm.minutes)}"> Min.</label>
+        </div>
+        ${sockPick === 'daily' ? timePickerHtml(dailyForm.time, 'daily') : ''}
+        <div class="net-dev-sub" id="sock-dpreview">${esc(`Jeden Tag ${dailyForm.time} an, ${endTime(dailyForm.time, dailyForm.minutes)} wieder aus`)}</div>
+        <div class="net-options sock-row"><button class="net-option active" data-sock="dsave" ${dis}><span>Speichern</span></button>
+        <button class="net-option" data-sock="dcancel"><span>Abbrechen</span></button></div>`;
+    } else if (d.enabled) {
+      const run = d.running_until ? ` · läuft gerade bis ${hhmm(new Date(d.running_until * 1000))}` : '';
+      html += `<div class="sock-plan">🔁 ${esc(`${d.time} an, ${endTime(d.time, d.minutes)} wieder aus${run}`)}</div>
+        <div class="net-options sock-row"><button class="net-option" data-sock="dedit" ${sockBusy ? 'disabled' : ''}><span>Ändern</span></button>
+        <button class="net-option" data-sock="doff" ${sockBusy ? 'disabled' : ''}><span>Täglich aus</span></button></div>`;
+    } else {
+      html += `<div class="net-dev-sub">Aus – die Steckdose geht nicht von selbst an.</div>
+        <div class="net-options"><button class="net-option" data-sock="dedit" ${dis}><span>Täglich einschalten (${esc(d.time)})</span></button></div>`;
+    }
+
+    // Einmal (zusätzlich, danach ist der Plan weg)
     if (t) {
-      html += `<div class="net-section">Zeitplan</div><div class="sock-plan">⏱ ${esc(timerText(t))}</div>
+      html += `<div class="net-section">Einmal</div><div class="sock-plan">⏱ ${esc(timerText(t))}</div>
         <div class="net-options"><button class="net-option" data-sock="cancel" ${sockBusy ? 'disabled' : ''}><span>Zeitplan abbrechen${t.phase === 'on' ? ' und ausschalten' : ''}</span></button></div>`;
     } else {
       const st = nextStart(sockForm.time);
       const en = new Date(st.getTime() + (Number(sockForm.minutes) || 0) * 60000);
-      html += `<div class="net-section">Einmal einschalten</div>
+      html += `<div class="net-section">Zusätzlich einmal einschalten</div>
         <div class="sock-form">
-          <label>Um <input type="time" class="sock-input" id="sock-time" value="${esc(sockForm.time)}"></label>
+          <label>Um ${timeBtn('once', sockForm.time)}</label>
           <label>für <input type="number" class="sock-input sock-min" id="sock-min" min="1" max="1440" step="5" value="${esc(sockForm.minutes)}"> Min.</label>
         </div>
+        ${sockPick === 'once' ? timePickerHtml(sockForm.time, 'once') : ''}
         <div class="net-dev-sub" id="sock-preview">${esc(`${dayWord(st)} ${hhmm(st)} an, ${dayWord(en) === dayWord(st) ? '' : dayWord(en) + ' '}${hhmm(en)} wieder aus – läuft einmal`)}</div>
-        <div class="net-options"><button class="net-option active" data-sock="start" ${sockBusy || !isLinked ? 'disabled' : ''}><span>Zeitplan starten</span></button>
+        <div class="net-options"><button class="net-option active" data-sock="start" ${dis}><span>Zeitplan starten</span></button>
         ${(sockForm.time !== SOCK_DEFAULT.time || Number(sockForm.minutes) !== SOCK_DEFAULT.minutes) ? '<button class="net-option" data-sock="reset"><span>Zurück auf Standard (16:00 · 120 Min.)</span></button>' : ''}</div>`;
     }
     html += `<div class="net-options"><button class="net-option" data-sock="toggle" ${sockBusy ? 'disabled' : ''}><span>Jetzt ${on ? 'ausschalten' : 'einschalten'}</span></button></div>`;
     if (sockBusy) html += '<div class="net-note">Einen Moment …</div>';
     else if (note) html += `<div class="net-note ${note.kind}">${esc(note.text)}</div>`;
     body.innerHTML = html;
-    const time = document.getElementById('sock-time');
+
     const min = document.getElementById('sock-min');
+    const dmin = document.getElementById('sock-dmin');
     const preview = () => {
       const p = document.getElementById('sock-preview');
       const st = nextStart(sockForm.time);
       const en = new Date(st.getTime() + (Number(sockForm.minutes) || 0) * 60000);
       if (p) p.textContent = `${dayWord(st)} ${hhmm(st)} an, ${dayWord(en) === dayWord(st) ? '' : dayWord(en) + ' '}${hhmm(en)} wieder aus – läuft einmal`;
+      const dp = document.getElementById('sock-dpreview');
+      if (dp && dailyForm) dp.textContent = `Jeden Tag ${dailyForm.time} an, ${endTime(dailyForm.time, dailyForm.minutes)} wieder aus`;
     };
-    if (time) time.addEventListener('input', () => { sockForm.time = time.value || SOCK_DEFAULT.time; preview(); });
     if (min) min.addEventListener('input', () => { sockForm.minutes = min.value; preview(); });
+    if (dmin) dmin.addEventListener('input', () => { dailyForm.minutes = dmin.value; preview(); });
+    body.querySelectorAll('[data-time]').forEach(b => b.addEventListener('click', () => {
+      sockPick = sockPick === b.dataset.time ? null : b.dataset.time;
+      renderSocket(true);
+    }));
+    body.querySelectorAll('[data-pick]').forEach(b => b.addEventListener('click', () => {
+      const form = b.closest('.sock-picker').dataset.target === 'daily' ? dailyForm : sockForm;
+      if (!form) return;
+      const [h, m] = form.time.split(':');
+      const v = b.dataset.val;
+      if (b.dataset.pick === 'h') form.time = `${v}:${m}`;
+      else if (b.dataset.pick === 'm') { form.time = `${h}:${v}`; sockPick = null; } // Minute gewählt -> fertig
+      else { form.time = v; sockPick = null; } // Schnellwahl
+      renderSocket(true);
+    }));
+    // gewählte Werte in den Spalten mittig zeigen
+    body.querySelectorAll('.sock-pick-col').forEach(col => {
+      const sel = col.querySelector('.sel');
+      if (sel) col.scrollTop = sel.offsetTop - col.clientHeight / 2 + sel.offsetHeight / 2;
+    });
     body.querySelectorAll('[data-sock]:not(:disabled)').forEach(b => b.addEventListener('click', () => sockAction(dev, b.dataset.sock)));
   }
 
+  // Eigene Uhrzeit-Auswahl: Stunden- und Minutenspalte (5-Minuten-Schritte) plus Schnellwahl.
+  function timePickerHtml(time, target) {
+    const [h, m] = String(time).split(':');
+    const mins = [];
+    for (let i = 0; i < 60; i += 5) mins.push(pad2(i));
+    if (!mins.includes(m)) { mins.push(m); mins.sort(); } // krumme Minute (z. B. von „Jetzt“) trotzdem zeigen
+    const col = (kind, list, cur) => `<div class="sock-pick-col" role="listbox">${list.map(v =>
+      `<button type="button" class="sock-pick-item ${v === cur ? 'sel' : ''}" data-pick="${kind}" data-val="${v}">${v}</button>`).join('')}</div>`;
+    const quick = target === 'daily'
+      ? [['04:00', '04:00'], ['05:00', '05:00'], ['06:00', '06:00'], ['22:00', '22:00']]
+      : [['Jetzt', hhmm(new Date(Date.now() + 60000))], ['In 30 Min.', hhmm(new Date(Date.now() + 30 * 60000))], ['16:00', '16:00'], ['18:00', '18:00'], ['20:00', '20:00']];
+    return `<div class="sock-picker" data-target="${target}">
+      <div class="sock-pick-cols">
+        <div><div class="sock-pick-head">Stunde</div>${col('h', Array.from({ length: 24 }, (_, i) => pad2(i)), h)}</div>
+        <div class="sock-pick-colon">:</div>
+        <div><div class="sock-pick-head">Minute</div>${col('m', mins, m)}</div>
+      </div>
+      <div class="sock-pick-quick">${quick.map(([l, v]) => `<button type="button" class="sock-chip" data-pick="q" data-val="${v}">${l}</button>`).join('')}</div>
+    </div>`;
+  }
+
   async function sockAction(dev, what) {
+    sockPick = null;
     if (what === 'reset') { Object.assign(sockForm, SOCK_DEFAULT); note = null; renderSocket(true); return; }
+    if (what === 'dedit') { const d = sockDaily(dev); dailyForm = { time: d.time, minutes: d.minutes }; note = null; renderSocket(true); return; }
+    if (what === 'dcancel') { dailyForm = null; note = null; renderSocket(true); return; }
     if (what === 'toggle') {
       note = null;
       if (dev === 'plug-kueche' && window.toggleKuecheSocket) window.toggleKuecheSocket();
       renderSocket(true);
       return;
     }
-    const minutes = Math.round(Number(sockForm.minutes));
-    if (what === 'start' && !(minutes >= 1 && minutes <= 1440)) {
+    const minutes = Math.round(Number(what === 'dsave' ? dailyForm.minutes : sockForm.minutes));
+    if ((what === 'start' || what === 'dsave') && !(minutes >= 1 && minutes <= 1440)) {
       note = { kind: 'error', text: 'Die Dauer muss zwischen 1 und 1440 Minuten liegen.' };
       renderSocket(true);
       return;
     }
     sockBusy = true; note = null; renderSocket(true);
     try {
+      const d = sockDaily(dev);
       const body = what === 'cancel' ? { device: dev, cancel: true }
+        : what === 'dsave' ? { device: dev, daily: { enabled: true, time: dailyForm.time, minutes } }
+        : what === 'doff' ? { device: dev, daily: { enabled: false, time: d.time, minutes: d.minutes } }
         : { device: dev, start: Math.floor(nextStart(sockForm.time).getTime() / 1000), minutes };
       const r = await fetch('/karte/zeitplan', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(body)
@@ -1122,8 +1203,12 @@
       if (!r.ok || !data || !data.ok) note = { kind: 'error', text: (data && (data.error || data.detail)) || 'Hat nicht geklappt.' };
       else {
         ha.timers = data.timers || {};
+        if (data.daily) ha.daily = data.daily;
         const t = ha.timers[dev];
-        note = what === 'cancel' ? { kind: 'ok', text: 'Zeitplan abgebrochen.' }
+        if (what === 'dsave') dailyForm = null;
+        note = what === 'dsave' ? { kind: 'ok', text: `Gespeichert: jeden Tag um ${sockDaily(dev).time}.` }
+          : what === 'doff' ? { kind: 'ok', text: 'Täglicher Plan ist aus.' }
+          : what === 'cancel' ? { kind: 'ok', text: 'Zeitplan abgebrochen.' }
           : { kind: 'ok', text: t ? `Erstellt für ${dayWord(new Date(t.start * 1000))}. Danach ist der Plan weg – zum Wiederholen einfach neu starten.` : 'Erstellt.' };
       }
     } catch (e) {
@@ -1139,7 +1224,7 @@
   window.openSocketPopup = function (dev) {
     if (window.closeShutterPopup) window.closeShutterPopup();
     if (window.closeSimonLedPopup) window.closeSimonLedPopup();
-    openScreenId = null; meinOpen = false; stackOpen = null; sockOpen = dev; note = null;
+    openScreenId = null; meinOpen = false; stackOpen = null; sockOpen = dev; note = null; sockPick = null; dailyForm = null;
     showNetPopup();
     if (!haTimer && !document.hidden) haStart(); else syncHa();
   };

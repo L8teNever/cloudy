@@ -104,7 +104,27 @@
 .sock-input:focus { outline: none; border-color: rgba(253, 224, 141, 0.5); }
 .sock-min { width: 72px; }
 .sock-plan { padding: 10px 12px; border-radius: 12px; background: #4d4327; color: #fde08d; font-size: 13.5px; margin-bottom: 4px; }
-#sock-preview { margin-bottom: 4px; }
+#sock-preview, #sock-dpreview { margin-bottom: 4px; }
+.sock-row { display: flex; gap: 8px; }
+.sock-row .net-option { flex: 1; }
+.sock-time-btn { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-variant-numeric: tabular-nums; min-width: 82px; justify-content: space-between; }
+.sock-time-btn.open { border-color: rgba(253, 224, 141, 0.5); color: #fde08d; }
+.sock-caret { font-size: 10px; color: #9aa0a6; transition: transform 0.15s; }
+.sock-time-btn.open .sock-caret { transform: rotate(180deg); color: #fde08d; }
+.sock-picker { background: #1b1c1f; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; padding: 10px; margin: 0 0 10px; }
+.sock-pick-cols { display: flex; justify-content: center; align-items: center; gap: 6px; }
+.sock-pick-cols > div:not(.sock-pick-colon) { flex: 1; max-width: 120px; }
+.sock-pick-head { font-size: 11px; color: #9aa0a6; text-align: center; margin-bottom: 4px; }
+.sock-pick-colon { font-size: 20px; color: #9aa0a6; padding-top: 16px; }
+.sock-pick-col { height: 168px; overflow-y: auto; scroll-snap-type: y proximity; display: flex; flex-direction: column; gap: 2px; padding: 2px; scrollbar-width: none; overscroll-behavior: contain;
+  mask-image: linear-gradient(transparent, #000 18%, #000 82%, transparent); -webkit-mask-image: linear-gradient(transparent, #000 18%, #000 82%, transparent); }
+.sock-pick-col::-webkit-scrollbar { display: none; }
+.sock-pick-item { flex: none; scroll-snap-align: center; border: none; border-radius: 10px; background: transparent; color: #e3e3e3; font: inherit; font-size: 16px; padding: 7px 0; cursor: pointer; font-variant-numeric: tabular-nums; transition: background 0.12s; }
+.sock-pick-item:hover { background: #2c2d32; }
+.sock-pick-item.sel { background: #4d4327; color: #fde08d; font-weight: 600; }
+.sock-pick-quick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; justify-content: center; }
+.sock-chip { border: 1px solid rgba(255, 255, 255, 0.1); background: #232428; color: #e3e3e3; border-radius: 999px; padding: 5px 11px; font: inherit; font-size: 12px; cursor: pointer; }
+.sock-chip:hover { background: #2c2d32; border-color: rgba(253, 224, 141, 0.35); color: #fde08d; }
 #led-ha-note { padding: 0 16px 12px; }
 
 @media (max-width: 840px) {

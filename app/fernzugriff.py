@@ -62,6 +62,15 @@ NEEDED = ("Konto → Cloudflare Tunnel → Bearbeiten, Konto → Access: Apps un
           "Konto → Access: Organisationen, Identitätsanbieter und Gruppen → Lesen, Zone → DNS → Bearbeiten")
 
 _lock = threading.Lock()
+_step = threading.local()  # welcher Schritt gerade läuft (für verständliche Fehler)
+
+STEP_RIGHTS = {
+    "Tunnel": "Konto → Cloudflare Tunnel → Bearbeiten",
+    "DNS": "Zone → DNS → Bearbeiten (und Zone → Zone → Lesen)",
+    "Zero-Trust-Anmeldung": "Konto → Access: Apps und Richtlinien → Bearbeiten",
+    "Zero-Trust-Team": "Konto → Access: Organisationen, Identitätsanbieter und Gruppen → Lesen",
+    "Konto": "Zone → Zone → Lesen",
+}
 
 
 class FernError(Exception):
@@ -168,9 +177,13 @@ def _api(cf: localdomain.Cloudflare, method: str, path: str, body: dict | None =
         return cf._call(method, path, body)  # noqa: SLF001 – gleiche Verbindung wie für die Zertifikate
     except localdomain.AcmeError as exc:
         text = str(exc)
+        step = getattr(_step, "name", "")
         if any(w in text.lower() for w in ("authentication", "not authorized", "unauthorized", "forbidden", "permission", "10000")):
-            raise FernError(f"{text} – dem Cloudflare-Token fehlen Rechte. Nötig: {NEEDED}.") from exc
-        raise FernError(text) from exc
+            need = STEP_RIGHTS.get(step, NEEDED)
+            raise FernError(f"Schritt „{step or 'Cloudflare'}“: dem Cloudflare-Token fehlt das Recht {need}. "
+                            "Unter dash.cloudflare.com → Mein Profil → API-Tokens den Token bearbeiten, Recht ergänzen, "
+                            "dann hier noch mal speichern.") from exc
+        raise FernError(f"Schritt „{step}“: {text}" if step else text) from exc
 
 
 def _port() -> int:
@@ -184,6 +197,7 @@ def apply(settings: Settings, cf: localdomain.Cloudflare | None = None) -> dict:
     """Cloudflare an die Einstellungen anpassen. Ergebnis/Fehler steht danach in load()["state"/"text"]."""
     with _lock:
         cfg = load()
+        _step.name = ""
         try:
             text = _apply(settings, cfg, cf)
             cfg.update(state="ok" if cfg["hosts"] else "", text=text, at=int(time.time()))
@@ -205,6 +219,7 @@ def _apply(settings: Settings, cfg: dict, cf) -> str:
         return ""  # nie eingerichtet, nichts aufzuräumen
 
     # Konto über die Zone des ersten Namens (bzw. eines alten DNS-Eintrags) finden
+    _step.name = "Konto"
     if not cfg.get("account"):
         probe = names[0]
         try:
@@ -215,6 +230,7 @@ def _apply(settings: Settings, cfg: dict, cf) -> str:
     acc = cfg["account"]
 
     # 1) Tunnel (einmal anlegen, Token für den Container ablegen)
+    _step.name = "Tunnel"
     tid = cfg.get("tunnel_id") or ""
     if tid:
         try:
@@ -237,6 +253,7 @@ def _apply(settings: Settings, cfg: dict, cf) -> str:
         _api(cf, "PUT", f"/accounts/{acc}/cfd_tunnel/{tid}/configurations", {"config": {"ingress": ingress}})
 
     # 3) DNS: Name -> <tunnel>.cfargotunnel.com; nicht mehr gewünschte eigene Einträge löschen
+    _step.name = "DNS"
     target = f"{tid}.cfargotunnel.com"
     for host in list(cfg["records"]):
         if host in cfg["hosts"]:
@@ -268,6 +285,7 @@ def _apply(settings: Settings, cfg: dict, cf) -> str:
     cfg["replace"] = []
 
     # 4) Zero Trust: eine Access-App für alle Namen, Regel = erlaubte E-Mails, Anmeldung hält <days> Tage
+    _step.name = "Zero-Trust-Anmeldung"
     if not names:
         if cfg.get("app_id"):
             try:
@@ -305,6 +323,7 @@ def _apply(settings: Settings, cfg: dict, cf) -> str:
     else:
         _api(cf, "POST", f"/accounts/{acc}/access/apps/{app['id']}/policies", policy)
     if not cfg.get("team"):
+        _step.name = "Zero-Trust-Team"
         cfg["team"] = _api(cf, "GET", f"/accounts/{acc}/access/organizations").get("auth_domain", "")
     return f"Eingerichtet: {', '.join(names)}.{note}"
 
@@ -341,6 +360,15 @@ def tunnel_status(settings: Settings) -> str:
 
 _keys: dict[str, tuple[float, dict]] = {}
 _keys_lock = threading.Lock()
+_step = threading.local()  # welcher Schritt gerade läuft (für verständliche Fehler)
+
+STEP_RIGHTS = {
+    "Tunnel": "Konto → Cloudflare Tunnel → Bearbeiten",
+    "DNS": "Zone → DNS → Bearbeiten (und Zone → Zone → Lesen)",
+    "Zero-Trust-Anmeldung": "Konto → Access: Apps und Richtlinien → Bearbeiten",
+    "Zero-Trust-Team": "Konto → Access: Organisationen, Identitätsanbieter und Gruppen → Lesen",
+    "Konto": "Zone → Zone → Lesen",
+}
 
 
 def _b64(text: str) -> bytes:
