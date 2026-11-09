@@ -271,8 +271,8 @@ async def redirect_middleware(request: Request, call_next):
             raum = path.removeprefix("/karte").strip("/")
             if not raum:
                 return RedirectResponse("/", status_code=302)
-            return RedirectResponse(f"/{raum}/", status_code=302) if karte.ROOM_RE.match(raum) else Response("Nicht gefunden.", status_code=404)
-        if raum in ("einstellungen", "status", "internet") or (raum and not karte.ROOM_RE.match(raum)):
+            return RedirectResponse(f"/{raum}/", status_code=302) if karte.valid_path(raum) else Response("Nicht gefunden.", status_code=404)
+        if raum.split("/")[0] in ("einstellungen", "status", "internet") or (raum and not karte.valid_path(raum)):
             return Response("Nicht gefunden.", status_code=404)
         request.scope["path"] = f"/karte/{raum}" if raum else "/karte"
         request.state.karte_base = ""
@@ -649,9 +649,11 @@ async def karte_einstellungen_speichern(request: Request):
 
 @app.get("/karte/{raum}")
 @app.get("/karte/{raum}/")
-async def karte_raum(request: Request, raum: str):
-    """Ein Raum der Karte unter eigener Adresse (z. B. /karte/simonszimmer/) – gleiche Seite, öffnet den Raum."""
-    if not karte.ROOM_RE.match(raum):
+@app.get("/karte/{raum}/{menue}")
+@app.get("/karte/{raum}/{menue}/")
+async def karte_raum(request: Request, raum: str, menue: str = ""):
+    """Raum (und offenes Menü) der Karte unter eigener Adresse, z. B. /karte/simonszimmer/rollladen-fenster/."""
+    if not karte.valid_path(f"{raum}/{menue}" if menue else raum):
         raise HTTPException(status_code=404)
     return await run_in_threadpool(_karte_response, request)
 

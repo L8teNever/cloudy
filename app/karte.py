@@ -18,6 +18,12 @@ from . import db
 KARTE_DIR = Path(__file__).resolve().parent / "static" / "karte"
 ROOM_RE = re.compile(r"^[a-z0-9-]{1,40}$")  # Raum-Adresse wie „simonszimmer“ (welcher Raum das ist, weiß cloudy.js)
 
+
+def valid_path(path: str) -> bool:
+    """„raum“ oder „raum/menü“ (z. B. simonszimmer/rollladen-fenster) – höchstens zwei Teile."""
+    parts = path.strip("/").split("/")
+    return 1 <= len(parts) <= 2 and all(ROOM_RE.match(p) for p in parts)
+
 ASSIGN_KEY = "karte_geraete"  # JSON {bildschirm_id: "mac" oder "ip:1.2.3.4"}
 
 # Bildschirme, die in static/karte/karte.js per registerScreen(...) angelegt sind (gleiche IDs).

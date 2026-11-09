@@ -25,59 +25,119 @@
   };
   const SLUG_ROOMS = Object.fromEntries(Object.entries(ROOM_SLUGS).map(([id, slug]) => [slug, id]));
 
-  // ---------------------------------------------------------------- Raum-Adressen
-  function roomUrl(roomId) {
-    const slug = roomId && ROOM_SLUGS[roomId];
-    return slug ? `${BASE}/${slug}/` : `${BASE}/`;
-  }
+  // ---------------------------------------------------------------- Raum- und Menü-Adressen
+  // /simonszimmer/ = Raum, /simonszimmer/rollladen-fenster/ = Raum mit offenem Menü (Rollladen, LED, Internet).
+  const LED_SLUGS = { simon: 'tisch-led', schlaf: 'decken-led' };
+  const LED_ROOMS = { simon: 'label-simon', schlaf: 'label-schlaf' };
+  const NET_SLUG = 'internet';
 
-  function roomFromPath() {
-    let path = location.pathname;
-    if (BASE && path.startsWith(BASE)) path = path.slice(BASE.length);
-    const slug = path.replace(/^\/+|\/+$/g, '').toLowerCase();
-    return SLUG_ROOMS[slug] || null;
-  }
+  const slugify = t => String(t || '').toLowerCase()
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const shutterSlug = sh => slugify(sh.shortLabel || sh.name || sh.id);
+  const isVisible = id => Boolean(document.getElementById(id)?.classList.contains('visible'));
 
   function currentRoom() {
     return typeof activeRoomId !== 'undefined' ? activeRoomId : null;
   }
 
+  // Welches Menü ist gerade offen? -> Teil der Adresse
+  function currentPopupSlug() {
+    const room = currentRoom();
+    if (isVisible('net-popup') && openScreenId) {
+      const tv = (window.screensRegistry || []).find(s => s.id === openScreenId);
+      return tv && tv.roomId === room ? NET_SLUG : '';
+    }
+    if (isVisible('shutter-popup') && typeof activeShutterId !== 'undefined' && activeShutterId) {
+      const sh = (window.shuttersRegistry || []).find(s => s.id === activeShutterId);
+      return sh && sh.roomId === room ? shutterSlug(sh) : '';
+    }
+    if (isVisible('led-popup') && typeof activeLedTarget !== 'undefined' && LED_ROOMS[activeLedTarget] === room) {
+      return LED_SLUGS[activeLedTarget] || '';
+    }
+    return '';
+  }
+
+  function currentUrl() {
+    const room = currentRoom() && ROOM_SLUGS[currentRoom()];
+    if (!room) return `${BASE}/`;
+    const popup = currentPopupSlug();
+    return popup ? `${BASE}/${room}/${popup}/` : `${BASE}/${room}/`;
+  }
+
+  function parsePath() {
+    let path = location.pathname;
+    if (BASE && path.startsWith(BASE)) path = path.slice(BASE.length);
+    const [roomSlug = '', popupSlug = ''] = path.replace(/^\/+|\/+$/g, '').toLowerCase().split('/');
+    return { roomId: SLUG_ROOMS[roomSlug] || null, popupSlug };
+  }
+
   let applyingUrl = false;
+  let depth = 0; // verschachtelte Aufrufe (z. B. Menü öffnen schließt erst das andere) nur einmal eintragen
   function syncUrl() {
-    if (applyingUrl) return;
-    const want = roomUrl(currentRoom());
-    if (location.pathname !== want) history.pushState({ room: currentRoom() }, '', want);
+    if (applyingUrl || depth > 0) return;
+    const want = currentUrl();
+    if (location.pathname !== want) history.pushState(null, '', want);
     const room = (typeof roomLabels !== 'undefined' ? roomLabels : []).find(r => r.id === currentRoom());
     document.title = room ? `${room.text} – Zuhause` : 'Zuhause – 3D Grundriss';
   }
 
-  // Alle Wege, die einen Raum öffnen oder verlassen, laufen über diese Funktionen.
-  ['enterRoomView', 'exitRoomView', 'setApartmentFilter', 'toggleCameraPerspective'].forEach(name => {
+  function track(name) {
     const orig = window[name];
-    if (typeof orig !== 'function') return;
-    window[name] = function () {
-      const res = orig.apply(this, arguments);
-      syncUrl();
-      return res;
+    if (typeof orig !== 'function' || orig.__tracked) return;
+    const wrapped = function () {
+      depth++;
+      try {
+        return orig.apply(this, arguments);
+      } finally {
+        depth--;
+        syncUrl();
+      }
     };
-  });
+    wrapped.__tracked = true;
+    window[name] = wrapped;
+  }
+
+  function openPopupFromSlug(roomId, slug) {
+    if (!slug) return false;
+    if (slug === NET_SLUG) {
+      const tv = (window.screensRegistry || []).find(s => s.kind === 'tv' && s.roomId === roomId);
+      if (tv) { window.openNetPopup(tv.id); return true; }
+      return false;
+    }
+    const led = Object.keys(LED_SLUGS).find(k => LED_SLUGS[k] === slug && LED_ROOMS[k] === roomId);
+    if (led && window.openSimonLedPopup) { window.openSimonLedPopup(led); return true; }
+    const sh = (window.shuttersRegistry || []).find(s => s.roomId === roomId && shutterSlug(s) === slug);
+    if (sh && window.openShutterPopup) { window.openShutterPopup(sh.id); return true; }
+    return false;
+  }
 
   function applyUrl() {
-    const roomId = roomFromPath();
+    const { roomId, popupSlug } = parsePath();
     applyingUrl = true;
     try {
       if (roomId && roomId !== currentRoom()) window.enterRoomView(roomId);
       else if (!roomId && currentRoom()) window.exitRoomView();
+      if (!roomId || currentPopupSlug() !== popupSlug) {
+        if (window.closeAllPopups) window.closeAllPopups();
+        if (roomId) openPopupFromSlug(roomId, popupSlug);
+      }
     } finally {
       applyingUrl = false;
     }
-    // Unbekannte Adresse -> Übersicht
-    if (!roomId && location.pathname !== `${BASE}/`) history.replaceState(null, '', `${BASE}/`);
+    // Unbekannte Adresse (oder unbekanntes Menü) -> passende gültige Adresse
+    if (location.pathname !== currentUrl()) history.replaceState(null, '', currentUrl());
     syncUrl();
   }
 
-  window.addEventListener('popstate', applyUrl);
-  window.addEventListener('load', () => setTimeout(applyUrl, 60));
+  function installRouting() {
+    // Alle Wege, die einen Raum oder ein Menü öffnen oder schließen, laufen über diese Funktionen.
+    ['enterRoomView', 'exitRoomView', 'setApartmentFilter', 'toggleCameraPerspective',
+     'openShutterPopup', 'closeShutterPopup', 'openSimonLedPopup', 'closeSimonLedPopup',
+     'openNetPopup', 'closeNetPopup', 'closeAllPopups'].forEach(track);
+    window.addEventListener('popstate', applyUrl);
+    window.addEventListener('load', () => setTimeout(applyUrl, 60));
+  }
 
   // ---------------------------------------------------------------- Online-Status + Internet-Route
   let netInfo = { profiles: [], default: '', default_label: '', screens: {} };
@@ -283,4 +343,6 @@
   }
 
   window.addEventListener('load', () => { initNetBadges(); requestAnimationFrame(placeNetBadges); });
+
+  installRouting();
 })();

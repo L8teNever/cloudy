@@ -7,6 +7,8 @@ def test_karte_page_and_status(client):
     assert "__V__" not in r.text and "cdnjs" not in r.text
     assert client.get("/karte/simonszimmer/").status_code == 200
     assert client.get("/karte/Quatsch!").status_code == 404
+    assert client.get("/karte/simonszimmer/rollladen-fenster/").status_code == 200
+    assert client.get("/karte/a/b/c").status_code == 404
     for f in ("karte.css", "karte.js", "cloudy.js", "vendor/three.min.js", "vendor/OrbitControls.js"):
         assert client.get(f"/static/karte/{f}").status_code == 200
     assert "/karte/status" in client.get("/static/karte/cloudy.js").text
@@ -39,7 +41,9 @@ def test_karte_domain(client):
     assert client.get("/karte/einstellungen", headers=h).status_code == 404
     assert client.get("/karte/status", headers=h).status_code == 200
     assert client.get("/einstellungen", headers=h).status_code == 404
-    assert client.get("/a/b", headers=h).status_code == 404
+    assert client.get("/simonszimmer/internet/", headers=h).status_code == 200
+    assert client.get("/a/b/c", headers=h).status_code == 404
+    assert client.get("/einstellungen/x", headers=h).status_code == 404
     assert client.get("/karte/simonszimmer", headers=h, follow_redirects=False).headers["location"] == "/simonszimmer/"
     assert client.post("/lokale-domain", data={"karte": "a.kulbarts.com", "hub": "a.kulbarts.com"}).status_code == 400
 

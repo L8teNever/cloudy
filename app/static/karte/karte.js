@@ -2511,7 +2511,19 @@ const roomLabels = [
 
 const GH_ROOM_SVG = `<svg class="gh-inline-icon" viewBox="0 0 24 24" fill="none"><path d="M3 10.5L12 3l9 7.5V20a1 1 0 0 1-1 1h-5.5v-6h-5v6H4a1 1 0 0 1-1-1v-9.5z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>`;
 
+// Nur Räume mit etwas zum Steuern/Anschauen (Rollladen, Licht, LED, Steckdose, Fernseher, Monitor)
+// bekommen ein Label und lassen sich öffnen – alle anderen bleiben in der Übersicht ohne Label.
+const CONTROL_ROOM_IDS = new Set([
+  ...(window.shuttersRegistry || []).map(s => s.roomId),
+  ...(window.screensRegistry || []).map(s => s.roomId),
+  ...(window.simonRoomLight || window.simonDeskLed || window.simonPc ? ['label-simon'] : []),
+  ...(window.schlafRoomLight || window.schlafCeilingLed ? ['label-schlaf'] : []),
+  ...(window.kuecheSocket ? ['label-kueche'] : [])
+].filter(Boolean));
+window.isControlRoom = id => CONTROL_ROOM_IDS.has(id);
+
 roomLabels.forEach(r => {
+  if (!CONTROL_ROOM_IDS.has(r.id)) return;
   const el = document.createElement('div');
   el.className = 'apt-label room';
   el.id = r.id;
@@ -3702,7 +3714,7 @@ window.rotateRoomCutaway = function() {
 
 window.enterRoomView = function(roomId, mode = 'cutaway', keepCornerIdx = false) {
   const room = roomLabels.find(r => r.id === roomId);
-  if (!room || !room.bounds) return;
+  if (!room || !room.bounds || !CONTROL_ROOM_IDS.has(roomId)) return;
 
   toggleRoomPickerSheet(false);
   toggleRoomHeaderDropdown(null, false);
