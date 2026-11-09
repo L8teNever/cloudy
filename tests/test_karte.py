@@ -136,6 +136,10 @@ def test_karte_home_assistant(client, monkeypatch):
                          {"entity_id": "light.tisch_led", "brightness_pct": 40, "rgb_color": [0, 255, 0]})
     client.post("/karte/ha", json={"device": "plug-kueche", "action": "off"})
     assert calls[-1] == ("POST", "/api/services/switch/turn_off", {"entity_id": "switch.kueche"})
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "geheim")  # Schalten geht für alle im Heimnetz auch mit Passwort
+    assert client.post("/karte/ha", json={"device": "plug-kueche", "action": "on"}).json()["ok"]
+    assert client.get("/karte/einstellungen").status_code == 401
+    monkeypatch.delenv("DASHBOARD_PASSWORD")
     bad = client.post("/karte/ha", json={"device": "light-simon", "action": "on"})
     assert bad.status_code == 400 and "keine Home-Assistant" in bad.json()["error"]
 

@@ -682,9 +682,11 @@ async def karte_ha_status():
     return await run_in_threadpool(homeassistant.karte_state)
 
 
-@app.post("/karte/ha", dependencies=[Depends(require_password)])
+@app.post("/karte/ha")
 async def karte_ha_befehl(request: Request):
-    """Befehl von der Karte an Home Assistant: {device, action: on|off|position|stop, value}."""
+    """Befehl von der Karte an Home Assistant: {device, action: on|off|position|stop, value}.
+
+    Ohne Passwort: Jeder im Heimnetz darf die verknüpften Geräte schalten (nur diese, nur diese Befehle)."""
     try:
         data = await request.json()
     except ValueError:

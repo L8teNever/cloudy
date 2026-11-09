@@ -389,7 +389,7 @@
           let data = null;
           try { data = await r.json(); } catch (e) { /* kein JSON */ }
           haHold[device] = 0;
-          haToast(r.status === 401 ? 'Zum Schalten brauchst du das cloudy-Passwort.' : (data && (data.error || data.detail)) || 'Home Assistant hat nicht reagiert.');
+          haToast((data && (data.error || data.detail)) || 'Home Assistant hat nicht reagiert.');
         }
       } catch (e) {
         haHold[device] = 0;
