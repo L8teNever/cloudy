@@ -123,6 +123,18 @@
       </div>
 
       <div class="field-group">
+        <div class="fg-title">3D-Karte</div>
+        <div class="fg-hint">3D-Karte vom Haus – die Übersicht liegt unter <code>/</code>, jeder Raum unter eigener Adresse (z. B. <code>/simonszimmer/</code>). <a href="/karte/einstellungen">Geräte zuordnen →</a></div>
+        <div id="karte-domains" style="display:grid;gap:.35rem">
+          {% for d in ld.karten or [''] %}
+          <div class="field-row"><input name="karte" data-keep autocomplete="off" value="{{ d }}" placeholder="haus.kulbarts.com"></div>
+          {% endfor %}
+        </div>
+        <button type="button" class="secondary add-btn" onclick="document.getElementById('karte-domains').append(document.getElementById('tpl-karte').content.cloneNode(true))">+ weitere</button>
+        <template id="tpl-karte"><div class="field-row"><input name="karte" data-keep autocomplete="off" placeholder="haus.kulbarts.com"></div></template>
+      </div>
+
+      <div class="field-group">
         <div class="fg-title">Ganzes Dashboard</div>
         <div class="fg-hint">Wie <code>{{ local }}</code> – mit Passwort, alle Seiten.</div>
         <div id="dash-domains" style="display:grid;gap:.35rem">

@@ -552,6 +552,7 @@ def localdomain_ctx(request: Request) -> dict:
         "hubs": hubs,
         "blocks": blocks,
         "switches": switches,
+        "karten": localdomain.karte_domains(),
         "domain": (mein or [""])[0],
         "dashboard": (dash or [""])[0],
         "hub": (hubs or [""])[0],

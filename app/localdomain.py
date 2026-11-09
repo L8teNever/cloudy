@@ -39,6 +39,7 @@ DOMAIN_KEY = "local_domain"  # nur „Mein Gerät“ (/mein)
 DASH_KEY = "local_domain_dashboard"  # das ganze Dashboard (wie cloudy.lan)
 HUB_KEY = "local_domain_hub"  # Hub-Startseite (/hub)
 SWITCH_KEY = "local_domain_switch"  # Wechselseite: „ich verbinde dich übers VPN“, dann zurück zur Seite
+KARTE_KEY = "local_domain_karte"  # 3D-Karte vom Haus (/karte)
 BLOCK_KEY = "local_domain_block"  # Sperrseite („Diese Seite ist gesperrt“, z. B. als Ziel der Cloudflare-Sperre)
 HA_URL_KEY = "hub_ha_url"  # Home-Assistant-URL für den Hub-Status
 CHAIN_FIX_KEY = "cert_chain_fix_v1"  # einmal geprüft, ob die Kette bei ISRG Root X1/X2 endet
@@ -116,6 +117,11 @@ def switch_domains() -> list[str]:
     return _setting_hosts(SWITCH_KEY)
 
 
+def karte_domains() -> list[str]:
+    """Domains für die 3D-Karte (/karte) – Aufruf der Domain landet auf /karte."""
+    return _setting_hosts(KARTE_KEY)
+
+
 def domain() -> str:
     """Erste Mein-Gerät-Domain (Kompatibilität)."""
     return (mein_domains() or [""])[0]
@@ -147,6 +153,10 @@ def set_switch_domains(hosts: list[str]) -> None:
     _save_hosts(SWITCH_KEY, hosts)
 
 
+def set_karte_domains(hosts: list[str]) -> None:
+    _save_hosts(KARTE_KEY, hosts)
+
+
 def set_block_domains(hosts: list[str]) -> None:
     _save_hosts(BLOCK_KEY, hosts)
 
@@ -158,7 +168,8 @@ def ha_url() -> str:
 
 def domains() -> list[str]:
     """Alle eingestellten Domains (ohne Doppelte). Sie bekommen zusammen ein Zertifikat."""
-    return list(dict.fromkeys(dashboard_domains() + mein_domains() + hub_domains() + block_domains() + switch_domains()))
+    return list(dict.fromkeys(dashboard_domains() + mein_domains() + hub_domains() + block_domains() + switch_domains()
+                              + karte_domains()))
 
 
 def skipped() -> set[str]:

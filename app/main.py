@@ -12,12 +12,12 @@ from urllib.parse import quote, urlencode, urlparse
 import uvicorn
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import adblock, autoswitch, blocklist, certs, db, dnsprofile, fritz, localdomain, policy, slots, stats, tunnel, views, warp, zertwechsel
+from . import adblock, autoswitch, blocklist, certs, db, dnsprofile, fritz, karte, localdomain, policy, slots, stats, tunnel, views, warp, zertwechsel
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner
 from .presence import PresenceMonitor
@@ -213,13 +213,14 @@ async def static_cache_middleware(request: Request, call_next):
 async def redirect_middleware(request: Request, call_next):
     raw_host = request.headers.get("host", "").split(":")[0].strip().lower()
     settings = getattr(request.app.state, "settings", None)
-    mein_hosts, dash_hosts, hub_hosts, block_hosts, switch_hosts = await run_in_threadpool(
+    mein_hosts, dash_hosts, hub_hosts, block_hosts, switch_hosts, karte_hosts = await run_in_threadpool(
         lambda: (
             localdomain.mein_domains(),
             localdomain.dashboard_domains(),
             localdomain.hub_domains(),
             localdomain.block_domains(),
             localdomain.switch_domains(),
+            localdomain.karte_domains(),
         )
     )
     if raw_host in dash_hosts and request.url.scheme == "http":
@@ -256,6 +257,25 @@ async def redirect_middleware(request: Request, call_next):
             "/healthz", "/favicon.ico", "/vpn-wechsel/status", "/vpn-wechsel/normal", "/vpn-wechsel/ping"
         ) and not path.startswith("/static/"):
             request.scope["path"] = "/vpn-wechsel"
+        return await call_next(request)
+    if raw_host in karte_hosts:
+        # 3D-Karte vom Haus: Startseite ist die Übersicht, jeder Raum hat eine eigene Adresse (/simonszimmer/).
+        path = request.url.path
+        if request.url.scheme == "http" and settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
+            port = "" if settings.https_port == 443 else f":{settings.https_port}"
+            return RedirectResponse(f"https://{raw_host}{port}{path}", status_code=302)
+        if path in ("/healthz", "/favicon.ico", "/karte/status", "/karte/internet") or path.startswith("/static/"):
+            return await call_next(request)
+        raum = path.strip("/")
+        if path == "/karte" or path.startswith("/karte/"):  # alte Links auf /karte bzw. /karte/<raum>
+            raum = path.removeprefix("/karte").strip("/")
+            if not raum:
+                return RedirectResponse("/", status_code=302)
+            return RedirectResponse(f"/{raum}/", status_code=302) if karte.ROOM_RE.match(raum) else Response("Nicht gefunden.", status_code=404)
+        if raum in ("einstellungen", "status", "internet") or (raum and not karte.ROOM_RE.match(raum)):
+            return Response("Nicht gefunden.", status_code=404)
+        request.scope["path"] = f"/karte/{raum}" if raum else "/karte"
+        request.state.karte_base = ""
         return await call_next(request)
     if raw_host and await run_in_threadpool(autoswitch.covers_host, raw_host):
         # Auto-Wechsel-Seite über die Weiche (nur Geräte mit cloudy-Zertifikat): Wechselseite unter dieser Adresse.
@@ -305,6 +325,7 @@ async def redirect_middleware(request: Request, call_next):
     own_hosts.update(hub_hosts)
     own_hosts.update(block_hosts)
     own_hosts.update(switch_hosts)
+    own_hosts.update(karte_hosts)
     if settings:
         own_hosts.add(settings.pi_ip.lower())
         if settings.local_name:
@@ -545,6 +566,94 @@ async def vpn_wechsel_ping(host: str = ""):
         "cloudy": True,
         "passed": await run_in_threadpool(autoswitch.is_passed, host) if host else False,
     }
+
+
+def _karte_response(request: Request) -> HTMLResponse:
+    base = getattr(request.state, "karte_base", "/karte")
+    return HTMLResponse(karte.page_html(base), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/karte")
+@app.get("/karte/")
+async def karte_page(request: Request):
+    """3D-Karte vom Haus (für alle im Heimnetz). Bildschirme folgen dem Online-Status der zugeordneten Geräte."""
+    return await run_in_threadpool(_karte_response, request)
+
+
+@app.get("/karte/status")
+async def karte_status(request: Request):
+    """{bildschirm_id: an?} für die Bildschirme mit Gerät, dazu die Internet-Route der Geräte fürs Menü."""
+    online = online_ips(request)
+    devs = await run_in_threadpool(db.devices)
+    settings = request.app.state.settings
+    return {
+        "screens": await run_in_threadpool(karte.status, online, devs),
+        "internet": await run_in_threadpool(karte.internet, settings, devs),
+    }
+
+
+@app.post("/karte/internet", dependencies=[Depends(require_password)])
+async def karte_internet(request: Request):
+    """Internet-Route (Standard, normal, WARP, VPN) für das Gerät hinter einem Bildschirm umstellen."""
+    try:
+        data = await request.json()
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="JSON erwartet")
+    err = await run_in_threadpool(
+        karte.set_internet, request.app.state.settings, str(data.get("screen") or ""), str(data.get("slot") or "")
+    )
+    if err:
+        return JSONResponse({"ok": False, "error": err}, status_code=400)
+    devs = await run_in_threadpool(db.devices)
+    return {"ok": True, "internet": await run_in_threadpool(karte.internet, request.app.state.settings, devs)}
+
+
+@app.get("/karte/einstellungen", response_class=HTMLResponse, dependencies=[Depends(require_password)])
+async def karte_einstellungen(request: Request):
+    """Geräte aus der Geräteliste den Fernsehern und Monitoren auf der Karte zuordnen."""
+    online = online_ips(request)
+    devs = await run_in_threadpool(db.devices)
+    assign = await run_in_threadpool(karte.assignments)
+    choices = []
+    for d in devs:
+        key = karte.device_key(d)
+        if not key:
+            continue
+        name = (d.get("hostname") or "").strip() or d.get("ip") or key
+        choices.append({"key": key, "name": name, "ip": d.get("ip") or "", "mac": d.get("mac") or "",
+                        "online": karte.is_online(d, online)})
+    choices.sort(key=lambda c: c["name"].lower())
+    known = {c["key"] for c in choices}
+    for key in assign.values():  # zugeordnet, aber gerade nicht in der Liste -> trotzdem anzeigen
+        if key not in known:
+            choices.append({"key": key, "name": key.removeprefix("ip:"), "ip": "", "mac": "", "online": False})
+            known.add(key)
+    status = await run_in_threadpool(karte.status, online, devs)
+    karte_hosts = await run_in_threadpool(localdomain.karte_domains)
+    karte_href = (await run_in_threadpool(_local_base, karte_hosts[0], request.app.state.settings) + "/") if karte_hosts else "/karte/"
+    return await views.page(
+        request, "seiten/karte_einstellungen.html", "3D-Karte", "/einstellungen", [],
+        screens=karte.SCREENS, assign=assign, choices=choices, screen_status=status, karte_href=karte_href,
+    )
+
+
+@app.post("/karte/einstellungen", dependencies=[Depends(require_password)])
+async def karte_einstellungen_speichern(request: Request):
+    form = await request.form()
+    data = {sid: str(form.get(f"geraet_{sid}") or "") for sid, _ in karte.SCREENS}
+    await run_in_threadpool(karte.save_assignments, data)
+    return RedirectResponse("/karte/einstellungen?gespeichert=1", status_code=303)
+
+
+@app.get("/karte/{raum}")
+@app.get("/karte/{raum}/")
+async def karte_raum(request: Request, raum: str):
+    """Ein Raum der Karte unter eigener Adresse (z. B. /karte/simonszimmer/) – gleiche Seite, öffnet den Raum."""
+    if not karte.ROOM_RE.match(raum):
+        raise HTTPException(status_code=404)
+    return await run_in_threadpool(_karte_response, request)
 
 
 @app.get("/hub", response_class=HTMLResponse)
@@ -1004,6 +1113,7 @@ async def lokale_domain_set(
     hub: list[str] = Form(default=[]),
     gesperrt: list[str] = Form(default=[]),
     wechsel: list[str] = Form(default=[]),
+    karte: list[str] = Form(default=[]),
     ha_url: str = Form(""),
     cf_token: str = Form(""),
     email: str = Form(""),
@@ -1015,6 +1125,7 @@ async def lokale_domain_set(
         hubs = [localdomain.normalize_domain(n) for n in hub if n.strip()]
         blocks = [localdomain.normalize_domain(n) for n in gesperrt if n.strip()]
         switches = [localdomain.normalize_domain(n) for n in wechsel if n.strip()]
+        karten = [localdomain.normalize_domain(n) for n in karte if n.strip()]
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     mein = list(dict.fromkeys(mein))
@@ -1022,12 +1133,13 @@ async def lokale_domain_set(
     hubs = list(dict.fromkeys(hubs))
     blocks = list(dict.fromkeys(blocks))
     switches = list(dict.fromkeys(switches))
-    groups = [set(mein), set(dash), set(hubs), set(blocks), set(switches)]
+    karten = list(dict.fromkeys(karten))
+    groups = [set(mein), set(dash), set(hubs), set(blocks), set(switches), set(karten)]
     overlap = {n for i, a in enumerate(groups) for b in groups[i + 1:] for n in a & b}
     if overlap:
         raise HTTPException(
             status_code=400,
-            detail=f"Dashboard, Hub, Sperrseite, Wechselseite und „Mein Gerät“ brauchen verschiedene Namen ({', '.join(sorted(overlap))})",
+            detail=f"Dashboard, Hub, Sperrseite, Wechselseite, 3D-Karte und „Mein Gerät“ brauchen verschiedene Namen ({', '.join(sorted(overlap))})",
         )
     cf_token = cf_token.strip()
     if cf_token and (len(cf_token) > 512 or any(ch.isspace() for ch in cf_token)):
@@ -1043,6 +1155,7 @@ async def lokale_domain_set(
     await run_in_threadpool(localdomain.set_hub_domains, hubs)
     await run_in_threadpool(localdomain.set_block_domains, blocks)
     await run_in_threadpool(localdomain.set_switch_domains, switches)
+    await run_in_threadpool(localdomain.set_karte_domains, karten)
     await run_in_threadpool(db.set_setting, localdomain.HA_URL_KEY, ha)
     await run_in_threadpool(db.set_setting, localdomain.EMAIL_KEY, email)
     if cf_token:

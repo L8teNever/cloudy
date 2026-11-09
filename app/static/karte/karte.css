@@ -1,0 +1,1094 @@
+/* ---- Basis-Styles (inkl. vollständiger Smartphone-/Touch-Optimierung) ---- */
+:root {
+  --w1-accent: #38bdf8;
+  --w2-accent: #34d399;
+  --text-muted: #9ca3af;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+  background: #111318;
+  color: #e5e7eb;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+#canvas-container {
+  position: fixed;
+  inset: 0;
+  touch-action: none;
+}
+
+#labels-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.apt-label {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 13px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  color: #e3e3e3;
+  background: #2e2f33;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+  cursor: pointer;
+  transition: opacity 0.22s, transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), background 0.18s, color 0.18s, box-shadow 0.18s;
+}
+.apt-label:hover {
+  background: #38393e;
+  color: #ffffff;
+  transform: translate(-50%, -105%) scale(1.04);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.55);
+  z-index: 15;
+}
+.apt-label.active-room {
+  background: #4d4327;
+  border-color: rgba(253, 224, 141, 0.14);
+  color: #fde08d;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55);
+  z-index: 16;
+}
+/* Floating Top Bar (Always visible: Centered Title + Settings Dropdown on Right) */
+#room-view-bar {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 14px;
+  min-width: min(440px, calc(100vw - 24px));
+  padding: 8px 12px;
+  border-radius: 20px;
+  background: #202124;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  color: #e3e3e3;
+  font-size: 14px;
+  font-weight: 600;
+}
+#room-view-title {
+  grid-column: 2;
+  text-align: center;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+.room-header-right {
+  grid-column: 3;
+  justify-self: end;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+#room-settings-dropdown {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 225px;
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 20px;
+  background: #202124;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.65);
+  z-index: 40;
+}
+#room-settings-dropdown.visible {
+  display: flex;
+}
+#room-settings-dropdown .door-pill,
+#room-settings-dropdown .door-exit-btn {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  padding: 9px 13px;
+  border-radius: 15px;
+}
+.door-pill {
+  padding: 8px 13px;
+  border-radius: 15px;
+  border: 1px solid transparent;
+  background: #2e2f33;
+  color: #e3e3e3;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+.door-pill:hover {
+  background: #38393e;
+  color: #ffffff;
+}
+.door-pill.active {
+  background: #4d4327;
+  color: #fde08d;
+}
+.door-exit-btn {
+  padding: 8px 13px;
+  border-radius: 15px;
+  border: 1px solid transparent;
+  background: #3c2929;
+  color: #f2b8b5;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+.door-exit-btn:hover {
+  background: #4d3232;
+  color: #f9dedc;
+}
+
+/* Google Home Tile Shared Layout (Slightly narrower / compact smart-home tile) */
+.gh-tile-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: currentColor;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.gh-inline-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: currentColor;
+  display: inline-block;
+  vertical-align: -2.5px;
+}
+.door-pill, .door-exit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.gh-tile-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.22;
+  text-align: left;
+}
+.gh-tile-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: #e3e3e3;
+  letter-spacing: 0.01em;
+}
+.gh-tile-sub {
+  font-size: 10.5px;
+  font-weight: 400;
+  color: #c4c7c5;
+}
+
+/* Floating 3D Roller Shutter (Rollladen) Badges & Control Popup */
+#shutters-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 18;
+}
+.shutter-badge,
+.light-badge,
+.screen-badge {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 13px;
+  min-width: 92px;
+  border-radius: 18px;
+  background: #2e2f33;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: #e3e3e3;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: pointer;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.46);
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+.shutter-badge:hover,
+.light-badge:hover,
+.screen-badge:hover {
+  transform: translate(-50%, -52%) scale(1.04);
+  background: #37383d;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.56);
+}
+.shutter-badge.on,
+.light-badge.on,
+.screen-badge.on {
+  background: #4d4327;
+  border-color: rgba(253, 224, 141, 0.12);
+  color: #fde08d;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+.shutter-badge.on:hover,
+.light-badge.on:hover,
+.screen-badge.on:hover {
+  background: #574c2c;
+}
+.shutter-badge.on .gh-tile-title,
+.light-badge.on .gh-tile-title,
+.screen-badge.on .gh-tile-title {
+  color: #fde08d;
+}
+.shutter-badge.on .gh-tile-sub,
+.light-badge.on .gh-tile-sub,
+.screen-badge.on .gh-tile-sub {
+  color: #f3d27a;
+}
+.shutter-mini-win {
+  width: 15px;
+  height: 17px;
+  border-radius: 4px;
+  border: 1.5px solid currentColor;
+  background: rgba(255, 255, 255, 0.08);
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.shutter-mini-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40%;
+  background: repeating-linear-gradient(
+    to bottom,
+    currentColor 0px,
+    currentColor 2px,
+    transparent 2px,
+    transparent 3.5px
+  );
+  border-bottom: 1.5px solid #fde08d;
+  transition: height 0.12s;
+}
+.screen-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9aa0a6;
+  flex-shrink: 0;
+}
+.screen-badge.on .screen-status-dot {
+  background: #fde08d;
+  box-shadow: 0 0 8px rgba(253, 224, 141, 0.65);
+}
+
+.led-color-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid #ffffff;
+  box-shadow: 0 0 8px currentColor;
+  flex-shrink: 0;
+}
+
+/* Backdrop for Centered Modal Popups */
+#popup-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 48;
+  display: none;
+  opacity: 0;
+  transition: opacity 0.22s ease;
+}
+#popup-backdrop.visible {
+  display: block;
+  opacity: 1;
+}
+
+/* Long-press holding visual feedback on badges */
+.shutter-badge.holding, .light-badge.holding, .screen-badge.holding {
+  transform: translate(-50%, -50%) scale(0.92) !important;
+  filter: brightness(1.3);
+  transition: transform 0.35s ease, filter 0.35s ease;
+}
+
+/* Side Menu (PC Mode) vs. Centered Modal (Mobile / Long-Press) */
+#led-popup, #shutter-popup {
+  position: fixed;
+  top: 76px;
+  right: 24px;
+  bottom: 24px;
+  width: 340px;
+  max-height: calc(100vh - 100px);
+  z-index: 50;
+  display: none;
+  flex-direction: column;
+  padding: 20px 20px 24px;
+  border-radius: 32px;
+  background: #131314;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.85);
+  color: #e3e3e3;
+  overflow-y: auto;
+  overflow-x: hidden;
+  transform: translateX(380px);
+  opacity: 0;
+  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
+  font-family: -apple-system, BlinkMacSystemFont, "Google Sans", "Segoe UI", Roboto, sans-serif;
+}
+#led-popup.visible, #shutter-popup.visible {
+  display: flex;
+  transform: translateX(0);
+  opacity: 1;
+}
+
+#led-popup.modal-center, #shutter-popup.modal-center {
+  top: 50% !important;
+  left: 50% !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: min(340px, calc(100vw - 28px)) !important;
+  max-height: 88vh !important;
+  border-radius: 32px !important;
+  z-index: 52 !important;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.9) !important;
+  transform: translate(-50%, -50%) scale(0.94) !important;
+}
+#led-popup.modal-center.visible, #shutter-popup.modal-center.visible {
+  transform: translate(-50%, -50%) scale(1) !important;
+  opacity: 1 !important;
+}
+
+.gh-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.gh-popup-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.gh-popup-title {
+  font-size: 20px;
+  font-weight: 500;
+  color: #e3e3e3;
+  letter-spacing: -0.01em;
+}
+.gh-icon-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  color: #e3e3e3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+.gh-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.gh-icon-btn:active {
+  transform: scale(0.92);
+}
+.gh-icon-btn svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* Giant Vertical Pill Dimmer Container (Google Home Style) */
+.gh-slider-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  margin-bottom: 24px;
+  min-height: 290px;
+}
+
+.gh-palette-btn {
+  position: absolute;
+  left: 10px;
+  bottom: 24px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #2a2b2f;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #e3e3e3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  transition: transform 0.16s, background 0.16s;
+  z-index: 5;
+}
+.gh-palette-btn:hover {
+  background: #35363b;
+  transform: scale(1.06);
+}
+.gh-palette-btn:active {
+  transform: scale(0.94);
+}
+.gh-palette-btn svg {
+  width: 24px;
+  height: 24px;
+}
+
+.gh-pill-slider {
+  width: 150px;
+  height: 290px;
+  border-radius: 75px;
+  background: #232428;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.gh-pill-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 78%;
+  background: #2e4740;
+  pointer-events: none;
+  transition: height 0.06s ease-out, background 0.2s ease;
+}
+
+.gh-pill-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 2;
+  gap: 12px;
+}
+
+.gh-pill-bulb-icon {
+  width: 32px;
+  height: 32px;
+  color: #ffffff;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform 0.15s;
+}
+.gh-pill-bulb-icon:active {
+  transform: scale(0.88);
+}
+
+.gh-pill-pct {
+  font-size: 19px;
+  font-weight: 500;
+  color: #ffffff;
+  letter-spacing: 0.01em;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));
+}
+
+.gh-pill-content.off-content {
+  justify-content: flex-end;
+  padding-bottom: 18px;
+  gap: 10px;
+}
+.gh-pill-off-knob {
+  width: 124px;
+  height: 124px;
+  border-radius: 28px;
+  background: #1e1f23;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #e3e3e3;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform 0.15s, background 0.15s;
+}
+.gh-pill-off-knob:active {
+  transform: scale(0.94);
+}
+.gh-pill-off-knob svg {
+  width: 36px;
+  height: 36px;
+}
+.gh-pill-off-label {
+  font-size: 17px;
+  font-weight: 500;
+  color: #9aa0a6;
+}
+
+/* Quick Swatch Grid (Screenshot 3) */
+.gh-swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.gh-swatch-tile {
+  height: 52px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.gh-swatch-tile:hover {
+  transform: scale(1.04);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+.gh-swatch-tile:active {
+  transform: scale(0.96);
+}
+
+/* "Lichtfarbe" Sub-Sheet (Screenshot 4 & 5) */
+.gh-color-drag-handle {
+  width: 32px;
+  height: 4px;
+  border-radius: 2px;
+  background: #5f6368;
+  margin: 0 auto 12px;
+}
+.gh-color-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.gh-color-title {
+  font-size: 19px;
+  font-weight: 500;
+  color: #e3e3e3;
+}
+.gh-color-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  margin-bottom: 24px;
+}
+.gh-color-tab {
+  background: transparent;
+  border: none;
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 500;
+  color: #9aa0a6;
+  padding: 10px 18px;
+  cursor: pointer;
+  border-bottom: 2.5px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+.gh-color-tab.active {
+  color: #ffffff;
+  border-bottom-color: #ffffff;
+  font-weight: 600;
+}
+
+.gh-tab-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 250px;
+}
+
+.gh-wheel-wrapper {
+  position: relative;
+  width: 240px;
+  height: 240px;
+  border-radius: 50%;
+  cursor: crosshair;
+  user-select: none;
+  touch-action: none;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+}
+#gh-wheel-canvas {
+  width: 240px;
+  height: 240px;
+  border-radius: 50%;
+  display: block;
+}
+.gh-wheel-handle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3.5px solid #ffffff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  transition: transform 0.05s ease;
+}
+
+.gh-temp-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 250px;
+}
+.gh-temp-track {
+  width: 110px;
+  height: 240px;
+  border-radius: 36px;
+  background: linear-gradient(180deg, #ff6010 0%, #ff9534 25%, #ffe4b5 55%, #ffffff 75%, #d4e8ff 100%);
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5);
+}
+.gh-temp-handle {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  width: 96px;
+  height: 38px;
+  border-radius: 20px;
+  border: 3px solid #ffffff;
+  background: rgba(255, 255, 255, 0.25);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.gh-color-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 24px;
+  padding-top: 10px;
+}
+.gh-footer-cancel-btn {
+  background: transparent;
+  border: none;
+  color: #e3e3e3;
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 500;
+  padding: 10px 16px;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.gh-footer-cancel-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.gh-footer-done-btn {
+  background: #ffffff;
+  border: none;
+  color: #131314;
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 600;
+  padding: 10px 24px;
+  border-radius: 9999px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s, background 0.15s;
+}
+.gh-footer-done-btn:hover {
+  background: #f1f3f4;
+  transform: scale(1.02);
+}
+
+/* Google Home Shutter Capsule Slider */
+.gh-shutter-pill-slider {
+  width: 150px;
+  height: 290px;
+  border-radius: 75px;
+  background: #232428;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);
+  margin: 0 auto;
+}
+.gh-shutter-pill-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 40%;
+  background: linear-gradient(180deg, #4d4327 0%, #685a30 100%);
+  border-top: 2.5px solid #fde08d;
+  pointer-events: none;
+  transition: height 0.06s ease-out;
+}
+.gh-shutter-pill-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 2;
+  gap: 10px;
+}
+.gh-shutter-pill-icon {
+  width: 32px;
+  height: 32px;
+  color: #fde08d;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));
+}
+.gh-shutter-pill-pct {
+  font-size: 20px;
+  font-weight: 600;
+  color: #fde08d;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));
+}
+.gh-shutter-pill-sub {
+  font-size: 12px;
+  color: #c4c7c5;
+}
+
+.shutter-presets {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin-top: 10px;
+}
+.shutter-preset-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 9px 4px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: #232428;
+  color: #e3e3e3;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform 0.15s, background 0.15s, color 0.15s;
+}
+.shutter-preset-btn:hover {
+  background: #4d4327;
+  color: #fde08d;
+  transform: scale(1.03);
+}
+  cursor: pointer;
+}
+.apt-label.dimmed { opacity: 0.25; }
+
+/* Bottom Dock */
+.hud-dock {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: calc(100vw - 24px);
+  padding: 8px 12px;
+  border-radius: 22px;
+  background: #202124;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.52);
+}
+
+.hud-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: #2e2f33;
+  color: #e3e3e3;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 0.16s, background 0.18s, color 0.18s;
+}
+.hud-btn:hover {
+  background: #3a3b40;
+  color: #ffffff;
+}
+.hud-btn.active {
+  background: #4d4327;
+  border-color: rgba(253, 224, 141, 0.16);
+  color: #fde08d;
+}
+
+.hud-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.hud-divider {
+  width: 1px;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.24);
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+
+.hud-btn.xray-active {
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.42) 0%, rgba(245, 158, 11, 0.20) 100%);
+  border-color: rgba(253, 230, 138, 0.72);
+  box-shadow:
+    inset 0 1.5px 1px rgba(255, 255, 255, 0.72),
+    0 0 16px rgba(245, 158, 11, 0.32);
+  color: #ffffff;
+}
+
+.hud-slider-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.04) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.38);
+  font-size: 12px;
+  font-weight: 600;
+  color: #f1f5f9;
+  white-space: nowrap;
+}
+
+.hud-slider-wrap input[type="range"] {
+  width: 72px;
+  accent-color: #38bdf8;
+  cursor: pointer;
+}
+
+/* Drag & Drop Overlay */
+#drop-overlay {
+  position: fixed;
+  inset: 16px;
+  z-index: 50;
+  border-radius: 28px;
+  border: 2px dashed rgba(186, 230, 253, 0.75);
+  background: rgba(17, 23, 36, 0.65);
+  backdrop-filter: blur(24px) saturate(190%);
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+#drop-overlay.visible {
+  display: flex;
+}
+
+/* Subtle Hint Top Right (Liquid Glass Pill) */
+.controls-hint {
+  position: fixed;
+  top: 16px;
+  right: 18px;
+  z-index: 10;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #f8fafc;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0.06) 100%),
+    rgba(18, 24, 36, 0.38);
+  backdrop-filter: blur(22px) saturate(190%);
+  -webkit-backdrop-filter: blur(22px) saturate(190%);
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.48), 0 6px 20px rgba(0, 0, 0, 0.32);
+  pointer-events: none;
+}
+
+/* Quick Room Picker Sheet (Google Home Dark Tile Sheet) */
+#room-picker-sheet {
+  position: fixed;
+  left: 50%;
+  top: calc(74px + var(--safe-top));
+  transform: translateX(-50%);
+  width: min(460px, calc(100vw - 20px));
+  max-height: 70dvh;
+  z-index: 38;
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 22px;
+  background: #202124;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.65);
+  overflow-y: auto;
+  touch-action: pan-y;
+}
+#room-picker-sheet.visible {
+  display: flex;
+}
+.room-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 7px;
+}
+.room-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 15px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: #2e2f33;
+  color: #e3e3e3;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.15s, background 0.15s, color 0.15s;
+}
+.room-picker-item:active, .room-picker-item:hover {
+  background: #4d4327;
+  color: #fde08d;
+  transform: scale(1.02);
+}
+
+@media (max-width: 768px) {
+  .controls-hint {
+    display: none;
+  }
+  .apt-label {
+    padding: 4px 8px;
+    font-size: 10.5px;
+    gap: 5px;
+  }
+  .apt-label .dot {
+    width: 6px;
+    height: 6px;
+  }
+  .shutter-badge {
+    padding: 4px 8px;
+    font-size: 10.5px;
+    gap: 5px;
+  }
+  #room-view-bar {
+    top: calc(10px + var(--safe-top));
+    width: calc(100vw - 16px);
+    min-width: calc(100vw - 16px);
+    max-width: calc(100vw - 16px);
+    border-radius: 999px;
+    padding: 7px 12px;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .door-pill, .door-exit-btn {
+    padding: 6px 10px;
+    font-size: 11.5px;
+  }
+  .hud-dock {
+    bottom: calc(10px + var(--safe-bottom));
+    left: 8px;
+    right: 8px;
+    transform: none;
+    max-width: none;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding: 7px 9px;
+    border-radius: 18px;
+    gap: 6px;
+    touch-action: pan-x;
+  }
+  .hud-dock::-webkit-scrollbar {
+    display: none;
+  }
+  .hud-btn {
+    padding: 8px 12px;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .hud-slider-wrap {
+    flex-shrink: 0;
+    padding: 5px 9px;
+  }
+  #shutter-popup, #led-popup {
+    left: 10px;
+    right: 10px;
+    width: auto;
+    bottom: calc(68px + var(--safe-bottom));
+    padding: 14px;
+  }
+  .shutter-preset-btn {
+    padding: 9px 4px;
+    font-size: 12px;
+  }
+  .shutter-slider-row input[type="range"] {
+    height: 28px;
+  }
+}

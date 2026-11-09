@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;margin-bottom:1rem">
+  <div>
+    <h1 style="margin:0 0 .25rem">3D-Karte</h1>
+    <div class="muted small">
+      Ordne jedem Fernseher und Monitor auf der Karte ein Gerät aus der Geräteliste zu.
+      Ist das Gerät online, ist der Bildschirm auf der Karte an, sonst aus.
+    </div>
+  </div>
+  <a href="{{ params.karte_href }}" class="pill" style="text-decoration:none;font-weight:600" target="_blank" rel="noopener">Karte öffnen ↗</a>
+</div>
+
+{% if request.query_params.get('gespeichert') %}
+<div class="card" style="padding:.6rem 1rem"><span class="pill on">Gespeichert</span></div>
+{% endif %}
+
+<form method="post" action="/karte/einstellungen" class="card">
+  <h2>Bildschirme auf der Karte</h2>
+  <div style="display:grid;gap:.6rem">
+    {% for sid, label in params.screens %}
+    {% set cur = params.assign.get(sid, '') %}
+    <label class="small" style="display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,2fr) auto;gap:.6rem;align-items:center">
+      <span><strong>{{ label }}</strong></span>
+      <select name="geraet_{{ sid }}" style="width:100%">
+        <option value="">– kein Gerät (Zustand aus der Karte) –</option>
+        {% for c in params.choices %}
+        <option value="{{ c.key }}" {{ 'selected' if c.key == cur }}>{{ '● ' if c.online else '○ ' }}{{ c.name }}{% if c.ip %} · {{ c.ip }}{% endif %}{% if c.mac %} · {{ c.mac }}{% endif %}</option>
+        {% endfor %}
+      </select>
+      {% if sid in params.screen_status %}
+      <span class="pill {{ 'on' if params.screen_status[sid] }}">{{ 'An' if params.screen_status[sid] else 'Aus' }}</span>
+      {% else %}
+      <span class="pill">–</span>
+      {% endif %}
+    </label>
+    {% endfor %}
+  </div>
+  <div class="muted small" style="margin:.75rem 0">● = gerade online · Die Karte fragt den Status alle 15 Sekunden ab, solange sie sichtbar ist.</div>
+  <button type="submit">Speichern</button>
+</form>
+
+<div class="card">
+  <h2>Eigene Domain für die Karte</h2>
+  <div class="muted small">
+    Unter <a href="/einstellungen#lokale-domain">Einstellungen → Eigene Domains im Heimnetz → 3D-Karte</a> trägst du eine Domain ein
+    (z. B. <code>haus.kulbarts.com</code>). Sie funktioniert nur im Heimnetz und zeigt direkt die Karte.
+  </div>
+</div>
+{% endblock %}

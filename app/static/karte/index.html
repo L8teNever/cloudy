@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#111318" />
+  <title>Zuhause – 3D Grundriss</title>
+  <link rel="stylesheet" href="/static/karte/karte.css?v=__V__">
+  <link rel="stylesheet" href="/static/karte/cloudy.css?v=__V__">
+  <meta name="karte-base" content="__BASE__">
+</head>
+
+<body>
+
+  <!-- 3D Viewport Container -->
+  <div id="canvas-container"></div>
+
+  <!-- Floating 3D Labels -->
+  <div id="labels-layer"></div>
+
+  <!-- Floating 3D Roller Shutter (Rollladen) Buttons -->
+  <div id="shutters-layer"></div>
+
+  <!-- cloudy: Internet-Button an jedem Fernseher -->
+  <div id="net-layer"></div>
+
+  <!-- Backdrop overlay when centered modal popup is active -->
+  <div id="popup-backdrop" onclick="closeAllPopups()"></div>
+
+  <!-- cloudy: Menü „Internet über“ (normal, WARP, VPN) für das Gerät hinter einem Fernseher -->
+  <div id="net-popup">
+    <div class="gh-popup-topbar">
+      <button class="gh-icon-btn" onclick="closeNetPopup()" title="Schließen">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      </button>
+      <span class="gh-popup-title" id="net-popup-title">Internet</span>
+      <span style="width:40px"></span>
+    </div>
+    <div id="net-popup-body"></div>
+  </div>
+
+  <!-- Interactive Roller Shutter (Rollladen) Control Popup / Side Menu (Google Home Style) -->
+  <div id="shutter-popup">
+    <div class="gh-popup-topbar">
+      <button class="gh-icon-btn" onclick="closeShutterPopup()" title="Schließen">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      </button>
+      <span class="gh-popup-title" id="shutter-popup-title">Rollladen</span>
+      <button class="gh-icon-btn" onclick="if(activeShutterId) toggleShutterQuick(activeShutterId)" title="Auf / Zu">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M12 4v16M4 12l8-8 8 8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+
+    <!-- Giant Google Home Capsule Slider for Roller Shutter -->
+    <div class="gh-slider-row" style="margin-bottom: 22px;">
+      <div class="gh-shutter-pill-slider" id="gh-shutter-pill-slider">
+        <div class="gh-shutter-pill-fill" id="gh-shutter-pill-fill"></div>
+        <div class="gh-shutter-pill-content">
+          <svg class="gh-shutter-pill-icon" viewBox="0 0 24 24" fill="none">
+            <rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" stroke-width="2"/>
+            <path d="M4 9h16M4 14h16" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M12 4v16" stroke="currentColor" stroke-width="1.8"/>
+          </svg>
+          <span class="gh-shutter-pill-pct" id="shutter-popup-pct">40%</span>
+          <span class="gh-shutter-pill-sub" id="shutter-popup-state">Teilweise geschlossen</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Presets below slider -->
+    <div class="shutter-presets">
+      <button class="shutter-preset-btn" onclick="setActiveShutterPercent(0)" title="Komplett öffnen (0%)">Auf (0%)</button>
+      <button class="shutter-preset-btn" onclick="setActiveShutterPercent(25)">25%</button>
+      <button class="shutter-preset-btn" onclick="setActiveShutterPercent(50)">50%</button>
+      <button class="shutter-preset-btn" onclick="setActiveShutterPercent(75)">75%</button>
+      <button class="shutter-preset-btn" onclick="setActiveShutterPercent(100)" title="Komplett schließen (100%)">Zu (100%)</button>
+    </div>
+  </div>
+
+  <!-- Interactive Google Home Style RGB LED Control Popup (Simons PC-Licht / Tisch-LED & Schlafzimmer Decken-LED) -->
+  <div id="led-popup">
+    <!-- View 1: Main Dimmer & Color Presets Screen (Screenshot 1, 2, 3) -->
+    <div id="gh-led-main-view" class="gh-view">
+      <div class="gh-popup-topbar">
+        <button class="gh-icon-btn" onclick="closeSimonLedPopup()" title="Schließen">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+        </button>
+        <span class="gh-popup-title" id="led-popup-title">PC Licht</span>
+        <button class="gh-icon-btn" onclick="toggleSimonDeskLed()" title="Licht an- / ausschalten">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 3v9M18.36 6.64a9 9 0 1 1-12.73 0" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+
+      <!-- Center Dimmer Pill Container -->
+      <div class="gh-slider-row">
+        <!-- Floating Color Palette Button on the left (Screenshot 3) -->
+        <button class="gh-palette-btn" onclick="openLichtfarbeSheet()" title="Lichtfarbe wählen">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 3a9 9 0 0 0-9 9c0 4.97 4.03 9 9 9 1.25 0 2.25-1 2.25-2.25 0-.58-.23-1.11-.61-1.5-.38-.39-.64-.92-.64-1.5 0-1.24 1.01-2.25 2.25-2.25H17c2.76 0 5-2.24 5-5 0-4.42-4.48-8-10-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="7.5" cy="10.5" r="1.5" fill="currentColor"/><circle cx="10.5" cy="7.5" r="1.5" fill="currentColor"/><circle cx="14.5" cy="7.5" r="1.5" fill="currentColor"/><circle cx="17.5" cy="10.5" r="1.5" fill="currentColor"/></svg>
+        </button>
+
+        <!-- Vertical Capsule Track (Screenshot 1, 2, 3) -->
+        <div class="gh-pill-slider" id="gh-pill-slider">
+          <div class="gh-pill-fill" id="gh-pill-fill"></div>
+          
+          <!-- When ON: Lightbulb Icon + Brightness Readout (Screenshot 3) -->
+          <div class="gh-pill-content on-content" id="gh-pill-on-content">
+            <svg class="gh-pill-bulb-icon" onclick="toggleSimonDeskLed()" viewBox="0 0 24 24" fill="none" title="Ausschalten">
+              <circle cx="12" cy="9.5" r="6.2" fill="currentColor"/>
+              <path d="M9.2 17.5h5.6M10.4 20.2h3.2" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/>
+            </svg>
+            <span class="gh-pill-pct" id="gh-pill-pct">78 %</span>
+          </div>
+
+          <!-- When OFF: Power Button Knob at Bottom + "Aus" (Screenshot 2) -->
+          <div class="gh-pill-content off-content" id="gh-pill-off-content" style="display: none;">
+            <div class="gh-pill-off-knob" onclick="toggleSimonDeskLed()" title="Einschalten">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 3v9M18.36 6.64a9 9 0 1 1-12.73 0" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+            </div>
+            <span class="gh-pill-off-label">Aus</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Swatch Grid (Screenshot 3: 2 rows of 3 colors) -->
+      <div class="gh-swatch-grid">
+        <button class="gh-swatch-tile" style="background:#f6c443;" onclick="setSimonDeskLedColor('#f6c443', 'Warmgold')" title="Warmgold"></button>
+        <button class="gh-swatch-tile" style="background:#fde08d;" onclick="setSimonDeskLedColor('#fde08d', 'Warmweiß')" title="Warmweiß"></button>
+        <button class="gh-swatch-tile" style="background:#fef08a;" onclick="setSimonDeskLedColor('#fef08a', 'Sanftes Weiß')" title="Sanftes Weiß"></button>
+        <button class="gh-swatch-tile" style="background:#fff8e7;" onclick="setSimonDeskLedColor('#fff8e7', 'Elfenbein')" title="Elfenbein"></button>
+        <button class="gh-swatch-tile" style="background:#ffffff;" onclick="setSimonDeskLedColor('#ffffff', 'Tageslichtweiß')" title="Tageslichtweiß"></button>
+        <button class="gh-swatch-tile" id="gh-custom-swatch-tile" style="background:#06b6d4;" onclick="setSimonDeskLedColor('#06b6d4', 'Cyan')" title="Cyan / Farbe"></button>
+      </div>
+    </div>
+
+    <!-- View 2: "Lichtfarbe" Sub-Sheet (Screenshot 4 & 5) -->
+    <div id="gh-led-color-view" class="gh-view" style="display: none;">
+      <div class="gh-color-drag-handle"></div>
+      <div class="gh-color-header">
+        <button class="gh-icon-btn" onclick="closeLichtfarbeSheet(false)" title="Zurück">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <span class="gh-color-title">Lichtfarbe</span>
+      </div>
+
+      <!-- Tabs: Farbe & Temperatur -->
+      <div class="gh-color-tabs">
+        <button class="gh-color-tab active" id="tab-btn-farbe" onclick="switchColorTab('farbe')">Farbe</button>
+        <button class="gh-color-tab" id="tab-btn-temp" onclick="switchColorTab('temp')">Temperatur</button>
+      </div>
+
+      <!-- Tab Content: Farbe (HSV Color Wheel - Screenshot 5) -->
+      <div class="gh-tab-panel" id="panel-farbe">
+        <div class="gh-wheel-wrapper" id="gh-wheel-wrapper">
+          <canvas id="gh-wheel-canvas" width="240" height="240"></canvas>
+          <div class="gh-wheel-handle" id="gh-wheel-handle"></div>
+        </div>
+      </div>
+
+      <!-- Tab Content: Temperatur (Gradient Slider - Screenshot 4) -->
+      <div class="gh-tab-panel" id="panel-temp" style="display: none;">
+        <div class="gh-temp-wrapper">
+          <div class="gh-temp-track" id="gh-temp-track">
+            <div class="gh-temp-handle" id="gh-temp-handle"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer Action Buttons (Screenshot 4 & 5) -->
+      <div class="gh-color-footer">
+        <button class="gh-footer-cancel-btn" onclick="closeLichtfarbeSheet(false)">Abbrechen</button>
+        <button class="gh-footer-done-btn" onclick="closeLichtfarbeSheet(true)">Fertig</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top Bar (Centered Title + Settings Dropdown on Right with all Global & Room Controls) -->
+  <div id="room-view-bar">
+    <span id="room-view-title">Übersicht</span>
+    <div class="room-header-right">
+      <button class="door-pill" id="room-settings-btn" onclick="toggleRoomHeaderDropdown(event)">
+        <svg class="gh-inline-icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="2"/><path d="M12 2.8v2.4M12 18.8v2.4M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M2.8 12h2.4M18.8 12h2.4M4.9 19.1l1.7-1.7M17.4 6.6l1.7-1.7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>Einstellungen</span>
+      </button>
+      <div id="room-settings-dropdown">
+        <button class="door-pill" id="btn-room-picker" onclick="toggleRoomPickerSheet()" title="Alle 15 Räume direkt auswählen">
+          <svg class="gh-inline-icon" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2"/></svg>
+          <span>Räume</span>
+        </button>
+        <button class="door-pill" id="btn-view-mode" onclick="toggleCameraPerspective()" title="Zwischen Draufsicht (2D) und Perspektive (3D) wechseln">
+          <svg class="gh-inline-icon" viewBox="0 0 24 24" fill="none"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" stroke="currentColor" stroke-width="2"/></svg>
+          <span id="btn-view-mode-label">3D Ansicht</span>
+        </button>
+        <button class="door-pill" id="btn-wall-height" onclick="cycleWallHeight()" title="Wandhöhe umschalten">
+          <svg class="gh-inline-icon" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="2"/><path d="M3 10h18M3 14.5h18M9 5v5M15 5v5M12 10v4.5M8 14.5V19M16 14.5V19" stroke="currentColor" stroke-width="1.8"/></svg>
+          <span id="btn-wall-height-label">Wände: Voll</span>
+        </button>
+        <div id="room-dropdown-divider" style="display: none; height: 1px; background: rgba(255,255,255,0.08); margin: 3px 0;"></div>
+        <div id="room-door-buttons" style="display: none; flex-direction: column; gap: 6px;"></div>
+        <button class="door-exit-btn" id="room-exit-btn" style="display: none;" onclick="exitRoomView()">
+          <svg class="gh-inline-icon" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Übersicht</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick Room Picker Sheet -->
+  <div id="room-picker-sheet">
+    <div class="shutter-popup-header">
+      <span>Raum auswählen</span>
+      <button class="shutter-close-btn" onclick="toggleRoomPickerSheet(false)">✕</button>
+    </div>
+    <div style="font-size: 11.5px; color: #38bdf8; font-weight: 700;">Wohnung 1 (Oben / Ost)</div>
+    <div class="room-picker-grid" id="room-picker-w1"></div>
+    <div style="font-size: 11.5px; color: #34d399; font-weight: 700; margin-top: 4px;">Wohnung 2 (Unten / Süd)</div>
+    <div class="room-picker-grid" id="room-picker-w2"></div>
+  </div>
+
+  <!-- Three.js & OrbitControls (lokal, damit die Karte auch ohne Internet läuft) -->
+  <script src="/static/karte/vendor/three.min.js"></script>
+  <script src="/static/karte/vendor/OrbitControls.js"></script>
+  <script src="/static/karte/karte.js?v=__V__"></script>
+  <script src="/static/karte/cloudy.js?v=__V__"></script>
+</body>
+</html>
