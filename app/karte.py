@@ -87,7 +87,7 @@ def status(online_ips: frozenset[str], devices: list[dict] | None = None) -> dic
 def _version() -> str:
     """Kurzer Hash über die Karten-Dateien, damit der Browser nach einem Update neu lädt."""
     h = hashlib.sha1()
-    for name in ("index.html", "karte.css", "karte.js", "cloudy.css", "cloudy.js", "m3.css"):
+    for name in ("index.html", "karte.css", "karte.js", "cloudy.css", "cloudy.js", "m3.css", "sw.js"):
         h.update((KARTE_DIR / name).read_bytes())
     return h.hexdigest()[:10]
 
@@ -97,6 +97,36 @@ def page_html(base: str) -> str:
     """index.html mit Basis-Pfad ("" auf der eigenen Domain, sonst "/karte") und Datei-Version."""
     html = (KARTE_DIR / "index.html").read_text(encoding="utf-8")
     return html.replace("__BASE__", base).replace("__V__", _version())
+
+
+# --------------------------------------------------------------------------- PWA (Karte als App installieren)
+
+def manifest(base: str) -> dict:
+    """Web-App-Manifest. Eine App für zu Hause und unterwegs: sie hängt nur am Namen (z. B. karte.kulbarts.com)."""
+    icons = "/static/karte/"
+    return {
+        "name": "Zuhause – 3D-Karte",
+        "short_name": "Zuhause",
+        "id": f"{base}/",
+        "start_url": f"{base}/",
+        "scope": f"{base}/",
+        "display": "standalone",
+        "orientation": "any",
+        "background_color": "#111318",
+        "theme_color": "#111318",
+        "lang": "de",
+        "icons": [
+            {"src": f"{icons}icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": f"{icons}icon-512.png", "sizes": "512x512", "type": "image/png"},
+            {"src": f"{icons}icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+        ],
+    }
+
+
+@lru_cache(maxsize=1)
+def service_worker() -> str:
+    """Service-Worker mit der aktuellen Datei-Version (neue Version nach einem Update -> neuer Cache)."""
+    return (KARTE_DIR / "sw.js").read_text(encoding="utf-8").replace("__V__", _version())
 
 
 # --------------------------------------------------------------------------- Internet-Route pro Bildschirm

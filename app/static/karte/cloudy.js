@@ -144,6 +144,19 @@
   let netInfo = { profiles: [], default: '', default_label: '', screens: {} };
   let timer = null;
 
+  // Unterwegs (Cloudflare Zero Trust): Ist die Anmeldung abgelaufen, leitet Cloudflare jede Abfrage zur
+  // Anmeldeseite um – im Hintergrund geht das nicht. Dann einmal die Seite neu laden, damit die Anmeldung kommt.
+  let loginCheckAt = 0;
+  async function checkLogin() {
+    if (!navigator.onLine || Date.now() - loginCheckAt < 60000) return;
+    loginCheckAt = Date.now();
+    try {
+      const r = await fetch(location.pathname, { method: 'HEAD', redirect: 'manual', cache: 'no-store' });
+      if (r.type === 'opaqueredirect') location.reload();
+    } catch (e) { /* wirklich offline */ }
+  }
+  window.cloudyCheckLogin = checkLogin;
+
   async function syncScreens() {
     try {
       const r = await fetch('/karte/status', { cache: 'no-store' });
@@ -159,10 +172,15 @@
       });
       if (changed && typeof updateAllScreensVisuals === 'function') updateAllScreensVisuals();
       if (data && data.internet) { netInfo = data.internet; renderNet(); }
-    } catch (e) { /* offline – Zustand bleibt */ }
+    } catch (e) { checkLogin(); /* offline oder Anmeldung abgelaufen */ }
   }
-  function tick() { syncScreens(); syncMein(); }
-  function start() { if (!timer) { tick(); timer = setInterval(tick, 10000); } }
+  // „Mein Internet“ ändert sich selten: beim Öffnen und dann nur jede Minute statt bei jedem Takt
+  let meinAt = 0;
+  function tick() {
+    syncScreens();
+    if (Date.now() - meinAt > 60000) { meinAt = Date.now(); syncMein(); }
+  }
+  function start() { if (!timer) { meinAt = 0; tick(); timer = setInterval(tick, 10000); } }
   function stop() { if (timer) { clearInterval(timer); timer = null; } }
   document.addEventListener('visibilitychange', () => (document.hidden ? stop() : start()));
   window.addEventListener('load', () => { if (!document.hidden) start(); });
@@ -974,7 +992,7 @@
       const moving = Object.values(ha.devices).some(st => st && st.moving) || Object.keys(motion).length > 0;
       clearTimeout(haFast);
       if (moving && haTimer) haFast = setTimeout(syncHa, 1500);
-    } catch (e) { /* offline – Zustand bleibt */ }
+    } catch (e) { checkLogin(); /* offline oder Anmeldung abgelaufen */ }
   }
   function haStart() { if (!haTimer) { syncHa(); haTimer = setInterval(syncHa, 4000); } }
   function haStop() { if (haTimer) { clearInterval(haTimer); haTimer = null; } clearTimeout(haFast); }
@@ -1125,6 +1143,16 @@
     showNetPopup();
     if (!haTimer && !document.hidden) haStart(); else syncHa();
   };
+
+  // ---------------------------------------------------------------- Als App (PWA)
+  // Service-Worker nur für die festen Dateien (schneller Start). Er fragt nie selbst etwas ab.
+  if ('serviceWorker' in navigator && window.isSecureContext) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register(`${BASE}/pwa/sw.js`, { scope: `${BASE}/` }).catch(() => { /* geht auch ohne */ });
+    });
+  }
+  // Aus dem Hintergrund zurück (auch iOS-App-Wechsel / Zurück-Cache): sofort aktuellen Stand holen
+  window.addEventListener('pageshow', e => { if (e.persisted && !document.hidden) { syncScreens(); syncHa(); } });
 
   installRouting();
 })();

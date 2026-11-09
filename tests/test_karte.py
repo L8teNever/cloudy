@@ -252,3 +252,20 @@ def test_ha_settings_show_rooms_and_labels(client, monkeypatch):
     monkeypatch.setattr(ha, "_call", lambda m, p, b=None, timeout=6.0: entities if p == "/api/states" else (_ for _ in ()).throw(ha.HAError("x")))
     assert ha.entity_meta() == {}
     assert "Administrator-Konto" in client.get("/karte/einstellungen").text
+
+
+def test_karte_als_app(client):
+    # Unter cloudy.lan/karte: App-Bereich /karte/
+    m = client.get("/karte/pwa/manifest.webmanifest").json()
+    assert m["start_url"] == "/karte/" and m["scope"] == "/karte/" and m["display"] == "standalone"
+    sw = client.get("/karte/pwa/sw.js")
+    assert sw.headers["service-worker-allowed"] == "/" and "__V__" not in sw.text and "karte-" in sw.text
+    assert 'rel="manifest" href="/karte/pwa/manifest.webmanifest"' in client.get("/karte").text
+    # Eigene Domain: eine App für zu Hause und unterwegs, Bereich /
+    client.post("/lokale-domain", data={"karte": "haus.kulbarts.com"})
+    h = {"host": "haus.kulbarts.com"}
+    assert client.get("/pwa/manifest.webmanifest", headers=h).json()["start_url"] == "/"
+    assert client.get("/pwa/sw.js", headers=h).status_code == 200
+    assert 'href="/pwa/manifest.webmanifest"' in client.get("/", headers=h).text
+    for icon in ("icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"):
+        assert client.get(f"/static/karte/{icon}", headers=h).status_code == 200

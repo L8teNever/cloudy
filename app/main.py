@@ -267,6 +267,10 @@ async def redirect_middleware(request: Request, call_next):
             return RedirectResponse(f"https://{raw_host}{port}{path}", status_code=302)
         if path in ("/healthz", "/favicon.ico", "/karte/status", "/karte/internet", "/karte/ha", "/karte/mein", "/karte/zeitplan") or path.startswith("/static/"):
             return await call_next(request)
+        if path in ("/pwa/manifest.webmanifest", "/pwa/sw.js"):  # App-Dateien der Karte (eigene Domain)
+            request.scope["path"] = "/karte" + path
+            request.state.karte_base = ""
+            return await call_next(request)
         raum = path.strip("/")
         if path == "/karte" or path.startswith("/karte/"):  # alte Links auf /karte bzw. /karte/<raum>
             raum = path.removeprefix("/karte").strip("/")
@@ -799,6 +803,20 @@ async def karte_mein_setzen(request: Request):
     if err:
         return JSONResponse({"ok": False, "error": err}, status_code=400)
     return {"ok": True, "mein": await run_in_threadpool(_mein_state, request.app.state.settings, client_ip(request))}
+
+
+@app.get("/karte/pwa/manifest.webmanifest")
+async def karte_manifest(request: Request):
+    base = getattr(request.state, "karte_base", "/karte")
+    return JSONResponse(karte.manifest(base), media_type="application/manifest+json",
+                        headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/karte/pwa/sw.js")
+async def karte_service_worker():
+    """Nur die festen Dateien zwischenspeichern; Live-Daten gehen immer frisch ans Netz. Keine Hintergrund-Abfragen."""
+    return Response(await run_in_threadpool(karte.service_worker), media_type="application/javascript",
+                    headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
 
 
 @app.get("/karte/{raum}")
