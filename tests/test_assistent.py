@@ -159,3 +159,34 @@ def test_assistent_geraet_details(client):
     # Gerät ohne IP darf nicht die Zahlen des ganzen Netzes bekommen
     empty = assistent._device_report({"ip": "", "name": "x"}, "7t")
     assert "domains_top" not in empty and empty["hinweis"]
+
+
+def test_uebersichtsgruppe_members_page(client):
+    db.upsert_devices([("192.168.178.60", "aa:bb:cc:dd:ee:60", "fernseher"), ("192.168.178.61", "aa:bb:cc:dd:ee:61", "drucker")])
+    client.post("/uebersichtsgruppen", data={"name": "TV"})
+    client.post("/uebersichtsgruppen", data={"name": "Buero"})
+    tv, buero = ordnung.groups()
+    url = f"/uebersichtsgruppen/{tv['id']}"
+    assert client.get(url).status_code == 200
+    assert client.get("/uebersichtsgruppen/gibtsnicht").status_code == 404
+
+    r = client.post(f"{url}/mitglieder", data={"aktion": "hinzufuegen", "key": ["aa:bb:cc:dd:ee:60", "aa:bb:cc:dd:ee:61"]}, follow_redirects=False)
+    assert r.status_code == 303 and ordnung.find(tv["id"])["members"] == ["aa:bb:cc:dd:ee:60", "aa:bb:cc:dd:ee:61"]
+    assert "fernseher" in client.get(url).text and url in client.get("/gruppen").text
+
+    client.post(f"/uebersichtsgruppen/{buero['id']}/mitglieder", data={"key": "aa:bb:cc:dd:ee:61"})  # wechselt die Gruppe
+    assert ordnung.find(tv["id"])["members"] == ["aa:bb:cc:dd:ee:60"]
+    assert "in Buero" not in client.get(url).text.split("Geräte hinzufügen")[0] and "in Buero" in client.get(url).text
+
+    client.post(f"{url}/mitglieder", data={"aktion": "entfernen", "key": "aa:bb:cc:dd:ee:60"})
+    assert ordnung.find(tv["id"])["members"] == []
+    assert "fehler=" in client.post(f"{url}/mitglieder", data={"aktion": "hinzufuegen"}, follow_redirects=False).headers["location"]
+    assert client.post("/uebersichtsgruppen/gibtsnicht/mitglieder", data={"key": "x"}).status_code == 404
+
+
+def test_geraete_page_has_filters(client):
+    db.upsert_devices([("192.168.178.62", "aa:bb:cc:dd:ee:62", "Laptop")])
+    client.post("/uebersichtsgruppen", data={"name": "TV"})
+    page = client.get("/geraete").text
+    assert 'id="gf-suche"' in page and 'id="gf-gruppe"' in page and ">TV</option>" in page
+    assert 'data-search="laptop' in page and 'data-group="none"' in page

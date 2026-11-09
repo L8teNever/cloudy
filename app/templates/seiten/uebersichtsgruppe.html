@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+{% set g = view_group %}
+<p style="margin:0 0 .75rem"><a href="/gruppen#uebersicht" data-nav>← Zurück zu den Gruppen</a></p>
+<div id="vg-box" data-refresh-box style="display:grid;gap:1rem">
+  <div class="card" style="border-left:6px solid {{ g.color }}">
+    <h2 style="margin:0 0 .75rem">{{ g.name }} <span class="muted small">({{ view_members | length }} Gerät{{ 'e' if view_members | length != 1 }})</span></h2>
+    {% if view_members %}
+    <div style="display:grid;gap:.35rem">
+      {% for d in view_members %}
+      <form method="post" action="/uebersichtsgruppen/{{ g.id }}/mitglieder" data-ok="Entfernt" style="display:flex;align-items:center;gap:.6rem;padding:.4rem .6rem;border-radius:10px;background:var(--brand-soft)">
+        <input type="hidden" name="key" value="{{ d.key }}">
+        {% if d.is_online %}<span class="pill on">● online</span>{% else %}<span class="muted small" style="min-width:3.6rem">offline</span>{% endif %}
+        <span style="min-width:0;flex:1">
+          {% if d.ip %}<a href="/geraete/{{ d.ip | urlencode }}" data-nav style="font-weight:600">{{ d.hostname or d.ip }}</a>{% else %}<strong>{{ d.hostname or d.mac }}</strong>{% endif %}
+          <span class="muted small" style="margin-left:.4rem;white-space:nowrap">{{ d.ip }}</span>
+        </span>
+        <button type="submit" name="aktion" value="entfernen" class="secondary" style="padding:.25rem .6rem;font-size:.8rem">Entfernen</button>
+      </form>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="muted small">Noch keine Geräte in dieser Gruppe.</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 .25rem;font-size:1rem">Geräte hinzufügen</h3>
+    <p class="muted small" style="margin:0 0 .75rem">Ein Gerät steckt in höchstens einer Übersichtsgruppe. Wählst du eins aus einer anderen Gruppe, wechselt es hierher.</p>
+    {% if view_others %}
+    <form method="post" action="/uebersichtsgruppen/{{ g.id }}/mitglieder" data-ok="Hinzugefügt">
+      <input type="search" placeholder="Suchen nach Name, IP oder MAC …" autocomplete="off" aria-label="Geräte suchen" oninput="vgFilter(this)" style="width:100%;margin-bottom:.6rem">
+      <div class="vg-liste" style="display:grid;gap:.15rem .9rem;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));max-height:22rem;overflow:auto;padding:.2rem">
+        {% for d in view_others %}
+        <label class="small" data-search="{{ [d.hostname, d.lease_name, d.ip, d.mac, d.other_group] | select | join(' ') | lower }}" style="display:flex;align-items:center;gap:.45rem;padding:.2rem 0">
+          <input type="checkbox" name="key" value="{{ d.key }}">
+          <span style="min-width:0"><b style="font-weight:600">{{ d.hostname or d.ip or d.mac }}</b>
+            <span class="muted">{{ d.ip }}{% if d.is_online %} · online{% endif %}{% if d.other_group %} · in {{ d.other_group }}{% endif %}</span></span>
+        </label>
+        {% endfor %}
+      </div>
+      <button type="submit" name="aktion" value="hinzufuegen" style="margin-top:.75rem">Ausgewählte hinzufügen</button>
+    </form>
+    {% else %}
+    <div class="muted small">Alle bekannten Geräte sind schon in dieser Gruppe.</div>
+    {% endif %}
+  </div>
+</div>
+<script>
+  window.vgFilter = input => {
+    const words = input.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    input.form.querySelectorAll("label[data-search]").forEach(l => {
+      l.style.display = words.every(w => l.dataset.search.includes(w)) ? "flex" : "none";
+    });
+  };
+</script>
+{% endblock %}

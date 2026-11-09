@@ -81,14 +81,9 @@
       {% set cur = ha.map.get(dev, '') %}
       <label class="small" style="display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,2fr);gap:.6rem;align-items:center">
         <span><strong>{{ label }}</strong></span>
-        <select name="ha_{{ dev }}" style="width:100%">
+        <select name="ha_{{ dev }}" data-ha-kind="{{ kind }}" style="width:100%">
           <option value="">– nicht verknüpft (nur Anzeige auf der Karte) –</option>
-          {% set ns = namespace(found=false) %}
-          {% for e in ha.choices.get(kind, []) %}
-          {% if e.id == cur %}{% set ns.found = true %}{% endif %}
-          <option value="{{ e.id }}" {{ 'selected' if e.id == cur }}>{{ e.name }} · {{ e.id }} · {{ e.state }}</option>
-          {% endfor %}
-          {% if cur and not ns.found %}<option value="{{ cur }}" selected>{{ cur }} (gerade nicht in Home Assistant)</option>{% endif %}
+          {% if cur %}<option value="{{ cur }}" selected>{{ cur }}</option>{% endif %}
         </select>
       </label>
       {% endfor %}
@@ -100,8 +95,155 @@
     </div>
     <button type="submit">Zuordnung speichern</button>
   </form>
+
+  <script id="ha-daten" type="application/json">{{ {"entities": ha.entities, "kinds": ha.kinds} | tojson }}</script>
+  <details id="ha-alle" open style="margin-top:1.5rem">
+    <summary style="cursor:pointer;font-weight:700">Alle Geräte aus Home Assistant ({{ ha.entities | length }})</summary>
+    {% if ha.no_meta %}<div class="muted small" style="margin-top:.5rem">Räume und Labels konnte Home Assistant nicht liefern. Dafür muss der Zugriffsschlüssel von einem Administrator-Konto stammen und Home Assistant mindestens Version 2024.4 sein.</div>{% endif %}
+    <div style="display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;margin:.75rem 0">
+      <input id="ha-suche" type="search" placeholder="Suchen nach Name, ID oder Label …" autocomplete="off" aria-label="Geräte suchen" oninput="haFilter()" style="flex:1 1 16rem;min-width:0">
+      <select id="ha-raum" aria-label="Nach Raum filtern" onchange="haFilter()">
+        <option value="">Alle Räume</option>
+        {% for r in ha.rooms %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+        <option value="-">Ohne Raum</option>
+      </select>
+      <select id="ha-art" aria-label="Nach Art filtern" onchange="haFilter()">
+        <option value="">Alle Arten</option>
+        {% for d in ha.domains %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
+      </select>
+      <span class="muted small" id="ha-anzahl" aria-live="polite">{{ ha.entities | length }} Geräte</span>
+    </div>
+    <div class="table-wrap" style="max-height:30rem;overflow:auto">
+      <table>
+        <thead><tr><th>Gerät</th><th>Raum</th><th>Labels</th><th>Zustand</th></tr></thead>
+        <tbody id="ha-zeilen">
+          {% for e in ha.entities %}
+          <tr data-raum="{{ e.room or '-' }}" data-art="{{ e.domain }}" data-suche="{{ [e.name, e.id] | join(' ') | lower }} {{ e.labels | join(' ') | lower }}">
+            <td><strong style="font-weight:600">{{ e.name }}</strong><div class="muted small" style="font-family:var(--font-mono)">{{ e.id }}</div></td>
+            <td class="small">{{ e.room or '–' }}</td>
+            <td>{% for l in e.labels %}<span class="pill" style="font-size:.72rem;padding:.05rem .45rem;margin:0 .2rem .2rem 0">{{ l }}</span>{% else %}<span class="muted small">–</span>{% endfor %}</td>
+            <td class="small">{{ e.state }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  <script>
+    window.haFilter = () => {
+      const worte = document.getElementById("ha-suche").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const raum = document.getElementById("ha-raum").value;
+      const art = document.getElementById("ha-art").value;
+      let n = 0;
+      document.querySelectorAll("#ha-zeilen tr").forEach(row => {
+        const ok = (!raum || row.dataset.raum === raum) && (!art || row.dataset.art === art)
+          && worte.every(w => row.dataset.suche.includes(w));
+        row.hidden = !ok;
+        if (ok) n++;
+      });
+      document.getElementById("ha-anzahl").textContent = `${n} Geräte`;
+    };
+  </script>
   {% endif %}
 </div>
+<style>
+  #main .pick-btn { width: 100%; display: flex; align-items: center; gap: .5rem; padding: .45rem .75rem; text-align: left; font-weight: 400;
+    background: var(--card-solid); color: inherit; border: 1px solid var(--line); border-radius: 12px; box-shadow: none; cursor: pointer; }
+  .pick-btn span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #pick-over { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center; padding: 1rem; background: rgba(0, 0, 0, .55); }
+  #pick-over[hidden] { display: none; }
+  #pick-box { width: min(38rem, 100%); max-height: 80vh; display: flex; flex-direction: column; gap: .6rem; padding: .9rem; border-radius: 18px; background: var(--card-solid); border: 1px solid var(--line); }
+  #pick-box input { width: 100%; }
+  #pick-list { overflow: auto; flex: 1; min-height: 0; }
+  .pick-group { padding: .6rem .5rem .2rem; font-size: .75rem; font-weight: 700; color: var(--brand); }
+  #main .pick-item { display: block; width: 100%; padding: .4rem .5rem; border: 0; border-radius: 8px; background: none; box-shadow: none; color: inherit; text-align: left; font-weight: 400; cursor: pointer; }
+  #main .pick-item:hover, #main .pick-item.aktiv { background: var(--brand-soft); filter: none; }
+  .pick-sub { display: block; font-size: .75rem; color: var(--muted); overflow-wrap: anywhere; }
+</style>
+<div id="pick-over" hidden>
+  <div id="pick-box" role="dialog" aria-label="Gerät auswählen">
+    <input id="pick-suche" type="search" placeholder="Suchen nach Name, Raum, Label oder ID …" autocomplete="off" aria-label="Suchen">
+    <div id="pick-list"></div>
+  </div>
+</div>
+<script>
+  (() => {
+    const raw = document.getElementById("ha-daten");
+    const data = raw ? JSON.parse(raw.textContent) : { entities: [], kinds: {} };
+    const over = document.getElementById("pick-over");
+    const suche = document.getElementById("pick-suche");
+    const liste = document.getElementById("pick-list");
+    const esc = t => String(t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    let aktuell = null;
+
+    function items(sel) {
+      const leer = { value: "", title: sel.options[0].textContent.trim(), sub: "", group: "", search: "" };
+      if (!sel.dataset.haKind) {
+        return [leer, ...[...sel.options].slice(1).map(o => ({ value: o.value, title: o.textContent.trim(), sub: "", group: "", search: o.textContent.toLowerCase() }))];
+      }
+      // Alle Entitäten: erst die passenden nach Raum, danach der Rest.
+      const passt = new Set(data.kinds[sel.dataset.haKind] || []);
+      const rows = data.entities.map(e => {
+        const sub = [e.labels.length ? `[${e.labels.join(", ")}]` : "", e.state, e.id].filter(Boolean).join(" · ");
+        return { value: e.id, title: e.name, sub, fit: passt.has(e.domain), group: (passt.has(e.domain) ? "" : "Andere · ") + (e.room || "Ohne Raum"),
+                 search: `${e.name} ${e.room} ${sub}`.toLowerCase() };
+      });
+      return [leer, ...rows.filter(r => r.fit), ...rows.filter(r => !r.fit)];
+    }
+
+    function titel(sel) {
+      if (!sel.value) return sel.options[0].textContent.trim();
+      if (!sel.dataset.haKind) return sel.selectedOptions[0].textContent.trim();
+      const e = data.entities.find(x => x.id === sel.value);
+      return e ? `${e.name}${e.room ? " · " + e.room : ""} · ${e.id}` : `${sel.value} (gerade nicht in Home Assistant)`;
+    }
+
+    function zeichnen() {
+      const worte = suche.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      let html = "", gruppe = "";
+      aktuell.items.forEach(it => {
+        if (worte.length && (!it.value || !worte.every(w => it.search.includes(w)))) return;
+        if (it.group && it.group !== gruppe) { gruppe = it.group; html += `<div class="pick-group">${esc(gruppe)}</div>`; }
+        html += `<button type="button" class="pick-item${it.value === aktuell.sel.value ? " aktiv" : ""}" data-v="${esc(it.value)}">${esc(it.title)}${it.sub ? `<span class="pick-sub">${esc(it.sub)}</span>` : ""}</button>`;
+      });
+      liste.innerHTML = html || '<div class="muted small" style="padding:.5rem">Nichts gefunden.</div>';
+    }
+
+    function schliessen() { over.hidden = true; aktuell = null; }
+
+    document.querySelectorAll("select[name^='ha_'], select[name^='geraet_']").forEach(sel => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "pick-btn";
+      btn.innerHTML = "<span></span>▾";
+      const span = btn.firstChild;
+      span.textContent = titel(sel);
+      btn.addEventListener("click", e => {
+        e.preventDefault();
+        aktuell = { sel, span, items: items(sel) };
+        suche.value = "";
+        zeichnen();
+        over.hidden = false;
+        suche.focus();
+      });
+      sel.style.display = "none";
+      sel.after(btn);
+    });
+
+    suche.addEventListener("input", zeichnen);
+    over.addEventListener("click", e => { if (e.target === over) schliessen(); });
+    over.addEventListener("keydown", e => { if (e.key === "Escape") schliessen(); });
+    liste.addEventListener("click", e => {
+      const b = e.target.closest(".pick-item");
+      if (!b || !aktuell) return;
+      const { sel, span } = aktuell;
+      if (![...sel.options].some(o => o.value === b.dataset.v)) sel.add(new Option(b.dataset.v, b.dataset.v));
+      sel.value = b.dataset.v;
+      span.textContent = titel(sel);
+      schliessen();
+    });
+  })();
+</script>
 
 <div class="card">
   <h2>Eigene Domain für die Karte</h2>

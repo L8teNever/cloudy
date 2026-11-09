@@ -17,9 +17,9 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import adblock, assistent, autoswitch, blocklist, certs, db, dnsprofile, fritz, homeassistant, karte, localdomain, ordnung, policy, redirects, slots, stats, tunnel, views, warp, zertwechsel
+from . import adblock, assistent, autoswitch, blocklist, certs, db, dnsprofile, festeip, fritz, homeassistant, karte, localdomain, ordnung, policy, redirects, slots, stats, tunnel, views, warp, zertwechsel
 from .certs import ca_cert_path, ensure_certs, start_https_server
-from .dnsmasq import Collector, DnsmasqRunner
+from .dnsmasq import Collector, DnsmasqRunner, read_leases
 from .presence import PresenceMonitor
 from .redirects import find_rule
 from .settings import Settings, write_pi_ip_override
@@ -643,12 +643,18 @@ async def karte_einstellungen(request: Request):
 def _ha_settings_context() -> dict:
     """Home Assistant in den Karten-Einstellungen: Verbindung, Entitäten zur Auswahl, aktuelle Zuordnung."""
     url, token = homeassistant.config()
-    ctx = {"url": url, "has_token": bool(token), "error": "", "choices": {}, "map": homeassistant.mapping(),
+    ctx = {"url": url, "has_token": bool(token), "error": "", "kinds": homeassistant.DOMAINS, "map": homeassistant.mapping(),
            "groups": [(kind, homeassistant.KIND_TITLES[kind], [(d, label) for d, label, k in homeassistant.DEVICES if k == kind])
-                      for kind in homeassistant.DOMAINS]}
+                      for kind in homeassistant.DOMAINS],
+           "entities": [], "rooms": [], "domains": []}
     if url and token:
         try:
-            ctx["choices"] = homeassistant.entity_choices(homeassistant.states())
+            states = homeassistant.states()
+            meta = homeassistant.entity_meta()
+            ctx["entities"] = homeassistant.all_entities(states, meta)
+            ctx["rooms"] = sorted({e["room"] for e in ctx["entities"] if e["room"]}, key=str.lower)
+            ctx["domains"] = sorted({e["domain"] for e in ctx["entities"]})
+            ctx["no_meta"] = not meta
         except homeassistant.HAError as exc:
             ctx["error"] = str(exc)
     return ctx
@@ -1434,6 +1440,56 @@ async def uebersichtsgruppe_neu(name: str = Form(default=""), color: str = Form(
     except ValueError as exc:
         return RedirectResponse(f"/gruppen?fehler={quote(str(exc))}#uebersicht", status_code=303)
     return RedirectResponse("/gruppen#uebersicht", status_code=303)
+
+
+def _apply_feste_ips(request: Request) -> None:
+    """Datei neu schreiben, „alle“ gleich anwenden und dnsmasq die Änderung lesen lassen."""
+    settings = request.app.state.settings
+    changed = festeip.write(settings)
+    if settings.dhcp_enabled:
+        changed = festeip.pin_leases(settings, read_leases(settings.leases_path)) or changed
+    runner = getattr(request.app.state, "runner", None)
+    if changed and runner:
+        runner.reload_hosts()
+
+
+@app.post("/geraete/feste-ip", dependencies=[Depends(require_password)])
+async def geraet_feste_ip(request: Request, mac: str = Form(...), ip: str = Form(default=""), aktion: str = Form(default="setzen"),
+                          back: str = Form(default="")):
+    """Gerät immer dieselbe Adresse geben, oder das wieder aufheben."""
+    target = _site_route_back(back, "/geraete")
+    if aktion == "aufheben":
+        await run_in_threadpool(festeip.remove, mac)
+    else:
+        err = await run_in_threadpool(festeip.set_ip, request.app.state.settings, mac, ip)
+        if err:
+            sep = "&" if "?" in target else "?"
+            return RedirectResponse(f"{target}{sep}fehler={quote(err)}", status_code=303)
+    await run_in_threadpool(_apply_feste_ips, request)
+    return RedirectResponse(target, status_code=303)
+
+
+@app.post("/geraete/feste-ips-alle", dependencies=[Depends(require_password)])
+async def geraete_feste_ips_alle(request: Request, wert: str = Form(default=""), aktion: str = Form(default="")):
+    """Jedes Gerät behält seine Adresse (an/aus), oder alle festen Adressen aufheben."""
+    if aktion == "aufheben":
+        await run_in_threadpool(festeip.clear)
+    else:
+        await run_in_threadpool(festeip.set_all, wert == "1")
+    await run_in_threadpool(_apply_feste_ips, request)
+    return RedirectResponse("/geraete", status_code=303)
+
+
+@app.post("/uebersichtsgruppen/{group_id}/mitglieder", dependencies=[Depends(require_password)])
+async def uebersichtsgruppe_mitglieder(group_id: str, aktion: str = Form(default="hinzufuegen"), key: list[str] = Form(default=[])):
+    """Geräte von Hand in die Gruppe legen oder herausnehmen."""
+    back = f"/uebersichtsgruppen/{quote(group_id)}"
+    if not await run_in_threadpool(ordnung.find, group_id):
+        raise HTTPException(status_code=404, detail="Gruppe nicht gefunden")
+    if not key:
+        return RedirectResponse(f"{back}?fehler={quote('Kein Gerät ausgewählt.')}", status_code=303)
+    await run_in_threadpool(ordnung.assign, key, None if aktion == "entfernen" else group_id)
+    return RedirectResponse(back, status_code=303)
 
 
 @app.post("/uebersichtsgruppen/{group_id}", dependencies=[Depends(require_password)])

@@ -300,3 +300,21 @@ def test_retry_loop_fills_cache_and_retries_while_offline(monkeypatch):
     assert waits[2] == fritz.RECHECK_ONLINE  # danach erreichbar -> seltener prüfen
     assert fritz._cached_data["boxes"][0]["online"] is True
     fritz.invalidate_cache()
+
+
+def test_fritz_entry_loses_ip_taken_by_other_device(client):
+    """FRITZ!Box kennt „Silber-L“ noch mit .42, inzwischen hat das LED-Band diese Adresse."""
+    db.upsert_devices([("192.168.178.42", "70:89:76:79:5e:ff", "ledband")])
+    db.save_fritz_hosts([
+        {"mac": "6c:88:14:77:51:a8", "ip": "192.168.178.42", "name": "Silber-L", "active": False},
+        {"mac": "aa:aa:aa:aa:aa:10", "ip": "192.168.178.90", "name": "Alt", "active": False},
+        {"mac": "aa:aa:aa:aa:aa:11", "ip": "192.168.178.90", "name": "Neu", "active": True},
+        {"mac": "aa:aa:aa:aa:aa:12", "ip": "192.168.178.91", "name": "Frei", "active": False},
+    ])
+    devs = {d["mac"]: d for d in db.devices()}
+    silber = devs["6c:88:14:77:51:a8"]
+    assert silber["ip"] == "" and silber["fritz_only"] and not silber["fritz_active"]
+    assert devs["70:89:76:79:5e:ff"]["ip"] == "192.168.178.42"
+    assert devs["aa:aa:aa:aa:aa:10"]["ip"] == "" and devs["aa:aa:aa:aa:aa:11"]["ip"] == "192.168.178.90"
+    assert devs["aa:aa:aa:aa:aa:12"]["ip"] == "192.168.178.91"
+    assert 'href="/geraete/192.168.178.42"' in client.get("/geraete").text  # nur noch das LED-Band verlinkt dorthin

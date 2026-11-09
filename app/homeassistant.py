@@ -41,7 +41,7 @@ DEVICES: list[tuple[str, str, str]] = [
 ]
 DEVICE_KIND = {d: k for d, _, k in DEVICES}
 
-# Welche Home-Assistant-Bereiche pro Art zur Auswahl stehen
+# Welche Home-Assistant-Bereiche pro Art zuerst vorgeschlagen werden (auswählen lässt sich jede Entität)
 DOMAINS = {
     "cover": ("cover",),
     "light": ("light", "switch", "input_boolean"),
@@ -50,6 +50,7 @@ DOMAINS = {
 }
 KIND_TITLES = {"cover": "Rollläden", "light": "Licht", "led": "LEDs", "switch": "PC & Steckdosen"}
 
+SWITCH_DOMAINS = ("light", "switch", "input_boolean")  # haben eigene turn_on/turn_off, sonst der allgemeine Dienst
 COVER_SET_POSITION = 4  # CoverEntityFeature.SET_POSITION
 COLOR_MODES = {"hs", "xy", "rgb", "rgbw", "rgbww"}
 
@@ -105,7 +106,7 @@ def save_mapping(data: dict[str, str]) -> None:
     clean = {}
     for dev, ent in data.items():
         ent = (ent or "").strip().lower()
-        if dev in DEVICE_KIND and ENTITY_RE.match(ent) and ent.split(".")[0] in DOMAINS[DEVICE_KIND[dev]]:
+        if dev in DEVICE_KIND and ENTITY_RE.match(ent):
             clean[dev] = ent
     db.set_setting(MAP_KEY, json.dumps(clean, sort_keys=True) if clean else "")
 
@@ -152,20 +153,44 @@ def states() -> list[dict]:
     return data if isinstance(data, list) else []
 
 
-def entity_choices(all_states: list[dict]) -> dict[str, list[dict]]:
-    """Für die Einstellungen: pro Art die passenden Entitäten (Name, ID, Zustand)."""
-    out: dict[str, list[dict]] = {k: [] for k in DOMAINS}
+# Raum und Labels gibt es nicht über /api/states, nur über die Template-API. Labels können an der Entität oder am Gerät hängen.
+_META_TEMPLATE = """[{%- for s in states -%}
+{%- set d = device_id(s.entity_id) -%}
+{%- set own = labels(s.entity_id) + (labels(d) if d else []) -%}
+{{- [s.entity_id, area_name(s.entity_id), own | unique | map('label_name') | select | list] | to_json -}}
+{{- ',' if not loop.last -}}
+{%- endfor -%}]"""
+
+
+def entity_meta() -> dict[str, tuple[str, list[str]]]:
+    """{entity_id: (Raum, Labels)}. Leer, wenn Home Assistant das nicht liefert (z. B. sehr alte Version)."""
+    try:
+        rows = _call("POST", "/api/template", {"template": _META_TEMPLATE}, timeout=15.0)
+    except HAError:
+        return {}
+    if not isinstance(rows, list):
+        return {}
+    out = {}
+    for row in rows:
+        if isinstance(row, list) and len(row) == 3:
+            out[str(row[0])] = (str(row[1] or ""), sorted(str(x) for x in row[2] or []))
+    return out
+
+
+def all_entities(all_states: list[dict], meta: dict | None = None) -> list[dict]:
+    """Alle Entitäten mit Name, Art, Zustand, Raum und Labels; nach Raum sortiert, ohne Raum zuletzt."""
+    meta = meta or {}
+    out = []
     for s in all_states:
         eid = str(s.get("entity_id") or "")
         if not ENTITY_RE.match(eid):
             continue
-        dom = eid.split(".")[0]
-        name = (s.get("attributes") or {}).get("friendly_name") or eid
-        for kind, doms in DOMAINS.items():
-            if dom in doms:
-                out[kind].append({"id": eid, "name": str(name), "state": str(s.get("state") or "")})
-    for lst in out.values():
-        lst.sort(key=lambda e: (e["id"].split(".")[0], e["name"].lower()))
+        area, labels = meta.get(eid, ("", []))
+        out.append({
+            "id": eid, "domain": eid.split(".")[0], "name": str((s.get("attributes") or {}).get("friendly_name") or eid),
+            "state": str(s.get("state") or ""), "room": area, "labels": labels,
+        })
+    out.sort(key=lambda e: (not e["room"], e["room"].lower(), e["domain"], e["name"].lower()))
     return out
 
 
@@ -189,12 +214,12 @@ def device_state(kind: str, s: dict | None) -> dict:
         pos = attrs.get("current_position")
         if isinstance(pos, (int, float)):
             out["percent"] = 100 - max(0, min(100, round(pos)))
-        elif state in ("open", "closed"):
-            out["percent"] = 0 if state == "open" else 100
+        elif state in ("open", "closed", "on", "off"):  # „on“ = offen, falls ein Schalter den Rollladen steuert
+            out["percent"] = 0 if state in ("open", "on") else 100
         out["moving"] = state in ("opening", "closing")
         out["positionable"] = bool(int(attrs.get("supported_features") or 0) & COVER_SET_POSITION)
     else:
-        out["on"] = state == "on"
+        out["on"] = state in ("on", "open")
         if kind == "led":
             bri = attrs.get("brightness")
             if isinstance(bri, (int, float)):
@@ -225,6 +250,11 @@ def _service(domain: str, service: str, data: dict) -> None:
     _call("POST", f"/api/services/{domain}/{service}", data)
 
 
+def _switch(domain: str, on: bool, data: dict) -> None:
+    """Ein- oder ausschalten; alles außer Licht und Schaltern über den allgemeinen Home-Assistant-Dienst."""
+    _service(domain if domain in SWITCH_DOMAINS else "homeassistant", "turn_on" if on else "turn_off", data)
+
+
 def command(device: str, action: str, value=None) -> None:
     """Befehl von der Karte ausführen. Wirft HAError mit verständlichem Text."""
     kind = DEVICE_KIND.get(device)
@@ -238,7 +268,8 @@ def command(device: str, action: str, value=None) -> None:
 
     if kind == "cover":
         if action == "stop":
-            _service("cover", "stop_cover", target)
+            if domain == "cover":
+                _service("cover", "stop_cover", target)
             return
         if action != "position":
             raise HAError("Unbekannter Befehl.")
@@ -246,6 +277,9 @@ def command(device: str, action: str, value=None) -> None:
             pct = max(0, min(100, int(round(float(value)))))
         except (TypeError, ValueError) as exc:
             raise HAError("Ungültige Position.") from exc
+        if domain != "cover":  # z. B. ein Schalter: an = offen
+            _switch(domain, pct < 50, target)
+            return
         cur = next((s for s in states() if s.get("entity_id") == ent), None)
         features = int(((cur or {}).get("attributes") or {}).get("supported_features") or 0)
         if features & COVER_SET_POSITION:
@@ -255,7 +289,7 @@ def command(device: str, action: str, value=None) -> None:
         return
 
     if action == "off":
-        _service(domain, "turn_off", target)
+        _switch(domain, False, target)
         return
     if action != "on":
         raise HAError("Unbekannter Befehl.")
@@ -273,4 +307,4 @@ def command(device: str, action: str, value=None) -> None:
             modes = set(((cur or {}).get("attributes") or {}).get("supported_color_modes") or [])
             if modes & COLOR_MODES:
                 data["rgb_color"] = [int(color[i:i + 2], 16) for i in (1, 3, 5)]
-    _service(domain, "turn_on", data)
+    _switch(domain, True, data)

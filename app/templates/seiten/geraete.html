@@ -1,6 +1,85 @@
 {% extends "base.html" %}
 {% block content %}
-<div data-live="/teil/geraete" data-every="10">
+<style>
+  #geraete-liste .sec-chev { display: inline-block; transition: transform .15s; }
+  #geraete-liste tr.section-row { cursor: pointer; user-select: none; }
+  #geraete-liste tr.section-row.zu .sec-chev { transform: rotate(-90deg); }
+</style>
+<div class="card" style="display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;margin-bottom:1rem">
+  <input id="gf-suche" type="search" placeholder="Suchen nach Name, IP oder MAC …" autocomplete="off" aria-label="Geräte suchen" style="flex:1 1 16rem;min-width:0">
+  <select id="gf-gruppe" aria-label="Nach Gruppe filtern">
+    <option value="">Alle Gruppen</option>
+    {% for g in view_groups %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}
+    <option value="none">Ohne Gruppe</option>
+  </select>
+  <select id="gf-status" aria-label="Nach Status filtern">
+    <option value="">Online und offline</option>
+    <option value="1">Nur online</option>
+    <option value="0">Nur offline</option>
+  </select>
+  <span class="muted small" id="gf-anzahl" aria-live="polite"></span>
+</div>
+<form method="post" action="/geraete/feste-ips-alle" class="card" data-ok="Gespeichert" style="display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;margin-bottom:1rem">
+  <label class="small muted">Jedes Gerät behält immer seine IP
+    <select name="wert" data-autosubmit style="margin-left:.4rem">
+      <option value="">Aus</option>
+      <option value="1" {{ 'selected' if fixed_all }}>An</option>
+    </select>
+  </label>
+  <span class="muted small">{{ fixed_ips | length }} feste Adresse{{ 'n' if fixed_ips | length != 1 }}{% if not settings.dhcp_enabled %} · geht nur, wenn cloudy das DHCP macht{% endif %}</span>
+  {% if fixed_ips %}<button type="submit" name="aktion" value="aufheben" class="secondary" style="padding:.25rem .6rem;font-size:.8rem;margin-left:auto" onclick="return confirm('Alle festen IP-Adressen aufheben?')">Alle aufheben</button>{% endif %}
+</form>
+<div id="geraete-liste" data-live="/teil/geraete" data-every="10">
   {% include "teile/geraete.html" %}
 </div>
+<script>
+  (() => {
+    const box = document.getElementById("geraete-liste");
+    const suche = document.getElementById("gf-suche");
+    const gruppe = document.getElementById("gf-gruppe");
+    const status = document.getElementById("gf-status");
+    const anzahl = document.getElementById("gf-anzahl");
+    const KEY = "cloudy-geraete-zugeklappt";
+    const zu = () => { try { return new Set(JSON.parse(localStorage.getItem(KEY) || "[]")); } catch (_) { return new Set(); } };
+
+    function anwenden() {
+      const worte = suche.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const filtert = Boolean(worte.length || gruppe.value || status.value);
+      const geschlossen = zu();
+      let treffer = 0, alle = 0;
+      box.querySelectorAll("tbody[data-group]").forEach(body => {
+        const id = body.dataset.group;
+        const klappt = !filtert && geschlossen.has(id);
+        let n = 0;
+        body.querySelectorAll("tr.device-row").forEach(row => {
+          alle++;
+          const ok = (!gruppe.value || gruppe.value === id)
+            && (!status.value || row.dataset.online === status.value)
+            && worte.every(w => row.dataset.search.includes(w));
+          if (ok) { n++; treffer++; }
+          row.hidden = !ok || klappt;
+        });
+        body.querySelectorAll("tr.device-empty").forEach(row => { row.hidden = filtert || klappt; });
+        body.hidden = filtert && !n;
+        body.querySelector("tr.section-row")?.classList.toggle("zu", klappt);
+      });
+      anzahl.textContent = filtert ? `${treffer} von ${alle} Geräten` : `${alle} Geräte`;
+    }
+
+    suche.addEventListener("input", anwenden);
+    gruppe.addEventListener("change", anwenden);
+    status.addEventListener("change", anwenden);
+    box.addEventListener("click", e => {
+      const row = e.target.closest("tr.section-row");
+      if (!row) return;
+      const id = row.closest("tbody").dataset.group;
+      const s = zu();
+      if (!s.delete(id)) s.add(id);
+      localStorage.setItem(KEY, JSON.stringify([...s]));
+      anwenden();
+    });
+    new MutationObserver(anwenden).observe(box, { childList: true }); // Live-Aktualisierung ersetzt die Tabelle
+    anwenden();
+  })();
+</script>
 {% endblock %}

@@ -128,6 +128,7 @@ def build_config(s: Settings) -> str:
             "dhcp-authoritative",
             f"dhcp-leasefile={s.leases_path}",
             f"dhcp-hostsfile={s.hosts_path}",
+            f"dhcp-hostsfile={os.path.join(s.data_dir, 'dhcp-feste-ips.conf')}",
         ]
     return "\n".join(lines) + "\n"
 
@@ -243,6 +244,9 @@ class DnsmasqRunner:
     def start(self) -> None:
         s = self.settings
         os.makedirs(s.data_dir, exist_ok=True)
+        from . import festeip
+
+        festeip.write(s)  # dnsmasq bricht ohne die Datei ab
         if not os.path.exists(s.hosts_path):
             with open(s.hosts_path, "w", encoding="utf-8") as f:
                 f.write(HOSTS_HEADER)
@@ -359,7 +363,12 @@ class DnsmasqRunner:
         try:
             self.collector.flush()
             if self.settings.dhcp_enabled:
-                db.upsert_devices(read_leases(self.settings.leases_path))
+                from . import festeip
+
+                leases = read_leases(self.settings.leases_path)
+                db.upsert_devices(leases)
+                if festeip.pin_leases(self.settings, leases):
+                    self.reload_hosts()
         except Exception as exc:  # noqa: BLE001 – Logging darf den Dienst nie stoppen
             print(f"cloudy: Fehler beim Speichern: {exc}", file=sys.stderr, flush=True)
 

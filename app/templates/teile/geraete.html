@@ -28,8 +28,6 @@
           <th>Status</th>
           <th>Gerät</th>
           <th>Aktuelle Seite</th>
-          <th>IP</th>
-          <th>MAC</th>
           <th class="num">Download</th>
           <th class="num">Upload</th>
           <th class="num">Aufrufe</th>
@@ -38,13 +36,14 @@
           <th>Zuletzt</th>
         </tr>
       </thead>
-      {% set cols = 11 if warp else 10 %}
+      {% set cols = 9 if warp else 8 %}
       {% for sec in sections %}
-      <tbody>
+      <tbody data-group="{{ sec.group.id if sec.group else 'none' }}">
         {% if sec.group or sections | length > 1 %}
         <tr class="section-row">
           <td colspan="{{ cols }}" style="padding:.9rem .5rem .4rem;border-bottom:2px solid {{ sec.group.color if sec.group else 'var(--line, #e5e7eb)' }}">
             <span style="display:inline-flex;align-items:center;gap:.5rem;font-weight:700">
+              <span class="sec-chev" hidden>▾</span>
               <span style="width:.7rem;height:.7rem;border-radius:50%;background:{{ sec.group.color if sec.group else '#94a3b8' }}"></span>
               {{ sec.group.name if sec.group else 'Ohne Gruppe' }}
               <span class="muted small" style="font-weight:400">{{ sec.devices | length }} Gerät{{ 'e' if sec.devices | length != 1 }}</span>
@@ -53,7 +52,8 @@
         </tr>
         {% endif %}
         {% for d in sec.devices %}
-        <tr>
+        <tr class="device-row" data-online="{{ '1' if d.ip in online or d.fritz_active else '0' }}"
+            data-search="{{ [d.hostname, d.original_name, d.lease_name, d.fritz_name, d.ip, d.mac] | select | join(' ') | lower }}">
           <td>
             {% if d.ip in online or d.fritz_active %}
             <span class="pill on">● online</span>
@@ -67,6 +67,7 @@
             {% else %}
             <strong>{{ d.hostname or d.mac }}</strong>
             {% endif %}
+            <div class="muted small" style="font-family:var(--font-mono);white-space:nowrap">{{ d.ip or '–' }}{% if d.mac %} · {{ d.mac }}{% endif %}{% if d.mac and fixed_ips.get(d.mac) %} <span title="Bekommt immer {{ fixed_ips[d.mac] }}">· 📌 fest</span>{% endif %}</div>
             {% if d.custom_name and d.original_name %}
             <div class="muted small" title="Name aus FRITZ!Box/DHCP">{{ d.original_name }}</div>
             {% elif d.fritz_name and d.lease_name and d.lease_name != d.fritz_name %}
@@ -98,8 +99,6 @@
               <span class="muted">–</span>
             {% endif %}
           </td>
-          <td class="mono small">{{ d.ip or '–' }}</td>
-          <td class="mono small">{{ d.mac or '–' }}</td>
           <td class="num">{{ d.bytes_down | bytes }}</td>
           <td class="num">{{ d.bytes_up | bytes }}</td>
           <td class="num">{{ d.hits | count }}</td>
@@ -145,10 +144,10 @@
             <span class="muted small">–</span>
             {% endif %}
           </td>
-          <td class="muted small">{{ fmt_time(d.last_seen) }}</td>
+          <td class="muted small" style="white-space:nowrap">{{ fmt_time(d.last_seen) if d.last_seen else '–' }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="{{ cols }}" class="muted small">{{ 'Noch keine Geräte – zuordnen beim Gerät oder über den Assistenten.' if sec.group else 'Noch keine Geräte erfasst.' }}</td></tr>
+        <tr class="device-empty"><td colspan="{{ cols }}" class="muted small">{{ 'Noch keine Geräte – zuordnen beim Gerät oder über den Assistenten.' if sec.group else 'Noch keine Geräte erfasst.' }}</td></tr>
         {% endfor %}
       </tbody>
       {% endfor %}

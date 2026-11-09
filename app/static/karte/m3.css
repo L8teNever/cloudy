@@ -34,6 +34,7 @@
 
   /* Formen */
   --md-shape-full: 999px;
+  --md-shape-pill: 40px; /* so groß wie nötig für ganz rund: 999px → 20px überspringt sonst die Animation */
   --md-shape-xl: 28px;
   --md-shape-l: 20px;
   --md-shape-m: 16px;
@@ -101,7 +102,7 @@ body.in-room #room-view-title { padding-left: 4px; }
   opacity: 0;
   pointer-events: none;
   transform: scale(.6);
-  transition: opacity .2s var(--md-emph), transform var(--md-dur) var(--md-spring), border-radius var(--md-dur) var(--md-spring);
+  transition: opacity .2s var(--md-emph), transform var(--md-dur) var(--md-spring), border-radius var(--md-dur) var(--md-emph);
 }
 .m3-back svg { width: 24px; height: 24px; }
 body:not(.in-room) .m3-back { display: none; }
@@ -197,7 +198,7 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: border-radius var(--md-dur) var(--md-spring), background .2s, color .2s;
+  transition: border-radius var(--md-dur) var(--md-emph), background .2s, color .2s;
 }
 #mein-profil-btn:hover { background: color-mix(in srgb, var(--md-surface-highest), white 8%); }
 #mein-profil-btn:active { border-radius: var(--md-shape-s); }
@@ -218,7 +219,7 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
   font-size: 14px;
   font-weight: 500;
   gap: 8px;
-  transition: border-radius var(--md-dur) var(--md-spring), background .2s;
+  transition: border-radius var(--md-dur) var(--md-emph), background .2s;
 }
 #room-settings-btn .gh-inline-icon { width: 20px; height: 20px; vertical-align: 0; }
 #room-settings-btn:hover { background: color-mix(in srgb, var(--md-secondary-container), white 8%); color: var(--md-on-secondary-container); }
@@ -248,7 +249,7 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
   color: var(--md-on-surface);
   font-size: 14px;
   font-weight: 500;
-  transition: background .15s, border-radius var(--md-dur) var(--md-spring);
+  transition: background .15s, border-radius var(--md-dur) var(--md-emph);
 }
 #room-settings-dropdown .gh-inline-icon { width: 20px; height: 20px; vertical-align: 0; color: var(--md-on-surface-variant); }
 #room-settings-dropdown .door-pill:hover,
@@ -272,7 +273,7 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
   font-weight: 500;
   letter-spacing: 0;
   box-shadow: var(--md-elev-2);
-  transition: transform var(--md-dur) var(--md-spring), background .2s, color .2s, border-radius var(--md-dur) var(--md-spring), opacity .2s;
+  transition: transform var(--md-dur) var(--md-spring), background .2s, color .2s, border-radius var(--md-dur) var(--md-emph), opacity .2s;
 }
 .apt-label .gh-inline-icon {
   width: 28px;
@@ -307,7 +308,7 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
   color: var(--md-on-surface);
   font-size: 14px;
   box-shadow: var(--md-elev-2);
-  transition: transform var(--md-dur) var(--md-spring), border-radius var(--md-dur) var(--md-spring), background .22s var(--md-emph), color .22s var(--md-emph);
+  transition: transform var(--md-dur) var(--md-spring), border-radius var(--md-dur) var(--md-emph), background .22s var(--md-emph), color .22s var(--md-emph);
 }
 /* Symbol in eigenem runden Feld */
 .shutter-badge > .gh-tile-icon,
@@ -324,7 +325,7 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
   padding: 9px;
   border-radius: var(--md-shape-full);
   background: var(--md-surface-highest);
-  transition: background .22s, border-radius var(--md-dur) var(--md-spring);
+  transition: background .22s, border-radius var(--md-dur) var(--md-emph);
 }
 .shutter-badge > .shutter-mini-win { margin: 0 9px 0 11px; }
 .screen-badge > .screen-status-dot { margin: 0 6px 0 8px; }
@@ -343,7 +344,7 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
 .screen-badge.on {
   background: var(--md-primary);
   color: var(--md-on-primary);
-  border-radius: var(--md-shape-full);
+  border-radius: var(--md-shape-pill);
   box-shadow: var(--md-elev-2);
 }
 .shutter-badge.on:hover,
@@ -362,9 +363,9 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
 .screen-badge.on .screen-status-dot { background: var(--md-on-primary); box-shadow: none; }
 
 /* Internet-Kacheln: grün = VPN, orange = WARP */
-.net-badge.vpn { background: var(--md-success-container); color: var(--md-on-success-container); border-radius: var(--md-shape-full); }
+.net-badge.vpn { background: var(--md-success-container); color: var(--md-on-success-container); border-radius: var(--md-shape-pill); }
 .net-badge.vpn:hover { background: color-mix(in srgb, var(--md-success-container), white 8%); }
-.net-badge.warp { background: var(--md-warn-container); color: var(--md-on-warn-container); border-radius: var(--md-shape-full); }
+.net-badge.warp { background: var(--md-warn-container); color: var(--md-on-warn-container); border-radius: var(--md-shape-pill); }
 .net-badge.warp:hover { background: color-mix(in srgb, var(--md-warn-container), white 8%); }
 .net-badge.vpn .gh-tile-sub, .net-badge.warp .gh-tile-sub { color: inherit; opacity: .8; }
 .net-badge .gh-tile-title { font-size: 14px; font-weight: 500; }
@@ -401,7 +402,7 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
   width: 48px;
   height: 48px;
   color: var(--md-on-surface-variant);
-  transition: background .15s, border-radius var(--md-dur) var(--md-spring);
+  transition: background .15s, border-radius var(--md-dur) var(--md-emph);
 }
 .gh-icon-btn svg { width: 24px; height: 24px; }
 .gh-icon-btn:hover { background: rgba(226, 226, 233, .08); }
@@ -417,7 +418,7 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
   border-radius: 48px;
   background: var(--md-surface-highest);
   box-shadow: none;
-  transition: border-radius var(--md-dur) var(--md-spring);
+  transition: border-radius var(--md-dur) var(--md-emph);
 }
 .gh-pill-slider:active, .gh-shutter-pill-slider:active { border-radius: 36px; }
 .gh-shutter-pill-fill {
@@ -429,7 +430,7 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
 .gh-shutter-pill-pct { font-size: 32px; font-weight: 500; color: var(--md-on-surface); filter: none; }
 .gh-shutter-pill-sub { font-size: 12px; color: var(--md-on-surface-variant); text-align: center; padding: 0 12px; }
 .gh-pill-pct { font-size: 28px; font-weight: 500; }
-.gh-pill-off-knob { border-radius: var(--md-shape-xl); background: var(--md-surface-high); border: none; box-shadow: none; transition: border-radius var(--md-dur) var(--md-spring); }
+.gh-pill-off-knob { border-radius: var(--md-shape-xl); background: var(--md-surface-high); border: none; box-shadow: none; transition: border-radius var(--md-dur) var(--md-emph); }
 .gh-pill-off-knob:active { transform: none; border-radius: var(--md-shape-full); }
 .gh-pill-off-label { color: var(--md-on-surface-variant); }
 .gh-palette-btn {
@@ -440,7 +441,7 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
   color: var(--md-on-tertiary-container);
   border: none;
   box-shadow: var(--md-elev-3);
-  transition: border-radius var(--md-dur) var(--md-spring), transform var(--md-dur) var(--md-spring);
+  transition: border-radius var(--md-dur) var(--md-emph), transform var(--md-dur) var(--md-spring);
 }
 .gh-palette-btn:hover { background: color-mix(in srgb, var(--md-tertiary-container), white 8%); transform: none; }
 .gh-palette-btn:active { transform: none; border-radius: var(--md-shape-full); }
@@ -456,7 +457,7 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
   color: var(--md-on-secondary-container);
   font-size: 13px;
   font-weight: 500;
-  transition: border-radius var(--md-dur) var(--md-spring), background .15s;
+  transition: border-radius var(--md-dur) var(--md-emph), background .15s;
 }
 .shutter-preset-btn:first-child { border-radius: var(--md-shape-full) var(--md-shape-xs) var(--md-shape-xs) var(--md-shape-full); }
 .shutter-preset-btn:last-child { border-radius: var(--md-shape-xs) var(--md-shape-full) var(--md-shape-full) var(--md-shape-xs); }
@@ -465,7 +466,7 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
 
 /* Farbfelder */
 .gh-swatch-grid { gap: 8px; }
-.gh-swatch-tile { height: 56px; border-radius: var(--md-shape-m); border: none; transition: border-radius var(--md-dur) var(--md-spring), transform var(--md-dur) var(--md-spring); }
+.gh-swatch-tile { height: 56px; border-radius: var(--md-shape-m); border: none; transition: border-radius var(--md-dur) var(--md-emph), transform var(--md-dur) var(--md-spring); }
 .gh-swatch-tile:hover { transform: none; border-radius: var(--md-shape-xl); box-shadow: none; }
 .gh-swatch-tile:active { transform: scale(.94); border-radius: var(--md-shape-full); }
 
@@ -485,7 +486,7 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
   min-height: 40px;
   padding: 0 24px;
   box-shadow: none;
-  transition: border-radius var(--md-dur) var(--md-spring);
+  transition: border-radius var(--md-dur) var(--md-emph);
 }
 .gh-footer-done-btn:hover { background: color-mix(in srgb, var(--md-primary), white 10%); transform: none; }
 .gh-footer-done-btn:active { border-radius: var(--md-shape-s); }
@@ -514,7 +515,7 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
   color: var(--md-on-surface);
   font-size: 16px;
   font-weight: 400;
-  transition: background .15s, border-radius var(--md-dur) var(--md-spring);
+  transition: background .15s, border-radius var(--md-dur) var(--md-emph);
 }
 .net-option:first-child { border-top-left-radius: var(--md-shape-l); border-top-right-radius: var(--md-shape-l); }
 .net-option:last-child { border-bottom-left-radius: var(--md-shape-l); border-bottom-right-radius: var(--md-shape-l); }
@@ -572,7 +573,7 @@ body.in-room .m3-back { opacity: 1; pointer-events: auto; transform: scale(1); }
   background: var(--md-surface-high);
   color: var(--md-on-surface);
   font-size: 14px;
-  transition: background .15s, border-radius var(--md-dur) var(--md-spring);
+  transition: background .15s, border-radius var(--md-dur) var(--md-emph);
 }
 .room-picker-item .gh-inline-icon {
   width: 36px;

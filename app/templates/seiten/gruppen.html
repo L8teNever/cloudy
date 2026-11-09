@@ -7,7 +7,7 @@
   <h2 style="margin:0 0 .25rem">Übersichtsgruppen</h2>
   <p class="muted small" style="margin-top:0">
     Nur zum Ordnen: Die Geräteliste zeigt die Geräte nach diesen Gruppen sortiert. Am Netz ändern sie nichts
-    (keine Sperren, kein VPN). Geräte legst du beim Gerät selbst hinein, oder du sagst dem
+    (keine Sperren, kein VPN). Öffne eine Gruppe, um Geräte hinzuzufügen oder zu entfernen, oder sag dem
     <a href="/assistent" data-nav>Assistenten</a> z.&nbsp;B. „Sortier meine Geräte in Gruppen“.
   </p>
   <form method="post" action="/uebersichtsgruppen" style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:end;margin:1rem 0">
@@ -30,7 +30,7 @@
       <select name="color" aria-label="Farbe">
         {% for c in group_colors %}<option value="{{ c }}" {{ 'selected' if c == g.color }} style="background:{{ c }}">{{ c }}</option>{% endfor %}
       </select>
-      <span class="muted small">{{ g.members | length }} Gerät{{ 'e' if g.members | length != 1 }}</span>
+      <a href="/uebersichtsgruppen/{{ g.id }}" data-nav class="small" style="font-weight:600">{{ g.members | length }} Gerät{{ 'e' if g.members | length != 1 }} ansehen →</a>
       <span style="flex:1"></span>
       <button type="submit" name="aktion" value="hoch" class="secondary" title="Nach oben" {{ 'disabled' if loop.first }}>↑</button>
       <button type="submit" name="aktion" value="runter" class="secondary" title="Nach unten" {{ 'disabled' if loop.last }}>↓</button>

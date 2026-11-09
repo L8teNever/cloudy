@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from . import autoswitch, blocklist, charts, db, dnsprofile, fritz, localdomain, ordnung, policy, stats, system_info, warp
+from . import autoswitch, blocklist, charts, db, dnsprofile, festeip, fritz, localdomain, ordnung, policy, stats, system_info, warp
 from .settings import Settings
 
 BASE_DIR = Path(__file__).parent
@@ -195,6 +195,9 @@ def ctx_geraete(request: Request) -> dict:
         "settings": s,
         "devices": devices,
         "sections": ordnung.sections(devices),
+        "fixed_ips": festeip.mapping(),
+        "fixed_all": festeip.all_on(),
+        "view_groups": ordnung.groups(),
         "online": online_ips(request),
         "isolated": db.isolated_macs(),
         **_warp_ctx(request),
@@ -218,6 +221,8 @@ def ctx_geraet_kopf(request: Request, ip: str) -> dict:
         "device_key": key,
         "view_groups": ordnung.groups(),
         "view_group": ordnung.group_of().get(key),
+        "fixed_ip": festeip.mapping().get(mac, ""),
+        "dhcp_enabled": s.dhcp_enabled,
         "current": current,
         "online": online_ips(request),
         **_warp_ctx(request),
@@ -234,6 +239,27 @@ def ctx_gruppen(request: Request) -> dict:
         "group_member_counts": counts,
         **_warp_ctx(request),
     }
+
+
+def ctx_uebersichtsgruppe(request: Request, group_id: str) -> dict:
+    g = ordnung.find(group_id)
+    if not g:
+        raise HTTPException(status_code=404, detail="Gruppe nicht gefunden")
+    online = online_ips(request)
+    devices = db.devices()
+    for d in devices:
+        d["key"] = db.device_key(d)
+        d["is_online"] = bool((d.get("ip") and d["ip"] in online) or d.get("fritz_active"))
+    by_key = {d["key"]: d for d in devices}
+    name = lambda d: (d.get("hostname") or d.get("ip") or d.get("mac") or "").lower()
+    # Einträge ohne passendes Gerät (längst weg) bleiben sichtbar, damit man sie entfernen kann.
+    members = [by_key.get(k) or {"key": k, "hostname": k, "ip": "", "mac": "", "is_online": False} for k in g["members"]]
+    members.sort(key=lambda d: (not d["is_online"], name(d)))
+    where = ordnung.group_of()
+    others = [{**d, "other_group": where[d["key"]]["name"] if d["key"] in where else ""}
+              for d in devices if d["key"] and d["key"] not in g["members"]]
+    others.sort(key=lambda d: (bool(d["other_group"]), not d["is_online"], name(d)))
+    return {"view_group": g, "view_members": members, "view_others": others}
 
 
 def ctx_gruppe(request: Request, group_id: int) -> dict:
@@ -440,6 +466,7 @@ PARTS = {
     "leistung": ctx_leistung,
     "gruppen": ctx_gruppen,
     "gruppe": ctx_gruppe,
+    "uebersichtsgruppe": ctx_uebersichtsgruppe,
 }
 PARAMS = {"ip", "zeitraum", "fehler", "erfolg", "group_id"}
 
@@ -492,6 +519,13 @@ async def gruppe_detail(request: Request, group_id: int, fehler: str | None = No
         raise HTTPException(status_code=404, detail="Gruppe nicht gefunden")
     return await page(
         request, "seiten/gruppe.html", "Gruppe", "/gruppen", ["gruppe"], group_id=group_id, fehler=fehler
+    )
+
+
+@router.get("/uebersichtsgruppen/{group_id}", response_class=HTMLResponse, dependencies=[Depends(require_password)])
+async def uebersichtsgruppe(request: Request, group_id: str):
+    return await page(
+        request, "seiten/uebersichtsgruppe.html", "Übersichtsgruppe", "/gruppen", ["uebersichtsgruppe"], group_id=group_id
     )
 
 

@@ -723,9 +723,23 @@ def devices() -> list[dict]:
         d["lease_name"] = d.get("hostname")
         d["hostname"] = d["fritz_name"] or d["hostname"]
     out = plain + list(by_mac.values())
+    _drop_stale_fritz_ips(out, hosts)
     _apply_custom_names(out)
     out.sort(key=lambda x: x["last_seen"], reverse=True)
     return out
+
+
+def _drop_stale_fritz_ips(devices: list[dict], hosts: dict[str, dict]) -> None:
+    """Die FRITZ!Box merkt sich die letzte IP auch von längst abwesenden Geräten. Gehört sie inzwischen einem
+    anderen Gerät, bleibt der FRITZ!Box-Eintrag ohne IP: sonst wirkt er online und verlinkt auf das falsche Gerät."""
+    taken = {d["ip"] for d in devices if d.get("ip") and not d.get("fritz_only")}
+    only = [d for d in devices if d.get("fritz_only") and d.get("ip")]
+    only.sort(key=lambda d: (bool(hosts[d["mac"]]["active"]), hosts[d["mac"]]["last_seen"]), reverse=True)
+    for d in only:  # gleiche Reihenfolge wie device(): aktiv und zuletzt gesehen behält die IP
+        if d["ip"] in taken:
+            d["ip"] = ""
+        else:
+            taken.add(d["ip"])
 
 
 # --------------------------------------------------------------------------- Eigene Gerätenamen

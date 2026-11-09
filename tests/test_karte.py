@@ -1,3 +1,5 @@
+import json
+
 from app import db, karte, localdomain
 
 
@@ -120,9 +122,9 @@ def test_karte_home_assistant(client, monkeypatch):
     assert "cover.rollladen_simon" in page.text and "abc" not in page.text
     client.post("/karte/einstellungen/ha", data={"aktion": "zuordnen", "ha_shutter-simon-win": "cover.rollladen_simon",
                                                  "ha_led-simon": "light.tisch_led", "ha_plug-kueche": "switch.kueche",
-                                                 "ha_shutter-arbeit": "light.tisch_led"})  # falscher Bereich -> ignoriert
+                                                 "ha_shutter-arbeit": "switch.kueche", "ha_light-simon": "kaputt"})
     assert ha.mapping() == {"shutter-simon-win": "cover.rollladen_simon", "led-simon": "light.tisch_led",
-                            "plug-kueche": "switch.kueche"}
+                            "plug-kueche": "switch.kueche", "shutter-arbeit": "switch.kueche"}
     st = client.get("/karte/ha").json()["devices"]
     assert st["shutter-simon-win"]["percent"] == 30
     assert st["led-simon"]["on"] and st["led-simon"]["color"] == "#ff0000" and st["led-simon"]["brightness"] == 50
@@ -136,6 +138,18 @@ def test_karte_home_assistant(client, monkeypatch):
                          {"entity_id": "light.tisch_led", "brightness_pct": 40, "rgb_color": [0, 255, 0]})
     client.post("/karte/ha", json={"device": "plug-kueche", "action": "off"})
     assert calls[-1] == ("POST", "/api/services/switch/turn_off", {"entity_id": "switch.kueche"})
+    # Rollladen auf der Karte, in Home Assistant ein Schalter: an = offen; Stopp gibt es dort nicht
+    client.post("/karte/ha", json={"device": "shutter-arbeit", "action": "position", "value": 0})
+    assert calls[-1] == ("POST", "/api/services/switch/turn_on", {"entity_id": "switch.kueche"})
+    client.post("/karte/ha", json={"device": "shutter-arbeit", "action": "position", "value": 100})
+    assert calls[-1] == ("POST", "/api/services/switch/turn_off", {"entity_id": "switch.kueche"})
+    assert client.post("/karte/ha", json={"device": "shutter-arbeit", "action": "stop"}).json()["ok"]
+    assert calls[-1] == ("POST", "/api/services/switch/turn_off", {"entity_id": "switch.kueche"})
+    # Licht auf der Karte, in Home Assistant etwas anderes: allgemeiner Dienst
+    ha.save_mapping({**ha.mapping(), "light-simon": "fan.luefter"})
+    client.post("/karte/ha", json={"device": "light-simon", "action": "on"})
+    assert calls[-1] == ("POST", "/api/services/homeassistant/turn_on", {"entity_id": "fan.luefter"})
+    ha.save_mapping({k: v for k, v in ha.mapping().items() if k != "light-simon"})
     monkeypatch.setenv("DASHBOARD_PASSWORD", "geheim")  # Schalten geht für alle im Heimnetz auch mit Passwort
     assert client.post("/karte/ha", json={"device": "plug-kueche", "action": "on"}).json()["ok"]
     assert client.get("/karte/einstellungen").status_code == 401
@@ -164,3 +178,37 @@ def test_karte_mein_profil(client, monkeypatch):
     assert db.device_warp()["aa:bb:cc:dd:ee:77"] == "direct"
     assert client.post("/karte/mein", json={"slot": "gibtsnicht"}).status_code == 404
     assert client.post("/karte/mein", json={"slot": ""}).json()["mein"]["choice"] == ""
+
+
+def test_ha_settings_show_rooms_and_labels(client, monkeypatch):
+    from app import homeassistant as ha
+
+    entities = [
+        {"entity_id": "cover.tuer", "state": "open", "attributes": {"friendly_name": "Rolladen Tür"}},
+        {"entity_id": "cover.alt", "state": "open", "attributes": {"friendly_name": "Rolladen Alt"}},
+        {"entity_id": "sensor.temp", "state": "21", "attributes": {"friendly_name": "Temperatur"}},
+    ]
+    calls = []
+
+    def fake_call(method, path, body=None, timeout=6.0):
+        calls.append(path)
+        if path == "/api/states":
+            return entities
+        if path == "/api/template":
+            assert "area_name" in body["template"] and "label_name" in body["template"]
+            return [["cover.tuer", "Simons Zimmer", ["Beschattung", "OG"]], ["cover.alt", None, []], ["sensor.temp", "Küche", []]]
+        return {"message": "API running."}
+
+    monkeypatch.setattr(ha, "_call", fake_call)
+    db.set_setting(ha.URL_KEY, "http://ha:8123")
+    db.set_setting(ha.TOKEN_KEY, "t")
+    page = client.get("/karte/einstellungen").text
+    assert 'id="ha-daten"' in page and 'data-ha-kind="cover"' in page
+    daten = json.loads(page.split('id="ha-daten" type="application/json">')[1].split("</script>")[0])
+    assert daten["kinds"]["cover"] == ["cover"] and [e["id"] for e in daten["entities"]] == ["sensor.temp", "cover.tuer", "cover.alt"]
+    assert daten["entities"][1]["room"] == "Simons Zimmer" and daten["entities"][1]["labels"] == ["Beschattung", "OG"]
+    assert "Alle Geräte aus Home Assistant (3)" in page and "Temperatur" in page and 'data-raum="Küche"' in page
+
+    monkeypatch.setattr(ha, "_call", lambda m, p, b=None, timeout=6.0: entities if p == "/api/states" else (_ for _ in ()).throw(ha.HAError("x")))
+    assert ha.entity_meta() == {}
+    assert "Administrator-Konto" in client.get("/karte/einstellungen").text
