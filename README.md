@@ -205,7 +205,7 @@ Eigener Container mit Webseite unter **`http://<server>:8091`**. Beim ersten Auf
 (oder fest über `SPEICHER_PASSWORD` in der `.env`).
 
 ```
-HDDs (hdd1, hdd2, hdd3) ──mergerfs──► /mnt/cloudy/pool ──täglich, verschlüsselt──► Google Drive
+HDDs (hdd1, hdd2, hdd3) ──mergerfs──► /mnt/cloudy/pool ──täglich──► Google Drive (normale Dateien)
                                             │
                                             └─ alle 10 Min Neues ──► Puffer-SSD (bis zum nächsten Backup)
 ```
@@ -217,12 +217,12 @@ HDDs (hdd1, hdd2, hdd3) ──mergerfs──► /mnt/cloudy/pool ──täglich,
   läuft weiter. Standard: neue Dateien bleiben bei ihrem Ordner auf derselben Platte (`epmfs`).
 - **Puffer-SSD:** Was seit dem letzten Backup neu oder geändert ist, liegt zusätzlich auf der SSD. Nach einem
   **erfolgreichen** Backup wird dort gelöscht, was jetzt in Drive steckt. Schlägt das Backup fehl, bleibt alles liegen.
-- **Backup:** restic (verschlüsselt, mit Versionen) über rclone nach Google Drive. Täglich zur eingestellten Uhrzeit,
-  nach Fehlern stündlich neu. Fehlt eine Pool-Platte, wird **nicht** gesichert, damit keine unvollständigen Stände die
-  alten verdrängen. Alte Stände: 7 Tage, 4 Wochen, 12 Monate (einstellbar).
+- **Backup:** rclone nach Google Drive, **unverschlüsselt** – die Dateien liegen ganz normal in Drive und lassen sich
+  jederzeit im Browser öffnen und herunterladen, ohne Schlüssel. `<ordner>/aktuell` ist ein Abbild des Pools; geänderte
+  oder gelöschte Dateien wandern nach `<ordner>/alt/<Datum>` und bleiben dort 30 Tage (einstellbar). Täglich zur
+  eingestellten Uhrzeit, nach Fehlern stündlich neu. Fehlt eine Pool-Platte, wird **nicht** gesichert, damit deren Dateien
+  in Drive nicht als „gelöscht“ behandelt werden.
 - **Drive verbinden:** Auf dem PC `rclone authorize "drive"` ausführen und den ausgegebenen Token auf der Webseite einfügen.
-- **Schlüssel:** Unter „Schlüssel“ steht das Backup-Passwort. **Unbedingt abschreiben** – ohne ihn ist das Backup nach
-  einem Totalausfall wertlos.
 - **Plattentausch:** neue Platte einbauen → als Pool formatieren → „Puffer → Pool zurückspielen“ → unter
   „Wiederherstellen“ den Rest aus Drive holen (landet in `pool/wiederhergestellt/`).
 

@@ -95,7 +95,8 @@
   <h2>Google Drive</h2>
   {% if drive %}
     <p><span class="pill ok">verbunden</span> <span class="mono small muted">Ordner: {{ cfg.drive_ordner }}</span></p>
-    <p class="small muted">Das Backup ist mit restic verschlüsselt. Den Schlüssel unbedingt unter <a href="/schluessel" style="color:var(--brand)">Schlüssel</a> abschreiben.</p>
+    <p class="small muted">Die Dateien liegen unverschlüsselt in Drive unter <span class="mono">{{ cfg.drive_ordner }}/aktuell</span> – du kannst sie dort
+    jederzeit im Browser ansehen und herunterladen. Geänderte oder gelöschte Dateien landen {{ cfg.behalten_tage }} Tage lang in <span class="mono">{{ cfg.drive_ordner }}/alt/&lt;Datum&gt;</span>.</p>
     <details><summary>Verbindung neu einrichten</summary>{% include "drive_form.html" %}</details>
   {% else %}
     <ol class="small" style="color:var(--ink2);padding-left:18px">
@@ -123,10 +124,7 @@
       <label class="f">Puffer-Kopie alle … Minuten<input type="number" name="puffer_minuten" min="1" max="240" value="{{ cfg.puffer_minuten }}"></label>
       <label class="f">Drive-Ordner<input name="drive_ordner" value="{{ cfg.drive_ordner }}" required></label>
       <label class="f">Backup täglich um<input type="time" name="backup_zeit" value="{{ cfg.backup_zeit }}"></label>
-      <label class="f">Behalten: Tage / Wochen / Monate
-        <span class="row"><input type="number" name="behalten_taeglich" min="1" max="365" value="{{ cfg.behalten_taeglich }}" style="width:70px">
-        <input type="number" name="behalten_woechentlich" min="0" max="520" value="{{ cfg.behalten_woechentlich }}" style="width:70px">
-        <input type="number" name="behalten_monatlich" min="0" max="240" value="{{ cfg.behalten_monatlich }}" style="width:70px"></span></label>
+      <label class="f">Alte Versionen behalten (Tage)<input type="number" name="behalten_tage" min="1" max="3650" value="{{ cfg.behalten_tage }}"></label>
     </div>
     <div class="row" style="margin-top:14px">
       <label><input type="checkbox" name="backup_an" value="1" {{ "checked" if cfg.backup_an }} {{ "disabled" if not drive }}> Automatisches Backup nach Google Drive</label>

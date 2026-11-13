@@ -34,14 +34,11 @@ class Config:
     backup_an: bool = False
     backup_zeit: str = "00:00"
     drive_ordner: str = "cloudy-backup"
-    behalten_taeglich: int = 7
-    behalten_woechentlich: int = 4
-    behalten_monatlich: int = 12
+    behalten_tage: int = 30  # so lange bleiben alte Fassungen geänderter/gelöschter Dateien in Drive
     # Zustand
     letztes_backup_start: float = 0.0  # Startzeit des letzten ERFOLGREICHEN Backups
     letztes_backup_ende: float = 0.0
     letzter_fehler: str = ""
-    letzter_prune: float = 0.0
     letzter_versuch: float = 0.0  # letzter Backup-Start (auch fehlgeschlagen)
     puffer_seit: float = 0.0  # ab wann der Puffer kopiert (vor dem ersten Backup nicht den ganzen Pool kopieren)
     letzte_kopie: float = 0.0

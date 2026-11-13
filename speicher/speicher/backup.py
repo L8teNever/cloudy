@@ -1,9 +1,13 @@
-"""Sicherheitskopie auf die Puffer-SSD und verschlüsseltes Backup nach Google Drive (restic über rclone).
+"""Sicherheitskopie auf die Puffer-SSD und Backup nach Google Drive (rclone, NICHT verschlüsselt).
+
+In Drive liegen ganz normale Dateien – im Browser ansehen und herunterladen geht jederzeit, ohne Schlüssel:
+  <ordner>/aktuell/              genaues Abbild des Pools
+  <ordner>/alt/<JJJJ-MM-TT_HH-MM>/  was beim Backup zu dieser Zeit geändert oder gelöscht wurde (alte Fassung)
 
 Ablauf:
   - Alle paar Minuten: Dateien, die seit dem letzten erfolgreichen Backup neu oder geändert sind,
     vom Pool nach puffer/sicherung kopieren (gleiche Ordnerstruktur).
-  - Zur Backup-Zeit: Startzeit merken, Pool mit restic nach Drive sichern, alte Stände ausdünnen.
+  - Zur Backup-Zeit: Startzeit merken, Pool mit "rclone sync --backup-dir" nach Drive, alte Versionsordner löschen.
   - Nur wenn das geklappt hat: alles auf dem Puffer löschen, was VOR dem Backup-Start kopiert wurde.
 """
 import json
@@ -17,7 +21,7 @@ from . import config, jobs, pool
 from .config import Config, data_dir
 
 REMOTE = "cloudy-drive"
-HOST = "cloudy"
+ALT_FORMAT = "%Y-%m-%d_%H-%M"
 
 
 class BackupError(RuntimeError):
@@ -30,34 +34,25 @@ def rclone_conf() -> Path:
     return data_dir() / "rclone.conf"
 
 
-def password_file() -> Path:
-    return data_dir() / "restic-passwort"
-
-
 def sicherung_dir() -> Path:
     return pool.paths()["puffer"] / "sicherung"
 
 
-def repository(cfg: Config) -> str:
+def drive_base(cfg: Config) -> str:
     ordner = (cfg.drive_ordner or "cloudy-backup").strip("/ ")
-    return f"rclone:{REMOTE}:{ordner}"
+    return f"{REMOTE}:{ordner}"
 
 
 def env(cfg: Config) -> dict:
-    cache = data_dir() / "cache"
-    cache.mkdir(exist_ok=True)
-    return {
-        **os.environ,
-        "RESTIC_REPOSITORY": repository(cfg),
-        "RESTIC_PASSWORD_FILE": str(password_file()),
-        "RESTIC_CACHE_DIR": str(cache / "restic"),
-        "RCLONE_CONFIG": str(rclone_conf()),
-        "RESTIC_PROGRESS_FPS": "0.0167",  # ca. eine Fortschrittszeile pro Minute
-    }
+    return {**os.environ, "RCLONE_CONFIG": str(rclone_conf())}
 
 
 def drive_eingerichtet() -> bool:
-    return rclone_conf().exists() and password_file().exists()
+    return rclone_conf().exists()
+
+
+RCLONE_OPTS = ["--transfers", "4", "--checkers", "8", "--skip-links", "--stats", "1m", "--stats-one-line",
+               "--stats-log-level", "NOTICE", "--log-level", "NOTICE", "--retries", "5", "--low-level-retries", "20"]
 
 
 def write_rclone(token_json: str, client_id: str = "", client_secret: str = "") -> None:
@@ -80,7 +75,6 @@ def write_rclone(token_json: str, client_id: str = "", client_secret: str = "") 
             lines.append(f"{key} = {value}")
     lines.append(f"token = {json.dumps(token, separators=(',', ':'))}")
     config.write_private(rclone_conf(), "\n".join(lines) + "\n")
-    config.secret("restic-passwort", create=True)
 
 
 # ---------- Befehle ----------
@@ -114,17 +108,10 @@ def drive_testen_und_init(job) -> None:
     res = _run(job, ["rclone", "lsd", f"{REMOTE}:", "--max-depth", "1"], cfg, timeout=120, quiet=True)
     if res.returncode != 0:
         raise BackupError(f"Google Drive antwortet nicht: {_last_line(res)}")
-    jobs.log(job, "Google Drive ist erreichbar")
-    res = _run(job, ["restic", "cat", "config"], cfg, timeout=300, quiet=True)
-    if res.returncode == 0:
-        jobs.log(job, f"Backup-Ablage {repository(cfg)} gibt es schon – passt das Passwort, wird sie weiterbenutzt")
-        return
-    if res.returncode not in (10,) and "does not exist" not in res.stdout and "unable to open config" not in res.stdout:
-        raise BackupError(f"Backup-Ablage nicht lesbar: {_last_line(res)}")
-    res = _run(job, ["restic", "init"], cfg, timeout=600)
+    res = _run(job, ["rclone", "mkdir", f"{drive_base(cfg)}/aktuell"], cfg, timeout=120, quiet=True)
     if res.returncode != 0:
-        raise BackupError(f"Backup-Ablage anlegen fehlgeschlagen: {_last_line(res)}")
-    jobs.log(job, "Neue, verschlüsselte Backup-Ablage in Google Drive angelegt")
+        raise BackupError(f"Ordner in Drive anlegen fehlgeschlagen: {_last_line(res)}")
+    jobs.log(job, f"Google Drive ist erreichbar, Backup-Ordner: {cfg.drive_ordner}")
 
 
 # ---------- Puffer (Sicherheitskopie auf der SSD) ----------
@@ -250,6 +237,20 @@ def backup_due(now: float, zeit: str, last_success_start: float, last_attempt: f
     return True
 
 
+def alte_ordner_zum_loeschen(namen: list[str], now: float, tage: int) -> list[str]:
+    """Versionsordner unter alt/, die älter als 'tage' sind. Unbekannte Namen werden nie angefasst."""
+    weg = []
+    for name in namen:
+        name = name.strip("/")
+        try:
+            ts = datetime.strptime(name, ALT_FORMAT).timestamp()
+        except ValueError:
+            continue
+        if now - ts > tage * 86400:
+            weg.append(name)
+    return sorted(weg)
+
+
 def backup(job) -> None:
     cfg = Config.load()
     if not drive_eingerichtet():
@@ -257,7 +258,7 @@ def backup(job) -> None:
     st = pool.status(cfg)
     missing = [h.name for h in st["hdds"] if not h.mounted]
     if missing:
-        # Sonst würde ein Backup ohne die Dateien der fehlenden Platte entstehen und alte Stände verdrängen.
+        # Sonst würde das Abbild in Drive die Dateien der fehlenden Platte als "gelöscht" behandeln.
         raise BackupError(f"Backup ausgelassen: {', '.join(missing)} fehlt – erst Platte tauschen und zurückspielen")
     if not st["pool"].mounted:
         raise BackupError("Pool ist nicht eingehängt")
@@ -271,61 +272,78 @@ def backup(job) -> None:
             jobs.log(job, f"Hinweis: {exc}")
         start = time.time()
 
+    base = drive_base(cfg)
+    alt = f"{base}/alt/{time.strftime(ALT_FORMAT, time.localtime(start))}"
     res = _run(job, [
-        "restic", "backup", str(pool.paths()["pool"]),
-        "--host", HOST, "--tag", "pool", "--exclude-caches", "--exclude", ".mergerfs",
+        "rclone", "sync", f"{pool.paths()['pool']}/", f"{base}/aktuell",
+        "--backup-dir", alt,  # Geänderte/gelöschte Dateien wandern hierhin statt verloren zu gehen
+        "--create-empty-src-dirs",
+        "--exclude", "/.mergerfs", "--exclude", "/wiederhergestellt/**",
+        *RCLONE_OPTS,
     ], cfg)
-    if res.returncode == 3:
-        jobs.log(job, "Einige Dateien waren nicht lesbar – der Rest ist gesichert")
-    elif res.returncode != 0:
+    if res.returncode != 0:
         config.update(letzter_fehler=_last_line(res))
         raise BackupError(f"Backup fehlgeschlagen: {_last_line(res)}")
 
-    keep = [
-        "--keep-daily", str(max(1, cfg.behalten_taeglich)),
-        "--keep-weekly", str(max(0, cfg.behalten_woechentlich)),
-        "--keep-monthly", str(max(0, cfg.behalten_monatlich)),
-    ]
-    prune = time.time() - cfg.letzter_prune > 7 * 86400
-    res = _run(job, ["restic", "forget", "--host", HOST, "--tag", "pool", *keep, *(["--prune"] if prune else [])], cfg, quiet=True)
-    if res.returncode != 0:
-        jobs.log(job, f"Alte Stände ausdünnen hat nicht geklappt: {_last_line(res)}")
-    elif prune:
-        config.update(letzter_prune=time.time())
-        jobs.log(job, "Alte Stände ausgedünnt und Platz in Drive freigegeben")
+    # Alte Versionsordner aufräumen
+    res = _run(job, ["rclone", "lsf", "--dirs-only", f"{base}/alt"], cfg, timeout=300, quiet=True)
+    if res.returncode == 0:
+        for name in alte_ordner_zum_loeschen(res.stdout.splitlines(), time.time(), max(1, cfg.behalten_tage)):
+            r = _run(job, ["rclone", "purge", f"{base}/alt/{name}"], cfg, timeout=1800, quiet=True)
+            jobs.log(job, f"Alte Versionen vom {name} gelöscht" if r.returncode == 0 else f"Löschen von alt/{name} fehlgeschlagen")
 
     config.update(letztes_backup_start=start, letztes_backup_ende=time.time(), letzter_fehler="")
     if cfg.puffer:
         puffer_aufraeumen(job, start)
 
 
-def snapshots() -> list[dict]:
+def staende() -> list[dict]:
+    """Was man zurückholen kann: der aktuelle Stand und die Versionsordner (neueste zuerst)."""
     if not drive_eingerichtet():
         return []
     cfg = Config.load()
-    res = subprocess.run(["restic", "snapshots", "--json", "--host", HOST], capture_output=True, text=True, env=env(cfg), timeout=300)
-    if res.returncode != 0:
-        raise BackupError((res.stderr.strip().splitlines() or ["restic snapshots fehlgeschlagen"])[-1])
-    items = json.loads(res.stdout or "[]")
-    items.sort(key=lambda s: s.get("time", ""), reverse=True)
+    items = [{"id": "aktuell", "titel": "Aktueller Stand", "info": "alles, wie beim letzten Backup"}]
+    res = subprocess.run(["rclone", "lsf", "--dirs-only", f"{drive_base(cfg)}/alt"], capture_output=True, text=True, env=env(cfg), timeout=300)
+    if res.returncode == 0:
+        for name in sorted((n.strip("/") for n in res.stdout.splitlines()), reverse=True):
+            try:
+                ts = datetime.strptime(name, ALT_FORMAT)
+            except ValueError:
+                continue
+            items.append({"id": f"alt/{name}", "titel": ts.strftime("Alte Versionen vom %d.%m.%Y %H:%M"),
+                          "info": "Dateien, die bei diesem Backup geändert oder gelöscht wurden (alte Fassung)"})
+    elif "directory not found" not in (res.stderr + res.stdout).lower():
+        raise BackupError((res.stderr.strip().splitlines() or ["Drive nicht lesbar"])[-1])
     return items
 
 
-def restore(job, snapshot_id: str, include: str = "") -> None:
-    if not snapshot_id.replace("-", "").isalnum() and snapshot_id != "latest":
-        raise BackupError("Ungültiger Stand")
+def restore(job, stand: str, include: str = "") -> None:
+    if stand != "aktuell":
+        try:
+            datetime.strptime(stand.removeprefix("alt/"), ALT_FORMAT)
+            assert stand.startswith("alt/")
+        except (ValueError, AssertionError):
+            raise BackupError("Ungültiger Stand") from None
     cfg = Config.load()
     if not pool.status(cfg)["pool"].mounted:
         raise BackupError("Pool ist nicht eingehängt")
-    target = pool.paths()["pool"] / "wiederhergestellt" / f"{time.strftime('%Y-%m-%d_%H-%M')}_{snapshot_id[:8]}"
-    target.mkdir(parents=True, exist_ok=True)
-    cmd = ["restic", "restore", f"{snapshot_id}:{pool.paths()['pool']}", "--target", str(target)]
     include = include.strip().strip("/")
+    if include and (".." in include.split("/") or "\n" in include):
+        raise BackupError("Ungültiger Pfad")
+    name = stand.replace("/", "_")
+    target = pool.paths()["pool"] / "wiederhergestellt" / f"{time.strftime('%Y-%m-%d_%H-%M')}_{name}"
+    src = f"{drive_base(cfg)}/{stand}"
+    cmd = "copy"
     if include:
-        if ".." in include.split("/"):
-            raise BackupError("Ungültiger Pfad")
-        cmd += ["--include", "/" + include]
-    res = _run(job, cmd, cfg)
+        src += f"/{include}"
+        target = target / include
+        res = _run(job, ["rclone", "lsjson", "--stat", src], cfg, timeout=120, quiet=True)
+        if res.returncode != 0:
+            raise BackupError(f"„{include}“ gibt es in diesem Stand nicht")
+        if not json.loads(res.stdout or "{}").get("IsDir"):
+            cmd = "copyto"  # einzelne Datei
+    (target.parent if cmd == "copyto" else target).mkdir(parents=True, exist_ok=True)
+    res = _run(job, ["rclone", cmd, src, str(target), *RCLONE_OPTS], cfg)
     if res.returncode != 0:
         raise BackupError(f"Wiederherstellen fehlgeschlagen: {_last_line(res)}")
     jobs.log(job, f"Wiederhergestellt nach {target}")

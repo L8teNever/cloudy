@@ -125,15 +125,27 @@ def test_backup_due():
     assert not backup.backup_due(ts("2026-11-13 23:00"), "00:00", ts("2026-11-13 00:00"), 0)
 
 
-def test_write_rclone_nimmt_nur_json_und_erzeugt_schluessel():
+def test_write_rclone_nimmt_nur_json():
     text = 'Paste the following:\n--->\n{"access_token":"a","token_type":"Bearer","refresh_token":"r","expiry":"x"}\n<---End paste'
     backup.write_rclone(text, client_id="id.apps")
     conf = backup.rclone_conf().read_text()
     assert "[cloudy-drive]" in conf and "client_id = id.apps" in conf and '"refresh_token":"r"' in conf
     assert oct(backup.rclone_conf().stat().st_mode & 0o777) == "0o600"
-    assert len(config.secret("restic-passwort")) >= 32
+    assert not (config.data_dir() / "restic-passwort").exists()
     with pytest.raises(backup.BackupError):
         backup.write_rclone('{"access_token":"a"}')
+
+
+def test_alte_ordner_zum_loeschen():
+    now = ts("2026-11-14 00:05")
+    namen = ["2026-11-13_00-00/", "2026-10-01_00-00/", "2026-10-15_23-00/", "meine-sachen/"]
+    assert backup.alte_ordner_zum_loeschen(namen, now, 30) == ["2026-10-01_00-00"]
+
+
+def test_restore_lehnt_fremde_staende_ab():
+    for stand in ("../etc", "alt/../../x", "alt/kaputt", "aktuell2"):
+        with pytest.raises(backup.BackupError):
+            backup.restore(None, stand)
 
 
 def test_config_update_roundtrip():

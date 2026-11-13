@@ -1,24 +1,20 @@
-# cloudy Speicher: Platten-Pool (mergerfs), Puffer-SSD und verschlüsseltes Backup nach Google Drive (restic + rclone).
+# cloudy Speicher: Platten-Pool (mergerfs), Puffer-SSD und Backup nach Google Drive (rclone, normale Dateien, unverschlüsselt).
 FROM python:3.12-slim-bookworm
 
 ARG TARGETARCH
-ARG RESTIC_VERSION=0.17.3
 ARG RCLONE_VERSION=1.68.2
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        mergerfs fuse3 util-linux e2fsprogs xfsprogs gdisk parted rsync smartmontools ca-certificates curl bzip2 unzip \
+        mergerfs fuse3 util-linux e2fsprogs xfsprogs gdisk parted rsync smartmontools ca-certificates curl unzip \
     && arch="${TARGETARCH:-$(dpkg --print-architecture)}" \
-    && curl -fsSL "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_${arch}.bz2" \
-        | bunzip2 > /usr/local/bin/restic \
-    && chmod +x /usr/local/bin/restic \
     && curl -fsSL -o /tmp/rclone.zip "https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-${arch}.zip" \
     && unzip -j /tmp/rclone.zip "*/rclone" -d /usr/local/bin \
     && chmod +x /usr/local/bin/rclone \
     && rm -f /tmp/rclone.zip \
-    && apt-get purge -y curl bzip2 unzip && apt-get autoremove -y \
+    && apt-get purge -y curl unzip && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/* \
-    && restic version && rclone version | head -n1
+    && rclone version | head -n1
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

@@ -2,25 +2,25 @@
 {% block title %}Wiederherstellen{% endblock %}
 {% block content %}
 <h1>Wiederherstellen</h1>
-<p class="sub">Gesicherte Stände in Google Drive. Wiederhergestellt wird immer in einen neuen Ordner <span class="mono">pool/wiederhergestellt/</span>, es wird nichts überschrieben.</p>
+<p class="sub">Aus Google Drive zurück in den Pool. Es landet immer in einem neuen Ordner <span class="mono">pool/wiederhergestellt/</span>, es wird nichts überschrieben.
+Einzelne Dateien kannst du auch einfach in Drive im Browser herunterladen.</p>
 <div class="card">
 {% if staende %}
 <table>
-<tr><th>Stand</th><th>Größe</th><th>Wiederherstellen</th></tr>
+<tr><th>Stand</th><th>Wiederherstellen</th></tr>
 {% for s in staende %}
 <tr>
-  <td><b>{{ s.time[:16].replace("T", " ") }}</b><br><span class="mono muted">{{ s.short_id }}</span></td>
-  <td class="small">{% if s.summary %}{{ s.summary.total_bytes_processed|bytes }}<br><span class="muted">{{ s.summary.total_files_processed }} Dateien</span>{% else %}–{% endif %}</td>
+  <td><b>{{ s.titel }}</b><br><span class="small muted">{{ s.info }}</span></td>
   <td>
     <form method="post" action="/wiederherstellen" class="row">
-      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ s.short_id }}">
-      <input name="pfad" placeholder="nur Ordner/Datei (leer = alles)" style="min-width:220px">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ s.id }}">
+      <input name="pfad" placeholder="nur Ordner/Datei, z. B. Fotos/2026 (leer = alles)" style="min-width:260px">
       <button class="ghost">Wiederherstellen</button>
     </form>
   </td>
 </tr>
 {% endfor %}
 </table>
-{% elif not fehler %}<p class="muted">Noch keine Backups vorhanden.</p>{% endif %}
+{% elif not fehler %}<p class="muted">Google Drive ist noch nicht verbunden.</p>{% endif %}
 </div>
 {% endblock %}

@@ -319,9 +319,7 @@ async def einstellungen(request: Request):
         backup_an=f.get("backup_an") == "1",
         backup_zeit=zeit,
         drive_ordner=ordner,
-        behalten_taeglich=_int(f.get("behalten_taeglich"), 1, 365, cfg.behalten_taeglich),
-        behalten_woechentlich=_int(f.get("behalten_woechentlich"), 0, 520, cfg.behalten_woechentlich),
-        behalten_monatlich=_int(f.get("behalten_monatlich"), 0, 240, cfg.behalten_monatlich),
+        behalten_tage=_int(f.get("behalten_tage"), 1, 3650, cfg.behalten_tage),
     )
     remount = changes["create_policy"] != cfg.create_policy or changes["minfree_gb"] != cfg.minfree_gb
     cfg = config.update(**changes)
@@ -341,7 +339,7 @@ async def drive(request: Request):
         backup.write_rclone(f.get("token", ""), f.get("client_id", ""), f.get("client_secret", ""))
     except (backup.BackupError, PermissionError) as exc:
         return _back(fehler=str(exc))
-    if not jobs.run("Google Drive prüfen und Ablage anlegen", backup.drive_testen_und_init):
+    if not jobs.run("Google Drive prüfen", backup.drive_testen_und_init):
         return _back(fehler="Gespeichert, aber gerade läuft ein Auftrag – danach „Drive prüfen“ drücken")
     return _back("Drive gespeichert – Prüfung läuft unten im Protokoll")
 
@@ -350,7 +348,7 @@ AKTIONEN = {
     "backup": ("Backup nach Google Drive", backup.backup),
     "kopie": ("Kopie auf Puffer-SSD", backup.puffer_kopie),
     "zurueckspielen": ("Puffer in den Pool zurückspielen", backup.puffer_zurueckspielen),
-    "drive": ("Google Drive prüfen und Ablage anlegen", backup.drive_testen_und_init),
+    "drive": ("Google Drive prüfen", backup.drive_testen_und_init),
     "einhaengen": ("Platten neu einhängen", lambda job: pool.mount_all()),
 }
 
@@ -369,13 +367,13 @@ async def aktion(request: Request, name: str):
     return _back(f"{title} gestartet")
 
 
-# ---------- Wiederherstellen & Schlüssel ----------
+# ---------- Wiederherstellen ----------
 
 @app.get("/staende", response_class=HTMLResponse)
 async def staende(request: Request):
     fehler = ""
     try:
-        items = await run_in_threadpool(backup.snapshots)
+        items = await run_in_threadpool(backup.staende)
     except Exception as exc:  # noqa: BLE001
         items, fehler = [], str(exc)
     return _page(request, "staende.html", staende=items, fehler=fehler)
@@ -391,21 +389,3 @@ async def wiederherstellen(request: Request):
     if not jobs.run("Wiederherstellen aus Google Drive", backup.restore, sid, f.get("pfad", "")):
         return _back(fehler="Es läuft schon ein Auftrag")
     return _back("Wiederherstellung läuft – Ziel: pool/wiederhergestellt/")
-
-
-@app.get("/schluessel", response_class=HTMLResponse)
-async def schluessel_form(request: Request):
-    return _page(request, "schluessel.html", schluessel="")
-
-
-@app.post("/schluessel", response_class=HTMLResponse)
-async def schluessel(request: Request):
-    try:
-        f = await _form(request)
-    except PermissionError as exc:
-        return _page(request, "schluessel.html", schluessel="", fehler=str(exc))
-    ip = request.client.host if request.client else "?"
-    if auth.throttled(ip) or not await run_in_threadpool(auth.check_password, f.get("passwort", "")):
-        auth.failed(ip)
-        return _page(request, "schluessel.html", schluessel="", fehler="Falsches Passwort")
-    return _page(request, "schluessel.html", schluessel=config.secret("restic-passwort"), repo=backup.repository(Config.load()))

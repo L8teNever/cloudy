@@ -41,7 +41,7 @@ details summary{cursor:pointer;color:var(--brand)}
 </head>
 <body>
 <header><div class="bar"><a class="logo" href="/">cloudy <span>Speicher</span></a>
-{% if csrf %}<nav>{% for href, name in [("/", "Übersicht"), ("/staende", "Wiederherstellen"), ("/schluessel", "Schlüssel")] %}<a href="{{ href }}" class="{{ 'active' if request.url.path == href }}">{{ name }}</a>{% endfor %}</nav>
+{% if csrf %}<nav>{% for href, name in [("/", "Übersicht"), ("/staende", "Wiederherstellen")] %}<a href="{{ href }}" class="{{ 'active' if request.url.path == href }}">{{ name }}</a>{% endfor %}</nav>
 <form method="post" action="/logout" class="inline"><button class="ghost">Abmelden</button></form>{% endif %}
 </div></header>
 <main>
