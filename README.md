@@ -222,6 +222,15 @@ HDDs (hdd1, hdd2, hdd3) ──mergerfs──► /mnt/cloudy/pool ──täglich�
   oder gelöschte Dateien wandern nach `<ordner>/alt/<Datum>` und bleiben dort 30 Tage (einstellbar). Täglich zur
   eingestellten Uhrzeit, nach Fehlern stündlich neu. Fehlt eine Pool-Platte, wird **nicht** gesichert, damit deren Dateien
   in Drive nicht als „gelöscht“ behandelt werden.
+- **Dateien im Browser:** Unter **`http://<server>:8092`** (`DATEIEN_PORT`) lassen sich die Freigaben öffnen, herunterladen
+  (Ordner als ZIP), hochladen (auch ganze Ordner per Ziehen & Ablegen), umbenennen und löschen. Es gelten dieselben Regeln
+  wie beim Netzlaufwerk: offene Freigaben ohne Anmeldung, Passwort-Freigaben mit einem Benutzer aus „Freigaben“,
+  unsichtbare tauchen gar nicht auf. Das Gerät wird an seiner IP erkannt (Geräteliste aus cloudy).
+- **Eigene Adressen im Heimnetz:** In cloudy unter Einstellungen → Eigene Domain bei **Speicher** und **Dateien im
+  Browser** z. B. `speicher.kulbarts.com` und `dateien.kulbarts.com` eintragen. cloudy beantwortet die Namen nur im
+  Heimnetz, holt das Let's-Encrypt-Zertifikat und reicht alles an den Speicher weiter (Ports aus `SPEICHER_PORT` /
+  `DATEIEN_PORT` in der `.env`, oder `SPEICHER_URL` / `DATEIEN_URL`). Die Geräte-IP geht dabei mit, die Regeln pro Gerät
+  gelten also weiter. Von außen ist nichts erreichbar.
 - **Drive verbinden:** Auf dem PC `rclone authorize "drive"` ausführen und den ausgegebenen Token auf der Webseite einfügen.
 - **Plattentausch:** neue Platte einbauen → als Pool formatieren → „Puffer → Pool zurückspielen“ → unter
   „Wiederherstellen“ den Rest aus Drive holen (landet in `pool/wiederhergestellt/`).

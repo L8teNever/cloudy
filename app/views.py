@@ -593,6 +593,8 @@ def localdomain_ctx(request: Request) -> dict:
         "blocks": blocks,
         "switches": switches,
         "karten": localdomain.karte_domains(),
+        "speicher": localdomain.speicher_domains(),
+        "dateien": localdomain.dateien_domains(),
         "domain": (mein or [""])[0],
         "dashboard": (dash or [""])[0],
         "hub": (hubs or [""])[0],

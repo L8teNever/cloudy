@@ -58,6 +58,7 @@ templates.env.filters["bytes"] = fmt_bytes
 templates.env.filters["zeit"] = fmt_time
 templates.env.filters["wann"] = fmt_rel
 templates.env.globals["pct"] = pct
+templates.env.globals["dateien_port"] = int(os.environ.get("DATEIEN_PORT", "8092") or 0)
 templates.env.globals["puffer_paths"] = lambda rollen: [p for p, r in rollen.items() if r == "puffer"]
 
 
@@ -643,11 +644,22 @@ async def freigabe_loeschen(request: Request, name: str):
 async def benutzer_neu(request: Request):
     try:
         f = await _form(request)
-        await run_in_threadpool(freigaben.add_user, f.get("name", ""), f.get("passwort", ""))
+        name = await run_in_threadpool(freigaben.add_user, f.get("name", ""), f.get("passwort", ""), f.get("windows", ""))
         await _apply()
     except (freigaben.FreigabeError, PermissionError) as exc:
         return _back(fehler=str(exc), to="/freigaben")
-    return _back("Benutzer angelegt", to="/freigaben")
+    return _back(f"Benutzer {name} angelegt", to="/freigaben")
+
+
+@app.post("/benutzer/{name}/windows")
+async def benutzer_windows(request: Request, name: str):
+    try:
+        f = await _form(request)
+        await run_in_threadpool(freigaben.set_windows_names, name, f.get("windows", ""))
+        await _apply()
+    except (freigaben.FreigabeError, PermissionError) as exc:
+        return _back(fehler=str(exc), to="/freigaben")
+    return _back(f"Windows-Anmeldung von {name} gespeichert", to="/freigaben")
 
 
 @app.post("/benutzer/{name}/passwort")

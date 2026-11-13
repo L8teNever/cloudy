@@ -9,7 +9,7 @@ ARG RCLONE_VERSION=1.68.2
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         mergerfs fuse3 util-linux e2fsprogs xfsprogs gdisk parted rsync smartmontools ca-certificates curl unzip \
-        samba wsdd minidlna passwd \
+        samba samba-vfs-modules wsdd minidlna passwd \
     && arch="${TARGETARCH:-$(dpkg --print-architecture)}" \
     && curl -fsSL -o /tmp/rclone.zip "https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-${arch}.zip" \
     && unzip -j /tmp/rclone.zip "*/rclone" -d /usr/local/bin \
@@ -24,7 +24,8 @@ ENV PYTHONUNBUFFERED=1 \
     DATA_DIR=/data \
     MOUNT_ROOT=/mnt/cloudy \
     HOST_PROC=/host/proc \
-    SPEICHER_PORT=8091
+    SPEICHER_PORT=8091 \
+    DATEIEN_PORT=8092
 
 WORKDIR /srv
 COPY requirements.txt .
@@ -39,4 +40,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s \
     CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ[\"SPEICHER_PORT\"]}/healthz', timeout=2)"
 
 # Läuft als root: Platten einhängen, formatieren und FUSE (mergerfs) gehen nur so.
-CMD ["sh", "-c", "exec uvicorn speicher.main:app --host 0.0.0.0 --port ${SPEICHER_PORT} --proxy-headers --no-server-header"]
+# Zwei Webseiten: Verwaltung (SPEICHER_PORT) und Dateien im Browser (DATEIEN_PORT).
+CMD ["python", "-m", "speicher.run"]

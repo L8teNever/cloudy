@@ -17,7 +17,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import adblock, assistent, autoswitch, blocklist, certs, db, dnsprofile, fernzugriff, festeip, fritz, homeassistant, karte, localdomain, ordnung, policy, redirects, slots, stats, tunnel, views, warp, zertwechsel
+from . import adblock, assistent, speicherproxy, autoswitch, blocklist, certs, db, dnsprofile, fernzugriff, festeip, fritz, homeassistant, karte, localdomain, ordnung, policy, redirects, slots, stats, tunnel, views, warp, zertwechsel
 from .certs import ca_cert_path, ensure_certs, start_https_server
 from .dnsmasq import Collector, DnsmasqRunner, read_leases
 from .presence import PresenceMonitor
@@ -214,7 +214,7 @@ async def static_cache_middleware(request: Request, call_next):
 async def redirect_middleware(request: Request, call_next):
     raw_host = request.headers.get("host", "").split(":")[0].strip().lower()
     settings = getattr(request.app.state, "settings", None)
-    mein_hosts, dash_hosts, hub_hosts, block_hosts, switch_hosts, karte_hosts = await run_in_threadpool(
+    mein_hosts, dash_hosts, hub_hosts, block_hosts, switch_hosts, karte_hosts, speicher_hosts, dateien_hosts = await run_in_threadpool(
         lambda: (
             localdomain.mein_domains(),
             localdomain.dashboard_domains(),
@@ -222,8 +222,19 @@ async def redirect_middleware(request: Request, call_next):
             localdomain.block_domains(),
             localdomain.switch_domains(),
             localdomain.karte_domains(),
+            localdomain.speicher_domains(),
+            localdomain.dateien_domains(),
         )
     )
+    if raw_host in speicher_hosts or raw_host in dateien_hosts:
+        # Speicher-Container unter eigener Domain: cloudy reicht alles durch (eigene Anmeldung im Speicher).
+        if request.url.scheme == "http" and settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
+            port = "" if settings.https_port == 443 else f":{settings.https_port}"
+            return RedirectResponse(
+                f"https://{raw_host}{port}{request.url.path}" + (f"?{request.url.query}" if request.url.query else ""),
+                status_code=307,  # 307: Hochladen (PUT/POST) bleibt beim Umleiten erhalten
+            )
+        return await speicherproxy.forward(request, "dateien" if raw_host in dateien_hosts else "speicher")
     if raw_host in dash_hosts and request.url.scheme == "http":
         # Dashboard unter der eigenen Domain: Passwort und Daten nur verschlüsselt, sobald das Zertifikat da ist.
         if settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
@@ -331,6 +342,8 @@ async def redirect_middleware(request: Request, call_next):
     own_hosts.update(block_hosts)
     own_hosts.update(switch_hosts)
     own_hosts.update(karte_hosts)
+    own_hosts.update(speicher_hosts)
+    own_hosts.update(dateien_hosts)
     if settings:
         own_hosts.add(settings.pi_ip.lower())
         if settings.local_name:
@@ -1334,6 +1347,8 @@ async def lokale_domain_set(
     gesperrt: list[str] = Form(default=[]),
     wechsel: list[str] = Form(default=[]),
     karte: list[str] = Form(default=[]),
+    speicher: list[str] = Form(default=[]),
+    dateien: list[str] = Form(default=[]),
     ha_url: str = Form(""),
     cf_token: str = Form(""),
     email: str = Form(""),
@@ -1346,6 +1361,8 @@ async def lokale_domain_set(
         blocks = [localdomain.normalize_domain(n) for n in gesperrt if n.strip()]
         switches = [localdomain.normalize_domain(n) for n in wechsel if n.strip()]
         karten = [localdomain.normalize_domain(n) for n in karte if n.strip()]
+        speicher_d = [localdomain.normalize_domain(n) for n in speicher if n.strip()]
+        dateien_d = [localdomain.normalize_domain(n) for n in dateien if n.strip()]
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     mein = list(dict.fromkeys(mein))
@@ -1354,12 +1371,14 @@ async def lokale_domain_set(
     blocks = list(dict.fromkeys(blocks))
     switches = list(dict.fromkeys(switches))
     karten = list(dict.fromkeys(karten))
-    groups = [set(mein), set(dash), set(hubs), set(blocks), set(switches), set(karten)]
+    speicher_d = list(dict.fromkeys(speicher_d))
+    dateien_d = list(dict.fromkeys(dateien_d))
+    groups = [set(mein), set(dash), set(hubs), set(blocks), set(switches), set(karten), set(speicher_d), set(dateien_d)]
     overlap = {n for i, a in enumerate(groups) for b in groups[i + 1:] for n in a & b}
     if overlap:
         raise HTTPException(
             status_code=400,
-            detail=f"Dashboard, Hub, Sperrseite, Wechselseite, 3D-Karte und „Mein Gerät“ brauchen verschiedene Namen ({', '.join(sorted(overlap))})",
+            detail=f"Dashboard, Hub, Sperrseite, Wechselseite, 3D-Karte, Speicher, Dateien und „Mein Gerät“ brauchen verschiedene Namen ({', '.join(sorted(overlap))})",
         )
     cf_token = cf_token.strip()
     if cf_token and (len(cf_token) > 512 or any(ch.isspace() for ch in cf_token)):
@@ -1376,6 +1395,8 @@ async def lokale_domain_set(
     await run_in_threadpool(localdomain.set_block_domains, blocks)
     await run_in_threadpool(localdomain.set_switch_domains, switches)
     await run_in_threadpool(localdomain.set_karte_domains, karten)
+    await run_in_threadpool(localdomain.set_speicher_domains, speicher_d)
+    await run_in_threadpool(localdomain.set_dateien_domains, dateien_d)
     await run_in_threadpool(fernzugriff.sync_local)  # von außen erreichbare Namen bleiben bei ihrer Seite
     await run_in_threadpool(db.set_setting, localdomain.HA_URL_KEY, ha)
     await run_in_threadpool(db.set_setting, localdomain.EMAIL_KEY, email)

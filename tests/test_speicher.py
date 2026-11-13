@@ -348,3 +348,39 @@ def test_web_eigenes_geraet_nur_ipv4(web, samba_dir, monkeypatch):
     assert "fehler=" in r.headers["location"]
     web.post("/geraete/neu", data={"csrf": csrf, "ip": "192.168.178.50", "name": "Drucker"})
     assert fg.Einstellungen.load().eigene_geraete == {"ip:192.168.178.50": "Drucker"}
+
+
+def test_windows_namen_pruefen_und_vorschlag():
+    assert fg.check_windows_name("DESKTOP-ABC\\Simon") == "simon"
+    assert fg.check_windows_name("MicrosoftAccount\\L8teNever@Gmail.com") == "l8tenever@gmail.com"
+    assert fg.check_windows_name("  Simon   K ") == "simon k"
+    for bad in ('a"b', "a=b", "", "x" * 105, "a;b"):
+        with pytest.raises(fg.FreigabeError):
+            fg.check_windows_name(bad)
+    assert fg.parse_windows_names("a@b.de, Simon\nsimon") == ["a@b.de", "simon"]
+    assert fg.name_aus_windows("l8tenever@gmail.com") == "l8tenever"
+    assert fg.name_aus_windows("1.Simon.K@x.de") == "simon-k"
+
+
+def test_benutzer_mit_windows_anmeldung(samba_dir, monkeypatch):
+    calls = []
+    monkeypatch.setattr(fg, "_run", lambda cmd, stdin="": calls.append(cmd) or fg.subprocess.CompletedProcess(cmd, 0, "", ""))
+    monkeypatch.setattr(fg, "geraete", lambda max_age=30: ([], ""))
+    name = fg.add_user("", "geheim123", "MicrosoftAccount\\L8teNever@gmail.com, Simon K")
+    assert name == "l8tenever"
+    e = fg.Einstellungen.load()
+    assert e.windows == {"l8tenever": ["l8tenever@gmail.com", "simon k"]}
+    assert (samba_dir / "benutzer.map").read_text() == (
+        'l8tenever = "l8tenever@gmail.com" "MicrosoftAccount\\l8tenever@gmail.com" "simon k"\n')
+    assert f"username map = {samba_dir}/benutzer.map" in (samba_dir / "smb.conf").read_text()
+    # Browser-Anmeldung auch mit Windows-Namen
+    assert fg.benutzer_fuer("DESKTOP-X\\Simon K") == "l8tenever"
+    assert fg.check_login("l8tenever@gmail.com", "geheim123")
+    # Name darf nicht doppelt vergeben werden
+    with pytest.raises(fg.FreigabeError):
+        fg.add_user("mama", "mama1234", "simon k")
+    fg.set_windows_names("l8tenever", "")
+    assert (samba_dir / "benutzer.map").read_text() == ""
+    fg.set_windows_names("l8tenever", "neu@outlook.de")
+    fg.delete_user("l8tenever")
+    assert fg.Einstellungen.load().windows == {} and (samba_dir / "benutzer.map").read_text() == ""

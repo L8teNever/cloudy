@@ -136,6 +136,30 @@
       </div>
 
       <div class="field-group">
+        <div class="fg-title">Speicher</div>
+        <div class="fg-hint">Platten, Backup und Freigaben (Container <code>cloudy-speicher</code>, sonst Port 8091). Mit eigenem Passwort.</div>
+        <div id="speicher-domains" style="display:grid;gap:.35rem">
+          {% for d in ld.speicher or [''] %}
+          <div class="field-row"><input name="speicher" data-keep autocomplete="off" value="{{ d }}" placeholder="speicher.kulbarts.com"></div>
+          {% endfor %}
+        </div>
+        <button type="button" class="secondary add-btn" onclick="document.getElementById('speicher-domains').append(document.getElementById('tpl-speicher').content.cloneNode(true))">+ weitere</button>
+        <template id="tpl-speicher"><div class="field-row"><input name="speicher" data-keep autocomplete="off" placeholder="speicher.kulbarts.com"></div></template>
+      </div>
+
+      <div class="field-group">
+        <div class="fg-title">Dateien im Browser</div>
+        <div class="fg-hint">Ordner öffnen, hoch- und herunterladen (sonst Port 8092). Es gelten die Regeln der Freigaben pro Gerät.</div>
+        <div id="dateien-domains" style="display:grid;gap:.35rem">
+          {% for d in ld.dateien or [''] %}
+          <div class="field-row"><input name="dateien" data-keep autocomplete="off" value="{{ d }}" placeholder="dateien.kulbarts.com"></div>
+          {% endfor %}
+        </div>
+        <button type="button" class="secondary add-btn" onclick="document.getElementById('dateien-domains').append(document.getElementById('tpl-dateien').content.cloneNode(true))">+ weitere</button>
+        <template id="tpl-dateien"><div class="field-row"><input name="dateien" data-keep autocomplete="off" placeholder="dateien.kulbarts.com"></div></template>
+      </div>
+
+      <div class="field-group">
         <div class="fg-title">Ganzes Dashboard</div>
         <div class="fg-hint">Wie <code>{{ local }}</code> – mit Passwort, alle Seiten.</div>
         <div id="dash-domains" style="display:grid;gap:.35rem">

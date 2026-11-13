@@ -103,6 +103,8 @@ services:
       TZ: Europe/Berlin
       SPEICHER_PORT: ${SPEICHER_PORT:-8091}
       SPEICHER_PASSWORD: ${SPEICHER_PASSWORD:-}
+      # Dateien im Browser öffnen/hoch- und herunterladen (0 = aus)
+      DATEIEN_PORT: ${DATEIEN_PORT:-8092}
       # Dateien im Pool gehören diesem Benutzer auf dem Server (Standard: erster Benutzer, 1000).
       SPEICHER_UID: ${SPEICHER_UID:-1000}
       SPEICHER_GID: ${SPEICHER_GID:-1000}

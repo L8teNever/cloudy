@@ -1,0 +1,104 @@
+{% extends "dateien_base.html" %}
+{% block title %}{{ pfad[-1][0] if pfad else f.name }}{% endblock %}
+{% block content %}
+<nav class="crumbs" aria-label="Pfad">
+  <a href="/" class="icon-btn" title="Alle Ordner" aria-label="Alle Ordner"><span class="ms">home</span></a>
+  <span class="ms variant">chevron_right</span><a href="{{ url(f.name) }}">{{ f.name }}</a>
+  {% for teil, p in pfad %}<span class="ms variant">chevron_right</span><a href="{{ url(f.name, p) }}">{{ teil }}</a>{% endfor %}
+</nav>
+
+<header class="appbar">
+  <div style="min-width:0">
+    <h1 class="display files-title">{{ pfad[-1][0] if pfad else f.name }}</h1>
+    <p class="variant">{{ eintraege|length }} {{ "Eintrag" if eintraege|length == 1 else "Einträge" }}{% if not schreiben %} · nur lesen{% endif %}</p>
+  </div>
+  <div class="files-actions">
+    <a class="btn outlined" href="{{ url(f.name, rel) }}?zip=1" title="Ganzen Ordner als ZIP herunterladen"><span class="ms">download</span>ZIP</a>
+    {% if schreiben %}
+    <button type="button" class="btn tonal" data-open="dlg-ordner"><span class="ms">create_new_folder</span>Ordner</button>
+    <button type="button" class="btn large" data-upload><span class="ms">upload</span>Hochladen</button>
+    {% endif %}
+  </div>
+</header>
+
+{% if schreiben %}
+<input type="file" id="up-dateien" multiple hidden>
+<input type="file" id="up-ordner" webkitdirectory hidden>
+<div class="card high upload-box" id="upload" hidden data-ziel="/api/hochladen/{{ f.name|urlencode }}{{ ('/' ~ rel|urlencode) if rel }}" data-csrf="{{ csrf }}">
+  <div class="card-head"><div class="shape round primary"><span class="ms">upload</span></div>
+    <span class="title-m" style="flex:1" data-upload-titel>Hochladen …</span>
+    <button type="button" class="icon-btn" data-upload-abbrechen title="Abbrechen" aria-label="Abbrechen"><span class="ms">close</span></button></div>
+  <div class="progress"><i data-upload-balken style="width:0"></i></div>
+  <p class="body-s variant" style="margin:8px 0 0" data-upload-text></p>
+</div>
+{% endif %}
+
+{% if eintraege %}
+<div class="list files-list" {% if schreiben %}data-drop{% endif %}>
+  {% if pfad %}<a class="li" href="{{ oben }}"><div class="shape round muted"><span class="ms">arrow_upward</span></div><div class="txt"><p class="title-m">Eine Ebene hoch</p></div></a>{% endif %}
+  {% for e in eintraege %}
+  {% set p = (rel ~ '/' ~ e.name) if rel else e.name %}
+  <div class="li file-row">
+    <a class="file-main" href="{{ url(f.name, p) }}" {% if not e.ordner %}target="_blank" rel="noopener"{% endif %}>
+      <div class="shape {{ 'cookie tertiary' if e.ordner else 'round primary' }}"><span class="ms">{{ e.icon }}</span></div>
+      <div class="txt">
+        <p class="title-m">{{ e.name }}</p>
+        <p class="body-s variant" style="margin:0">{% if not e.ordner %}{{ e.groesse|bytes }} · {% endif %}{{ e.geaendert|zeit }}</p>
+      </div>
+    </a>
+    <div class="trail">
+      <a class="icon-btn" href="{{ url(f.name, p) }}?{{ 'zip=1' if e.ordner else 'dl=1' }}" title="Herunterladen" aria-label="{{ e.name }} herunterladen"><span class="ms">download</span></a>
+      {% if schreiben %}
+      <button type="button" class="icon-btn" data-umbenennen="{{ p }}" data-name="{{ e.name }}" title="Umbenennen" aria-label="{{ e.name }} umbenennen"><span class="ms">edit</span></button>
+      <form method="post" action="/aktion/{{ f.name|urlencode }}/loeschen" data-confirm="„{{ e.name }}“ {{ 'mit allem Inhalt ' if e.ordner }}löschen?">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="pfad" value="{{ p }}">
+        <button class="icon-btn danger" title="Löschen" aria-label="{{ e.name }} löschen"><span class="ms">delete</span></button></form>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty" {% if schreiben %}data-drop{% endif %}>
+  <div class="shape cookie tertiary"><span class="ms">folder_open</span></div>
+  <p class="title-m">Leerer Ordner</p>
+  <p class="body-m">{% if schreiben %}Dateien hier hineinziehen oder auf „Hochladen“ tippen.{% else %}Hier liegt noch nichts.{% endif %}</p>
+  {% if pfad %}<p><a class="btn tonal" href="{{ oben }}"><span class="ms">arrow_upward</span>Eine Ebene hoch</a></p>{% endif %}
+</div>
+{% endif %}
+
+{% if schreiben %}
+<div class="drop-hint" hidden><div><span class="ms">upload</span><p class="title-l">Loslassen zum Hochladen</p></div></div>
+
+<dialog id="dlg-upload" aria-labelledby="t-up">
+  <div class="icon"><span class="ms" style="font-size:32px">upload</span></div>
+  <h2 class="headline" id="t-up" style="font-size:24px;line-height:32px">Hochladen</h2>
+  <div class="list" style="margin-bottom:16px">
+    <button type="button" class="li" data-pick="up-dateien"><div class="shape round primary"><span class="ms">draft</span></div><div class="txt"><p class="title-m">Dateien</p></div></button>
+    <button type="button" class="li" data-pick="up-ordner"><div class="shape round primary"><span class="ms">folder</span></div><div class="txt"><p class="title-m">Ganzen Ordner</p></div></button>
+  </div>
+  <div class="actions"><button type="button" class="btn text" data-close>Abbrechen</button></div>
+</dialog>
+
+<dialog id="dlg-ordner" aria-labelledby="t-ord">
+  <form method="post" action="/aktion/{{ f.name|urlencode }}/ordner">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="pfad" value="{{ rel }}">
+    <div class="icon"><span class="ms" style="font-size:32px">create_new_folder</span></div>
+    <h2 class="headline" id="t-ord" style="font-size:24px;line-height:32px">Neuer Ordner</h2>
+    <div class="field"><input name="neu" id="on" placeholder=" " required maxlength="200" autocomplete="off"><label for="on">Name</label></div>
+    <div class="actions"><button type="button" class="btn text" data-close>Abbrechen</button><button class="btn">Anlegen</button></div>
+  </form>
+</dialog>
+
+<dialog id="dlg-umbenennen" aria-labelledby="t-um">
+  <form method="post" action="/aktion/{{ f.name|urlencode }}/umbenennen">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="pfad" value="">
+    <div class="icon"><span class="ms" style="font-size:32px">edit</span></div>
+    <h2 class="headline" id="t-um" style="font-size:24px;line-height:32px">Umbenennen</h2>
+    <div class="field"><input name="neu" id="un" placeholder=" " required maxlength="200" autocomplete="off"><label for="un">Neuer Name</label></div>
+    <div class="actions"><button type="button" class="btn text" data-close>Abbrechen</button><button class="btn">Speichern</button></div>
+  </form>
+</dialog>
+<script src="/static/dateien.js" defer></script>
+{% endif %}
+{% endblock %}

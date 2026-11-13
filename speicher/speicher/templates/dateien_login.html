@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Anmelden{% endblock %}
+{% block body %}
+<main class="login">
+  <div class="card">
+    <div class="shape cookie primary"><span class="ms">lock</span></div>
+    <h1 class="headline">Dateien</h1>
+    <p class="variant body-m" style="margin:8px 0 28px">Melde dich mit deinem Benutzer vom Netzlaufwerk an. Dein Windows-Name oder deine Microsoft-E-Mail geht auch.</p>
+    <form method="post" action="/login">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="weiter" value="{{ weiter }}">
+      <div class="field {{ 'error' if fehler }}"><input name="name" id="n" value="{{ name or '' }}" placeholder=" " required autocapitalize="none" autocomplete="username" {{ "autofocus" if not name }}><label for="n">Benutzer</label></div>
+      <div class="field {{ 'error' if fehler }}"><input type="password" name="passwort" id="pw" placeholder=" " required autocomplete="current-password" {{ "autofocus" if name }}><label for="pw">Passwort</label></div>
+      <div class="actions"><button class="btn large" style="width:100%">Anmelden</button></div>
+    </form>
+    <p style="margin:16px 0 0;text-align:center"><a class="btn text" href="/"><span class="ms">arrow_back</span>Ohne Anmeldung weiter</a></p>
+  </div>
+</main>
+{% endblock %}

@@ -26,6 +26,13 @@
       <span class="chip {{ 'ok' if dlna_laeuft else '' }}">{{ "läuft" if dlna_laeuft else "aus" }}</span></div>
     <p class="body-m variant" style="margin:0">Smart-TVs finden „{{ fe.dlna_name }}“ als Medienquelle. Nur ansehen, nichts ändern.</p>
   </div>
+  {% if dateien_port %}{% set dateien_url = "http://" ~ request.url.hostname ~ ":" ~ dateien_port %}
+  <a class="card high" href="{{ dateien_url }}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">
+    <div class="card-head"><div class="shape round primary"><span class="ms">folder_open</span></div><span class="title-m" style="flex:1">Dateien im Browser</span>
+      <span class="ms variant">open_in_new</span></div>
+    <p class="body-m variant" style="margin:0">Öffnen, hoch- und herunterladen unter <code>{{ dateien_url }}</code>. Es gelten dieselben Regeln.</p>
+  </a>
+  {% endif %}
 </div>
 
 <h2 class="title-m section-title">Freigaben</h2>
@@ -59,13 +66,15 @@
 {% endif %}
 
 <h2 class="title-m section-title">Benutzer</h2>
-<p class="body-m variant" style="margin:-8px 4px 12px">Mit diesen Namen und Passwörtern melden sich Geräte an, die nach einem Passwort gefragt werden.</p>
+<p class="body-m variant" style="margin:-8px 4px 12px">Mit diesen Namen und Passwörtern melden sich Geräte an. Mit Windows-Anmeldung und gleichem Passwort wie am PC meldet sich Windows von selbst an.</p>
 <div class="list">
   {% for u in fe.benutzer %}
   <div class="li">
     <div class="shape round"><span class="ms">person</span></div>
-    <div class="txt"><p class="title-m">{{ u }}</p></div>
+    <div class="txt"><p class="title-m">{{ u }}</p>
+      {% if fe.windows.get(u) %}<p class="body-s variant" style="margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="ms" style="font-size:14px;vertical-align:-2px">desktop_windows</span> {{ fe.windows[u]|join(", ") }}</p>{% endif %}</div>
     <div class="trail">
+      <button type="button" class="btn text" data-open="dlg-win-{{ u }}"><span class="ms">desktop_windows</span>Windows</button>
       <button type="button" class="btn text" data-open="dlg-pw-{{ u }}"><span class="ms">password</span>Passwort ändern</button>
       <button type="button" class="icon-btn danger" data-open="dlg-del-{{ u }}" aria-label="{{ u }} löschen"><span class="ms">delete</span></button>
     </div>
@@ -128,13 +137,26 @@
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <div class="icon"><span class="ms" style="font-size:32px">person_add</span></div>
     <h2 class="headline" id="t-user" style="font-size:24px;line-height:32px">Benutzer hinzufügen</h2>
-    <div class="field"><input name="name" id="un" placeholder=" " required pattern="[a-z][a-z0-9_-]{0,31}" autocomplete="off" autocapitalize="none"><label for="un">Name, z. B. simon</label><span class="sup">Kleinbuchstaben, Zahlen, - und _</span></div>
-    <div class="field"><input type="password" name="passwort" id="up" placeholder=" " required minlength="6" autocomplete="new-password"><label for="up">Passwort</label></div>
+    <div class="field"><input name="windows" id="uw" placeholder=" " autocomplete="off" autocapitalize="none" maxlength="300"><label for="uw">Windows-Anmeldung (optional)</label>
+      <span class="sup">Microsoft-Konto: deine E-Mail. Sonst dein Windows-Benutzername. Steht nach <code>whoami</code> in der Eingabeaufforderung hinter dem \.</span></div>
+    <div class="field"><input name="name" id="un" placeholder=" " pattern="[a-z][a-z0-9_-]{0,31}" autocomplete="off" autocapitalize="none"><label for="un">Name, z. B. simon</label><span class="sup">Kleinbuchstaben, Zahlen, - und _. Leer = aus der Windows-Anmeldung</span></div>
+    <div class="field"><input type="password" name="passwort" id="up" placeholder=" " required minlength="6" autocomplete="new-password"><label for="up">Passwort</label><span class="sup">Für automatische Anmeldung: dasselbe wie bei Windows (nicht die PIN)</span></div>
     <div class="actions"><button type="button" class="btn text" data-close>Abbrechen</button><button class="btn">Hinzufügen</button></div>
   </form>
 </dialog>
 
 {% for u in fe.benutzer %}
+<dialog id="dlg-win-{{ u }}">
+  <form method="post" action="/benutzer/{{ u }}/windows">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="icon"><span class="ms" style="font-size:32px">desktop_windows</span></div>
+    <h2 class="headline" style="font-size:24px;line-height:32px">Windows-Anmeldung von {{ u }}</h2>
+    <div class="field"><input name="windows" id="win-{{ u }}" value="{{ fe.windows.get(u, [])|join(', ') }}" placeholder=" " autocomplete="off" autocapitalize="none" maxlength="300"><label for="win-{{ u }}">Windows-Namen</label>
+      <span class="sup">E-Mail vom Microsoft-Konto oder Windows-Benutzername, mehrere mit Komma. Leer = keine.</span></div>
+    <p class="body-s variant" style="margin:0 4px 8px">Damit Windows sich von selbst anmeldet, muss das Passwort von {{ u }} dasselbe sein wie dein Windows-Passwort (nicht die PIN).</p>
+    <div class="actions"><button type="button" class="btn text" data-close>Abbrechen</button><button class="btn">Speichern</button></div>
+  </form>
+</dialog>
 <dialog id="dlg-pw-{{ u }}">
   <form method="post" action="/benutzer/{{ u }}/passwort">
     <input type="hidden" name="csrf" value="{{ csrf }}">

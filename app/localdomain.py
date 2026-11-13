@@ -40,6 +40,8 @@ DASH_KEY = "local_domain_dashboard"  # das ganze Dashboard (wie cloudy.lan)
 HUB_KEY = "local_domain_hub"  # Hub-Startseite (/hub)
 SWITCH_KEY = "local_domain_switch"  # Wechselseite: „ich verbinde dich übers VPN“, dann zurück zur Seite
 KARTE_KEY = "local_domain_karte"  # 3D-Karte vom Haus (/karte)
+SPEICHER_KEY = "local_domain_speicher"  # Speicher-Verwaltung (Container cloudy-speicher, SPEICHER_PORT)
+DATEIEN_KEY = "local_domain_dateien"  # Dateien im Browser (Container cloudy-speicher, DATEIEN_PORT)
 BLOCK_KEY = "local_domain_block"  # Sperrseite („Diese Seite ist gesperrt“, z. B. als Ziel der Cloudflare-Sperre)
 HA_URL_KEY = "hub_ha_url"  # Home-Assistant-URL für den Hub-Status
 CHAIN_FIX_KEY = "cert_chain_fix_v1"  # einmal geprüft, ob die Kette bei ISRG Root X1/X2 endet
@@ -122,6 +124,16 @@ def karte_domains() -> list[str]:
     return _setting_hosts(KARTE_KEY)
 
 
+def speicher_domains() -> list[str]:
+    """Domains für die Speicher-Seite (Platten, Backup, Freigaben) – cloudy leitet an den Speicher-Container weiter."""
+    return _setting_hosts(SPEICHER_KEY)
+
+
+def dateien_domains() -> list[str]:
+    """Domains für „Dateien im Browser“ – cloudy leitet an den Speicher-Container weiter."""
+    return _setting_hosts(DATEIEN_KEY)
+
+
 def domain() -> str:
     """Erste Mein-Gerät-Domain (Kompatibilität)."""
     return (mein_domains() or [""])[0]
@@ -161,6 +173,14 @@ def set_block_domains(hosts: list[str]) -> None:
     _save_hosts(BLOCK_KEY, hosts)
 
 
+def set_speicher_domains(hosts: list[str]) -> None:
+    _save_hosts(SPEICHER_KEY, hosts)
+
+
+def set_dateien_domains(hosts: list[str]) -> None:
+    _save_hosts(DATEIEN_KEY, hosts)
+
+
 def ha_url() -> str:
     """Home-Assistant-Basis-URL für den Hub (leer = Standard)."""
     return (db.get_setting(HA_URL_KEY) or "").strip() or "http://homeassistant.local:8123"
@@ -169,7 +189,7 @@ def ha_url() -> str:
 def domains() -> list[str]:
     """Alle eingestellten Domains (ohne Doppelte). Sie bekommen zusammen ein Zertifikat."""
     return list(dict.fromkeys(dashboard_domains() + mein_domains() + hub_domains() + block_domains() + switch_domains()
-                              + karte_domains()))
+                              + karte_domains() + speicher_domains() + dateien_domains()))
 
 
 def skipped() -> set[str]:

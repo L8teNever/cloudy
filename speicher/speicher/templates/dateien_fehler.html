@@ -1,0 +1,10 @@
+{% extends "dateien_base.html" %}
+{% block title %}Hinweis{% endblock %}
+{% block content %}
+<div class="card empty" style="margin-top:48px">
+  <div class="shape cookie {{ 'muted' if status == 404 else 'error' }}"><span class="ms">{{ "lock" if status in (401, 403) else ("search_off" if status == 404 else "error") }}</span></div>
+  <p class="title-m">{{ text }}</p>
+  <p class="body-m"><a class="btn tonal" href="/"><span class="ms">home</span>Zur Übersicht</a>
+  {% if status == 401 %}<a class="btn" href="/login"><span class="ms">login</span>Anmelden</a>{% endif %}</p>
+</div>
+{% endblock %}

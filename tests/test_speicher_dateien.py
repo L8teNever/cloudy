@@ -1,0 +1,168 @@
+"""Tests für die Dateien-Seite des Speichers (speicher/speicher/dateien.py): Regeln pro Gerät, Anmeldung, Hoch-/Herunterladen."""
+import io
+import os
+import sys
+import zipfile
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "speicher"))
+
+from speicher import auth, dateien, pool  # noqa: E402
+from speicher import freigaben as fg  # noqa: E402
+
+
+@pytest.fixture()
+def umgebung(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MOUNT_ROOT", str(tmp_path / "mnt"))
+    monkeypatch.setenv("SAMBA_CONF_DIR", str(tmp_path / "samba"))
+    auth._fails.clear()
+    root = pool.paths()["pool"]
+    (root / "Familie" / "Fotos").mkdir(parents=True)
+    (root / "Familie" / "hallo.txt").write_text("Hallo Welt")
+    (root / "Familie" / "Fotos" / "bild.jpg").write_bytes(b"\xff\xd8bild")
+    (root / "Familie" / "seite.html").write_text("<script>alert(1)</script>")
+    (root / "Filme").mkdir()
+    (root / "Privat").mkdir()
+    (root / "Privat" / "geheim.txt").write_text("psst")
+    (tmp_path / "draussen.txt").write_text("darf keiner sehen")
+    monkeypatch.setattr(pool, "mounts", lambda: {str(root): "fuse.mergerfs"})
+    geraete = [fg.Geraet("pc", "PC", "testclient")]  # TestClient kommt von der „IP“ testclient
+    monkeypatch.setattr(fg, "geraete", lambda max_age=30: (geraete, ""))
+    e = fg.Einstellungen(benutzer=["simon", "mama"], freigaben=[
+        fg.Freigabe("Familie", "Familie", standard="offen"),
+        fg.Freigabe("Filme", "Filme", standard="offen", nur_lesen=True),
+        fg.Freigabe("Privat", "Privat", standard="passwort", benutzer=["simon"]),
+        fg.Freigabe("Versteckt", "Privat", standard="versteckt"),
+    ])
+    e.save()
+    fg.set_web_password("simon", "geheim123")
+    fg.set_web_password("mama", "mama1234")
+    return root
+
+
+@pytest.fixture()
+def web(umgebung):
+    from fastapi.testclient import TestClient
+
+    with TestClient(dateien.app) as client:
+        client.get("/")  # Sitzungs-Cookie holen
+        yield client
+
+
+def _csrf(web) -> str:
+    return dateien.csrf_token(web.cookies.get(dateien.COOKIE))
+
+
+def _login(web, name="simon", pw="geheim123"):
+    return web.post("/login", data={"csrf": _csrf(web), "name": name, "passwort": pw, "weiter": "/"}, follow_redirects=False)
+
+
+def test_start_zeigt_nur_sichtbare(web):
+    page = web.get("/").text
+    assert "Familie" in page and "Filme" in page and "Privat" in page
+    assert "Versteckt" not in page
+    assert "Anmelden zum Öffnen" in page  # Privat nur mit Passwort
+
+
+def test_offen_auflisten_oeffnen_herunterladen(web):
+    page = web.get("/d/Familie")
+    assert page.status_code == 200 and "hallo.txt" in page.text and "Fotos" in page.text
+    r = web.get("/d/Familie/hallo.txt")
+    assert r.text == "Hallo Welt" and r.headers["content-disposition"].startswith("inline")
+    assert "sandbox" in r.headers["content-security-policy"]
+    r = web.get("/d/Familie/hallo.txt?dl=1")
+    assert r.headers["content-disposition"].startswith("attachment")
+    r = web.get("/d/Familie/hallo.txt", headers={"Range": "bytes=0-4"})
+    assert r.status_code == 206 and r.text == "Hallo"
+    assert web.get("/d/Familie/Fotos").status_code == 200
+
+
+def test_html_wird_nicht_ausgefuehrt(web):
+    r = web.get("/d/Familie/seite.html")
+    assert r.headers["content-type"].startswith("text/plain")
+
+
+def test_passwort_freigabe_braucht_anmeldung(web):
+    r = web.get("/d/Privat", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/login?weiter=")
+    assert web.get("/d/Privat/geheim.txt", follow_redirects=False).status_code == 303
+    assert "falsch" in _login(web, pw="falsch").text
+    r = _login(web)
+    assert r.status_code == 303
+    assert web.get("/d/Privat/geheim.txt").text == "psst"
+
+
+def test_falscher_benutzer_darf_nicht(web):
+    _login(web, "mama", "mama1234")
+    assert web.get("/d/Privat").status_code == 403
+    assert web.get("/d/Familie").status_code == 200  # offen geht für alle
+
+
+def test_versteckt_und_regel_pro_geraet(web, umgebung):
+    assert web.get("/d/Versteckt").status_code == 404
+    assert web.get("/d/Gibtsnicht").status_code == 404
+    e = fg.Einstellungen.load()
+    e.get("Familie").geraete = {"pc": "versteckt"}
+    e.get("Versteckt").geraete = {"pc": "offen"}
+    e.save()
+    assert web.get("/d/Familie").status_code == 404
+    assert web.get("/d/Versteckt/geheim.txt").text == "psst"
+
+
+def test_kein_ausbruch_aus_der_freigabe(web, umgebung):
+    os.symlink(umgebung.parent.parent / "draussen.txt", umgebung / "Familie" / "link.txt")
+    for url in ("/d/Familie/../Privat/geheim.txt", "/d/Familie/%2e%2e/Privat/geheim.txt", "/d/Familie/link.txt",
+                "/d/Familie/Fotos/..%2f..%2fPrivat/geheim.txt"):
+        r = web.get(url, follow_redirects=False)
+        assert r.status_code in (303, 400, 403, 404), url  # 303 = Anmeldung (der Client macht aus /../ schon /d/Privat)
+        assert "psst" not in r.text and "darf keiner" not in r.text
+
+
+def test_hochladen(web, umgebung):
+    csrf = _csrf(web)
+    r = web.put("/api/hochladen/Familie/neu.txt", content=b"neu", headers={"X-CSRF": csrf})
+    assert r.status_code == 200 and (umgebung / "Familie" / "neu.txt").read_bytes() == b"neu"
+    r = web.put("/api/hochladen/Familie/neu.txt", content=b"x", headers={"X-CSRF": csrf})
+    assert r.status_code == 409
+    r = web.put("/api/hochladen/Familie/neu.txt?ersetzen=1", content=b"zwei", headers={"X-CSRF": csrf})
+    assert r.status_code == 200 and (umgebung / "Familie" / "neu.txt").read_bytes() == b"zwei"
+    r = web.put("/api/hochladen/Familie/Urlaub/2026/a.jpg", content=b"a", headers={"X-CSRF": csrf})  # ganzer Ordner
+    assert r.status_code == 200 and (umgebung / "Familie" / "Urlaub" / "2026" / "a.jpg").exists()
+    assert web.put("/api/hochladen/Familie/x.txt", content=b"x").status_code == 403  # ohne CSRF
+    assert web.put("/api/hochladen/Filme/x.txt", content=b"x", headers={"X-CSRF": csrf}).status_code == 403  # nur lesen
+    assert web.put("/api/hochladen/Privat/x.txt", content=b"x", headers={"X-CSRF": csrf}).status_code == 401
+    assert web.put("/api/hochladen/Familie/..%2f..%2fboese.txt", content=b"x", headers={"X-CSRF": csrf}).status_code in (400, 403)
+    assert not list((umgebung / "Familie").glob(".*hochladen*"))
+
+
+def test_ordner_umbenennen_loeschen(web, umgebung):
+    csrf = _csrf(web)
+    r = web.post("/aktion/Familie/ordner", data={"csrf": csrf, "pfad": "", "neu": "Neu"}, follow_redirects=False)
+    assert "ok=" in r.headers["location"] and (umgebung / "Familie" / "Neu").is_dir()
+    r = web.post("/aktion/Familie/umbenennen", data={"csrf": csrf, "pfad": "hallo.txt", "neu": "Hi.txt"}, follow_redirects=False)
+    assert "ok=" in r.headers["location"] and (umgebung / "Familie" / "Hi.txt").exists()
+    r = web.post("/aktion/Familie/umbenennen", data={"csrf": csrf, "pfad": "Hi.txt", "neu": "../x"}, follow_redirects=False)
+    assert "fehler=" in r.headers["location"]
+    r = web.post("/aktion/Familie/loeschen", data={"csrf": csrf, "pfad": "Fotos"}, follow_redirects=False)
+    assert "ok=" in r.headers["location"] and not (umgebung / "Familie" / "Fotos").exists()
+    r = web.post("/aktion/Familie/loeschen", data={"csrf": csrf, "pfad": ""}, follow_redirects=False)
+    assert "fehler=" in r.headers["location"] and (umgebung / "Familie").is_dir()
+    assert web.post("/aktion/Familie/loeschen", data={"csrf": "falsch", "pfad": "Hi.txt"}).status_code == 403
+    assert (umgebung / "Familie" / "Hi.txt").exists()
+
+
+def test_ordner_als_zip(web):
+    r = web.get("/d/Familie?zip=1")
+    assert r.headers["content-type"] == "application/zip"
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert sorted(names) == ["Fotos/bild.jpg", "hallo.txt", "seite.html"]
+
+
+def test_web_passwort_wird_mit_benutzer_entfernt(umgebung):
+    assert fg.check_login("simon", "geheim123") and not fg.check_login("simon", "falsch")
+    assert not fg.check_login("niemand", "geheim123")
+    fg.set_web_password("simon", None)
+    assert not fg.check_login("simon", "geheim123")

@@ -1,0 +1,31 @@
+{% extends "dateien_base.html" %}
+{% block title %}Dateien{% endblock %}
+{% block content %}
+<header class="appbar">
+  <div>
+    <h1 class="display">Deine Ordner</h1>
+    <p class="variant">Öffnen, herunterladen und hochladen, direkt im Browser.</p>
+  </div>
+</header>
+{% if not pool_da %}<div class="danger-box"><span class="ms">error</span><span class="body-m">Der Speicher ist gerade nicht eingehängt.</span></div>{% endif %}
+{% if liste %}
+<div class="list">
+  {% for f, darf in liste %}
+  <a class="li" href="{{ '/d/' ~ (f.name|urlencode) if darf else '/login?weiter=' ~ (('/d/' ~ (f.name|urlencode))|urlencode) }}">
+    <div class="shape cookie {{ 'tertiary' if darf else 'muted' }}"><span class="ms">{{ "folder_open" if darf else "lock" }}</span></div>
+    <div class="txt">
+      <p class="title-m">{{ f.name }}</p>
+      <p class="body-m variant" style="margin:0">{% if not darf %}Anmelden zum Öffnen{% elif f.nur_lesen %}Nur lesen{% else %}Lesen und schreiben{% endif %}</p>
+    </div>
+    <div class="trail"><span class="ms variant">chevron_right</span></div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty">
+  <div class="shape cookie tertiary"><span class="ms">folder_off</span></div>
+  <p class="title-m">Keine Ordner für dieses Gerät</p>
+  <p class="body-m">{% if not benutzer and hat_benutzer %}Vielleicht siehst du mehr, wenn du dich anmeldest.{% else %}Freigaben legst du auf der Speicher-Seite an.{% endif %}</p>
+</div>
+{% endif %}
+{% endblock %}

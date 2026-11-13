@@ -55,6 +55,8 @@ _OTHER_LOCAL = (  # Listen, in denen ein Name nicht gleichzeitig stehen darf
     (localdomain.mein_domains, localdomain.set_mein_domains),
     (localdomain.block_domains, localdomain.set_block_domains),
     (localdomain.switch_domains, localdomain.set_switch_domains),
+    (localdomain.speicher_domains, localdomain.set_speicher_domains),
+    (localdomain.dateien_domains, localdomain.set_dateien_domains),
 )
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")

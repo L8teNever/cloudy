@@ -10,6 +10,8 @@ Passwort-Freigaben "valid users". Geräte ohne eigene Datei bekommen die Standar
 Die IPs kommen aus cloudy (Geräteliste) und werden regelmäßig abgeglichen.
 """
 import base64
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -60,6 +62,8 @@ class Einstellungen:
     dlna_name: str = "cloudy Speicher"
     freigaben: list[Freigabe] = field(default_factory=list)
     benutzer: list[str] = field(default_factory=list)
+    # Windows-Anmeldenamen pro Benutzer: Windows meldet sich damit von selbst an (Microsoft-Konto = E-Mail).
+    windows: dict[str, list[str]] = field(default_factory=dict)
     # Eigene Geräte, falls cloudy ein Gerät nicht kennt: {"ip:1.2.3.4": "Name"}
     eigene_geraete: dict[str, str] = field(default_factory=dict)
 
@@ -105,6 +109,46 @@ def check_user(name: str) -> str:
     if not USER_RE.match(name) or name in ("root", FORCE_USER, "nobody"):
         raise FreigabeError("Benutzername: Kleinbuchstaben, Zahlen, - und _ (max. 32), mit Buchstabe vorne")
     return name
+
+
+WINDOWS_RE = re.compile(r"^(?! )[^\t\r\n\0\"'=#;,\\/\[\]:|<>+*?%]{1,104}(?<! )$")
+
+
+def check_windows_name(name: str) -> str:
+    """'DESKTOP-ABC\\Simon' -> 'simon', 'MicrosoftAccount\\a@b.de' -> 'a@b.de'. Windows schickt den Namen ohne Rechner."""
+    name = " ".join(name.strip().strip('"').split("\\")[-1].split()).lower()
+    if not WINDOWS_RE.match(name):
+        raise FreigabeError("Windows-Name: dein Windows-Benutzername oder die E-Mail deines Microsoft-Kontos")
+    return name
+
+
+def parse_windows_names(text: str) -> list[str]:
+    out: list[str] = []
+    for part in re.split(r"[\n,;]+", text or ""):
+        if part.strip():
+            n = check_windows_name(part)
+            if n not in out:
+                out.append(n)
+    return out
+
+
+def name_aus_windows(windows_name: str) -> str:
+    """Vorschlag für den Benutzernamen: 'Simon.K@outlook.de' -> 'simon-k'."""
+    base = re.sub(r"[^a-z0-9_-]+", "-", windows_name.split("@")[0].lower()).strip("-_")
+    base = re.sub(r"^[^a-z]+", "", base)[:32].strip("-_")
+    return base or "benutzer"
+
+
+def benutzer_fuer(name: str, e: "Einstellungen | None" = None) -> str:
+    """Anmeldename (Benutzer oder Windows-Name) -> Benutzer, sonst ''."""
+    e = e or Einstellungen.load()
+    name = " ".join(name.strip().split("\\")[-1].split()).lower()
+    if name in e.benutzer:
+        return name
+    for user, names in e.windows.items():
+        if name in names and user in e.benutzer:
+            return user
+    return ""
 
 
 def check_password(pw: str) -> str:
@@ -228,6 +272,8 @@ def global_section(e: Einstellungen, main: bool) -> str:
         "  idmap config * : backend = tdb",
         "  idmap config * : range = 3000-7999",
         "  usershare path =",
+        # Windows-Anmeldenamen (z. B. Microsoft-Konto) -> Benutzer, damit Windows sich von selbst anmeldet.
+        f"  username map = {samba_dir()}/benutzer.map",
     ]
     if main:
         # Pro Gerät eine eigene Konfiguration (fehlt die Datei, gilt diese hier).
@@ -238,7 +284,7 @@ def global_section(e: Einstellungen, main: bool) -> str:
 def share_section(f: Freigabe, regel: str, alle_benutzer: list[str]) -> str:
     if regel == "versteckt":
         return ""
-    path = pool.paths()["pool"] / f.ordner if f.ordner else pool.paths()["pool"]
+    path = share_path(f)
     lines = [
         f"[{f.name}]",
         f"  path = {path}",
@@ -263,11 +309,26 @@ def render(e: Einstellungen, key: str | None) -> str:
     """Komplette smb.conf – für ein Gerät (key) oder die Standard-Konfiguration (key=None)."""
     parts = [global_section(e, main=key is None)]
     for f in e.freigaben:
-        regel = f.geraete.get(key, f.standard) if key else f.standard
+        regel = regel_fuer(f, key)
         sec = share_section(f, regel, e.benutzer)
         if sec:
             parts.append(sec)
     return "\n".join(parts)
+
+
+def username_map(e: Einstellungen) -> str:
+    """Samba-Zuordnung: 'simon = "simon@outlook.de" "simon-pc"'. Leer, wenn es keine Windows-Namen gibt."""
+    lines = []
+    for user in e.benutzer:
+        names = []
+        for n in e.windows.get(user, []):
+            if n != user:
+                names.append(n)
+            if "@" in n:  # Microsoft-Konto: Windows schickt oft „MicrosoftAccount\<E-Mail>“ (mit Samba geprüft)
+                names.append(f"MicrosoftAccount\\{n}")
+        if names:
+            lines.append(f"{user} = " + " ".join(f'"{n}"' for n in names))
+    return "\n".join(lines) + ("\n" if lines else "")
 
 
 def write_configs(e: Einstellungen | None = None) -> bool:
@@ -275,7 +336,7 @@ def write_configs(e: Einstellungen | None = None) -> bool:
     e = e or Einstellungen.load()
     d = samba_dir()
     (data_dir() / "samba").mkdir(mode=0o700, exist_ok=True)  # Passwörter (passdb/secrets) bleiben im Daten-Ordner
-    wanted: dict[Path, str] = {d / "smb.conf": render(e, None)}
+    wanted: dict[Path, str] = {d / "smb.conf": render(e, None), d / "benutzer.map": username_map(e)}
     devices, _ = geraete()
     # Nur für Geräte mit eigener Regel eine Extra-Datei (sonst gilt ohnehin der Standard).
     keys_with_rules = {k for f in e.freigaben for k in f.geraete}
@@ -351,19 +412,125 @@ def set_user_password(name: str, password: str, neu: bool) -> None:
     if res.returncode != 0:
         raise FreigabeError(f"Passwort setzen fehlgeschlagen: {(res.stderr or res.stdout).strip()[-200:]}")
     _run(["smbpasswd", "-c", conf, "-e", name])
+    set_web_password(name, password)
 
 
-def add_user(name: str, password: str) -> None:
+# ---------- Anmeldung im Browser (Dateien-Seite) ----------
+# Samba speichert nur NT-Hashes, die man nicht sinnvoll prüfen kann. Deshalb zusätzlich ein scrypt-Hash pro Benutzer.
+
+def _web_file() -> Path:
+    return data_dir() / "benutzer-web.json"
+
+
+def _web_hashes() -> dict[str, str]:
+    try:
+        return json.loads(_web_file().read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _scrypt(password: str, salt: bytes) -> bytes:
+    return hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1, dklen=32)
+
+
+def set_web_password(name: str, password: str | None) -> None:
+    """Passwort-Hash speichern (None = Benutzer entfernen)."""
+    with _lock:
+        hashes = _web_hashes()
+        if password is None:
+            hashes.pop(name, None)
+        else:
+            salt = secrets.token_bytes(16)
+            hashes[name] = base64.b64encode(salt).decode() + "$" + base64.b64encode(_scrypt(password, salt)).decode()
+        config.write_private(_web_file(), json.dumps(hashes, indent=2))
+
+
+def web_login_moeglich(name: str) -> bool:
+    return name in _web_hashes()
+
+
+def check_login(name: str, password: str) -> bool:
+    """Anmeldung im Browser – mit Benutzer oder Windows-Namen."""
+    name = benutzer_fuer(name)
+    if not name:
+        _scrypt(password, b"0" * 16)  # gleiche Laufzeit wie ein echter Versuch
+        return False
+    try:
+        salt_b64, hash_b64 = _web_hashes()[name].split("$")
+    except (KeyError, ValueError):
+        return False
+    return hmac.compare_digest(_scrypt(password, base64.b64decode(salt_b64)), base64.b64decode(hash_b64))
+
+
+def key_fuer_ip(ip: str) -> str | None:
+    """Gerät (MAC aus cloudy oder ip:…) zu einer IP – wie Samba es über hosts/<ip>.conf macht."""
+    devices, _ = geraete()
+    for g in devices:
+        if g.ip == ip:
+            return g.key
+    return None
+
+
+def regel_fuer(f: Freigabe, key: str | None) -> str:
+    return f.geraete.get(key, f.standard) if key else f.standard
+
+
+def darf(f: Freigabe, regel: str, benutzer: str, alle_benutzer: list[str]) -> bool:
+    """Darf jemand (benutzer = "" für nicht angemeldet) in die Freigabe – gleiche Logik wie share_section."""
+    if regel == "versteckt":
+        return False
+    if regel == "offen":
+        return True
+    erlaubt = [u for u in (f.benutzer or alle_benutzer) if u in alle_benutzer]
+    return bool(benutzer) and benutzer in erlaubt
+
+
+def share_path(f: Freigabe) -> Path:
+    root = pool.paths()["pool"]
+    return root / f.ordner if f.ordner else root
+
+
+def _check_windows_frei(e: Einstellungen, user: str, names: list[str]) -> None:
+    for n in names:
+        other = benutzer_fuer(n, e)
+        if other and other != user:
+            raise FreigabeError(f"„{n}“ gehört schon zu {other}")
+
+
+def add_user(name: str, password: str, windows: str = "") -> str:
+    names = parse_windows_names(windows)
+    if not name.strip() and names:
+        name = name_aus_windows(names[0])
     name, password = check_user(name), check_password(password)
     with _lock:
         e = Einstellungen.load()
-        if name in e.benutzer:
+        if name in e.benutzer or benutzer_fuer(name, e):
             raise FreigabeError(f"Benutzer {name} gibt es schon")
+        _check_windows_frei(e, name, names)
         e.benutzer.append(name)
+        if names:
+            e.windows[name] = names
         ensure_unix_users(e)
         write_configs(e)
         set_user_password(name, password, neu=True)
         e.save()
+        write_configs(e)
+    return name
+
+
+def set_windows_names(name: str, windows: str) -> None:
+    names = parse_windows_names(windows)
+    with _lock:
+        e = Einstellungen.load()
+        if name not in e.benutzer:
+            raise FreigabeError("Unbekannter Benutzer")
+        _check_windows_frei(e, name, names)
+        if names:
+            e.windows[name] = names
+        else:
+            e.windows.pop(name, None)
+        e.save()
+        write_configs(e)
 
 
 def change_password(name: str, password: str) -> None:
@@ -381,12 +548,15 @@ def delete_user(name: str) -> None:
         if name not in e.benutzer:
             raise FreigabeError("Unbekannter Benutzer")
         e.benutzer.remove(name)
+        e.windows.pop(name, None)
         for f in e.freigaben:
             if name in f.benutzer:
                 f.benutzer.remove(name)
         e.save()
+        write_configs(e)  # Windows-Zuordnung sofort entfernen
         _run(["smbpasswd", "-c", str(samba_dir() / "smb.conf"), "-x", name])
         _run(["userdel", name])
+        set_web_password(name, None)
 
 
 # ---------- DLNA (Fernseher) ----------
