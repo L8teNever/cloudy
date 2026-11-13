@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Backup{% endblock %}
+{% block mtitle %}Backup{% endblock %}
+{% block content %}
+<header class="appbar">
+  <div>
+    <h1 class="display">Backup</h1>
+    <p class="variant">Normale Dateien in Google Drive, ohne Verschlüsselung. Du kannst sie jederzeit im Browser öffnen.</p>
+  </div>
+</header>
+
+{% if drive %}
+<section class="card hero">
+  <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap">
+    <div class="shape primary cookie" style="width:72px;height:72px"><span class="ms" style="font-size:36px">{{ "cloud_off" if cfg.letzter_fehler else "cloud_done" }}</span></div>
+    <div style="flex:1;min-width:200px">
+      <p class="label-l variant" style="margin:0">Letztes Backup</p>
+      <p class="headline" style="margin:2px 0">{{ cfg.letztes_backup_ende|wann }}</p>
+      <p class="body-m variant" style="margin:0">
+        {% if cfg.backup_an %}Nächstes {{ naechstes|wann }}{% else %}Automatisch aus{% endif %} · Drive-Ordner <b>{{ cfg.drive_ordner }}</b>
+      </p>
+    </div>
+    <form method="post" action="/aktion/backup"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="zurueck" value="/backup">
+      <button class="btn large" data-needs-idle {{ "disabled" if job }}><span class="ms">backup</span>Jetzt sichern</button></form>
+  </div>
+  {% if cfg.letzter_fehler %}<div class="danger-box" style="margin:20px 0 0"><span class="ms">error</span><span class="body-m">{{ cfg.letzter_fehler }}</span></div>{% endif %}
+</section>
+{% endif %}
+
+{% include "teile/auftrag.html" %}
+
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
+  <section class="card">
+    <div class="card-head"><div class="shape tertiary round"><span class="ms">schedule</span></div><h2 class="title-l">Zeitplan</h2></div>
+    <form method="post" action="/einstellungen">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="zurueck" value="/backup">
+      <input type="hidden" name="backup_an" value="0">
+      <label class="switch-row">
+        <span class="txt"><span class="title-m" style="display:block">Automatisch sichern</span>
+          <span class="body-m variant">{{ "Erst Google Drive verbinden" if not drive else "Jeden Tag zur eingestellten Uhrzeit" }}</span></span>
+        <span class="switch"><input type="checkbox" name="backup_an" value="1" {{ "checked" if cfg.backup_an }} {{ "disabled" if not drive }}><span class="tr"></span><span class="th"></span></span>
+      </label>
+      <div class="form-grid">
+        <div class="field"><input type="time" name="backup_zeit" id="bz" value="{{ cfg.backup_zeit }}" required><label for="bz">Uhrzeit</label></div>
+        <div class="field"><input type="number" name="behalten_tage" id="bt" min="1" max="3650" value="{{ cfg.behalten_tage }}" required><label for="bt">Alte Versionen (Tage)</label></div>
+      </div>
+      <div class="field"><input name="drive_ordner" id="do" value="{{ cfg.drive_ordner }}" placeholder=" " required><label for="do">Ordner in Google Drive</label>
+        <span class="sup">Darin: <code>aktuell</code> = dein Pool, <code>alt/&lt;Datum&gt;</code> = alte Fassungen geänderter oder gelöschter Dateien</span></div>
+      {% if not cfg.letztes_backup_ende %}<p class="body-m variant">Das erste Backup lädt den ganzen Pool hoch und kann Stunden dauern.</p>{% endif %}
+      <div class="actions"><button class="btn tonal">Speichern</button></div>
+    </form>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><div class="shape {{ 'primary' if drive else 'tertiary' }} round"><span class="ms">add_to_drive</span></div>
+      <h2 class="title-l">Google Drive</h2>{% if drive %}<span class="chip ok"><span class="ms">check</span>verbunden</span>{% endif %}</div>
+    {% if drive %}
+      <p class="body-m variant" style="margin-top:0">Verbunden. Wenn Google die Anmeldung mal ablehnt, hier neu verbinden.</p>
+      <div class="actions start">
+        <button type="button" class="btn outlined" data-open="dlg-drive"><span class="ms">link</span>Neu verbinden</button>
+        <form method="post" action="/aktion/drive"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="zurueck" value="/backup">
+          <button class="btn text" data-needs-idle {{ "disabled" if job }}><span class="ms">network_check</span>Prüfen</button></form>
+      </div>
+    {% else %}
+      <ol class="steps body-m">
+        <li><span>Auf deinem PC <a href="https://rclone.org/downloads/" target="_blank" rel="noopener">rclone herunterladen</a>.</span></li>
+        <li><span>Im Terminal <code>rclone authorize "drive"</code> ausführen und im Browser bei Google anmelden.</span></li>
+        <li><span>Den Text, der mit <code>{"access_token"</code> anfängt, kopieren und hier einfügen.</span></li>
+      </ol>
+      <button type="button" class="btn" data-open="dlg-drive"><span class="ms">add_link</span>Token einfügen</button>
+    {% endif %}
+  </section>
+</div>
+
+{% if st.puffer %}
+<section class="card">
+  <div class="card-head"><div class="shape round"><span class="ms">bolt</span></div><h2 class="title-l">Puffer-SSD</h2></div>
+  <p class="body-m variant" style="margin-top:0">Alles, was seit dem letzten Backup neu ist, liegt zusätzlich auf der SSD. Nach einem erfolgreichen Backup wird dort aufgeräumt.</p>
+  <form method="post" action="/einstellungen" class="form-grid" style="align-items:start">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="zurueck" value="/backup">
+    <div class="field"><input type="number" name="puffer_minuten" id="pm" min="1" max="240" value="{{ cfg.puffer_minuten }}" required><label for="pm">Kopie alle … Minuten</label>
+      <span class="sup">Letzte Kopie {{ cfg.letzte_kopie|wann }}</span></div>
+    <div class="actions start" style="margin-top:12px"><button class="btn tonal">Speichern</button></div>
+  </form>
+  <div class="actions start">
+    <form method="post" action="/aktion/kopie"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="zurueck" value="/backup">
+      <button class="btn outlined" data-needs-idle {{ "disabled" if job }}><span class="ms">content_copy</span>Jetzt kopieren</button></form>
+    <form method="post" action="/aktion/zurueckspielen" data-confirm="Alles vom Puffer in den Pool kopieren? Vorhandene Dateien bleiben unverändert.">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="zurueck" value="/backup">
+      <button class="btn text" data-needs-idle {{ "disabled" if job }}><span class="ms">settings_backup_restore</span>Puffer in den Pool zurückspielen</button></form>
+  </div>
+</section>
+{% endif %}
+
+{% if verlauf %}
+<h2 class="title-m section-title">Verlauf</h2>
+<div class="list">
+  {% for j in verlauf %}
+  <div class="li">
+    <div class="shape round {{ 'primary' if j.ok else 'error' }}" style="width:40px;height:40px"><span class="ms" style="font-size:20px">{{ "check" if j.ok else "close" }}</span></div>
+    <div class="txt"><p class="title-m">{{ j.name }}</p><p class="body-m variant" style="margin:0">{{ j.start|wann }} · {{ ((j.ende - j.start) / 60)|round(0, "ceil")|int }} Min.</p></div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<dialog id="dlg-drive" aria-labelledby="t-drive">
+  <form method="post" action="/drive">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="icon"><span class="ms" style="font-size:32px">add_to_drive</span></div>
+    <h2 class="headline" id="t-drive" style="font-size:24px;line-height:32px">Google Drive verbinden</h2>
+    <div class="field"><textarea name="token" id="tok" placeholder=" " required></textarea><label for="tok">Token aus „rclone authorize drive“</label></div>
+    <details class="exp"><summary><span class="ms">expand_more</span>Eigene Google-API-Zugangsdaten (optional)</summary>
+      <div class="field"><input name="client_id" id="cid" placeholder=" " autocomplete="off"><label for="cid">client_id</label></div>
+      <div class="field"><input name="client_secret" id="cs" placeholder=" " autocomplete="off"><label for="cs">client_secret</label>
+        <span class="sup">Dann auch bei <code>rclone authorize "drive" &lt;id&gt; &lt;secret&gt;</code> angeben. Ist schneller als der gemeinsame Zugang von rclone.</span></div>
+    </details>
+    <div class="actions"><button type="button" class="btn text" data-close>Abbrechen</button><button class="btn">Verbinden</button></div>
+  </form>
+</dialog>
+{% endblock %}

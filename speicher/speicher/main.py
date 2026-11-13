@@ -3,12 +3,14 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, Form, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import auth, backup, config, disks, jobs, pool
@@ -32,8 +34,30 @@ def fmt_time(ts) -> str:
     return time.strftime("%d.%m.%Y %H:%M", time.localtime(ts)) if ts else "noch nie"
 
 
+def fmt_rel(ts, now: float | None = None) -> str:
+    """'gerade eben', 'vor 5 Min.', 'heute, 00:00', 'gestern, 23:10', 'morgen, 00:00', sonst Datum."""
+    if not ts:
+        return "noch nie"
+    now = time.time() if now is None else now
+    diff = now - ts
+    if 0 <= diff < 60:
+        return "gerade eben"
+    if 0 <= diff < 3600:
+        return f"vor {int(diff // 60)} Min."
+    day = (datetime.fromtimestamp(ts).date() - datetime.fromtimestamp(now).date()).days
+    hm = time.strftime("%H:%M", time.localtime(ts))
+    return {0: f"heute, {hm}", -1: f"gestern, {hm}", 1: f"morgen, {hm}"}.get(day, time.strftime("%d.%m.%Y, %H:%M", time.localtime(ts)))
+
+
+def pct(used, total) -> int:
+    return max(0, min(100, round(used / total * 100))) if total else 0
+
+
 templates.env.filters["bytes"] = fmt_bytes
 templates.env.filters["zeit"] = fmt_time
+templates.env.filters["wann"] = fmt_rel
+templates.env.globals["pct"] = pct
+templates.env.globals["puffer_paths"] = lambda rollen: [p for p, r in rollen.items() if r == "puffer"]
 
 
 # ---------- Planer ----------
@@ -73,11 +97,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 
 
 # ---------- Sicherheit ----------
 
 PUBLIC = {"/login", "/einrichten", "/healthz"}
+NAV = [
+    ("/", "Übersicht", "home_storage"),
+    ("/platten", "Platten", "hard_drive"),
+    ("/backup", "Backup", "cloud_upload"),
+    ("/wiederherstellen", "Zurückholen", "history"),
+    ("/einstellungen", "Einstellungen", "settings"),
+]
+NAV_PATHS = {href for href, _, _ in NAV}
 
 
 @app.middleware("http")
@@ -86,7 +119,7 @@ async def security(request: Request, call_next):
     session = request.cookies.get(auth.COOKIE, "")
     logged_in = auth.valid_session(session)
     request.state.session = session if logged_in else ""
-    if path not in PUBLIC:
+    if path not in PUBLIC and not path.startswith("/static/"):
         if not auth.password_set():
             return RedirectResponse("/einrichten", 303)
         if not logged_in:
@@ -101,9 +134,11 @@ async def security(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "same-origin"
-    response.headers["Cache-Control"] = "no-store"
+    if not path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store"
     response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'"
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; img-src 'self' data:; "
+        "form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
     )
     return response
 
@@ -116,6 +151,7 @@ async def _form(request: Request) -> dict:
 
 
 def _back(msg: str = "", fehler: str = "", to: str = "/") -> RedirectResponse:
+    to = to if to in NAV_PATHS else "/"
     q = f"?ok={quote(msg)}" if msg else (f"?fehler={quote(fehler)}" if fehler else "")
     return RedirectResponse(to + q, 303)
 
@@ -123,9 +159,12 @@ def _back(msg: str = "", fehler: str = "", to: str = "/") -> RedirectResponse:
 def _page(request: Request, name: str, **ctx) -> HTMLResponse:
     ctx.update(
         request=request,
+        nav=NAV,
         csrf=auth.csrf_token(request.state.session) if request.state.session else "",
         ok=request.query_params.get("ok", ""),
         fehler=ctx.get("fehler") or request.query_params.get("fehler", ""),
+        job=jobs.current(),
+        verlauf=jobs.history()[:10],
     )
     return templates.TemplateResponse(request, name, ctx)
 
@@ -190,7 +229,30 @@ async def logout():
 
 # ---------- Übersicht ----------
 
-def _overview() -> dict:
+def _status() -> dict:
+    cfg = Config.load()
+    st = pool.status(cfg)
+    return {
+        "cfg": cfg, "st": st, "drive": backup.drive_eingerichtet(), "mount_root": str(config.mount_root()),
+        "naechstes": backup.naechstes_backup(time.time(), cfg.backup_zeit) if cfg.backup_an else 0,
+        "warnungen": _warnungen(cfg, st),
+    }
+
+
+def _warnungen(cfg: Config, st: dict) -> list[str]:
+    out = [f"{h.name} fehlt – ihre Dateien sind gerade nicht im Pool" for h in st["hdds"] if not h.mounted]
+    if st["puffer"] and not st["puffer"].mounted:
+        out.append("Die Puffer-SSD ist nicht eingehängt")
+    if cfg.kopie_fehler:
+        out.append(cfg.kopie_fehler)
+    if cfg.letzter_fehler:
+        out.append(f"Letztes Backup fehlgeschlagen: {cfg.letzter_fehler}")
+    elif cfg.backup_an and cfg.letztes_backup_ende and time.time() - cfg.letztes_backup_ende > 3 * 86400:
+        out.append("Das letzte erfolgreiche Backup ist älter als 3 Tage")
+    return out
+
+
+def _disks() -> dict:
     cfg = Config.load()
     fehler = ""
     try:
@@ -207,16 +269,28 @@ def _overview() -> dict:
                 if u in uu:
                     rollen[disk.path] = f"hdd{i + 1}"
     health = {d.path: disks.smart_health(d.path) for d in alle}
-    return {
-        "cfg": cfg, "disks": alle, "rollen": rollen, "health": health, "st": pool.status(cfg),
-        "drive": backup.drive_eingerichtet(), "disk_fehler": fehler, "mount_root": str(config.mount_root()),
-    }
+    return {"disks": alle, "rollen": rollen, "health": health, "disk_fehler": fehler}
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    data = await run_in_threadpool(_overview)
-    return _page(request, "index.html", job=jobs.current(), verlauf=jobs.history()[:8], **data)
+    return _page(request, "uebersicht.html", active="/", **await run_in_threadpool(_status))
+
+
+@app.get("/platten", response_class=HTMLResponse)
+async def platten(request: Request):
+    data = await run_in_threadpool(lambda: {**_status(), **_disks()})
+    return _page(request, "platten.html", active="/platten", **data)
+
+
+@app.get("/backup", response_class=HTMLResponse)
+async def backup_seite(request: Request):
+    return _page(request, "backup.html", active="/backup", **await run_in_threadpool(_status))
+
+
+@app.get("/einstellungen", response_class=HTMLResponse)
+async def einstellungen_seite(request: Request):
+    return _page(request, "einstellungen.html", active="/einstellungen", port=os.environ.get("SPEICHER_PORT", "8091"), **await run_in_threadpool(_status))
 
 
 @app.get("/api/job")
@@ -281,8 +355,8 @@ async def platte(request: Request):
         f = await _form(request)
         msg = await run_in_threadpool(_assign, f.get("path", ""), f.get("rolle", ""), f.get("formatieren") == "1", f.get("bestaetigung", ""))
     except (disks.DiskError, PermissionError) as exc:
-        return _back(fehler=str(exc))
-    return _back(msg)
+        return _back(fehler=str(exc), to="/platten")
+    return _back(msg, to="/platten")
 
 
 # ---------- Einstellungen ----------
@@ -300,28 +374,29 @@ async def einstellungen(request: Request):
         f = await _form(request)
     except PermissionError as exc:
         return _back(fehler=str(exc))
+    to = f.get("zurueck", "/einstellungen")
     cfg = Config.load()
-    zeit = f.get("backup_zeit", "00:00")
-    try:
-        h, m = (int(x) for x in zeit.split(":"))
-        assert 0 <= h < 24 and 0 <= m < 60
-        zeit = f"{h:02d}:{m:02d}"
-    except (ValueError, AssertionError):
-        return _back(fehler="Uhrzeit bitte als HH:MM")
-    ordner = f.get("drive_ordner", cfg.drive_ordner).strip().strip("/")
-    if not ordner or any(c in ordner for c in "\\:\n\r") or ".." in ordner.split("/"):
-        return _back(fehler="Ungültiger Drive-Ordner")
-    neu_policy = f.get("create_policy", cfg.create_policy)
-    changes = dict(
-        create_policy=neu_policy if neu_policy in ("epmfs", "mfs", "lfs", "ff") else "epmfs",
-        minfree_gb=_int(f.get("minfree_gb"), 1, 500, cfg.minfree_gb),
-        puffer_minuten=_int(f.get("puffer_minuten"), 1, 240, cfg.puffer_minuten),
-        backup_an=f.get("backup_an") == "1",
-        backup_zeit=zeit,
-        drive_ordner=ordner,
-        behalten_tage=_int(f.get("behalten_tage"), 1, 3650, cfg.behalten_tage),
-    )
-    remount = changes["create_policy"] != cfg.create_policy or changes["minfree_gb"] != cfg.minfree_gb
+    changes: dict = {}
+    if "backup_zeit" in f:
+        try:
+            h, m = (int(x) for x in f["backup_zeit"].split(":"))
+            assert 0 <= h < 24 and 0 <= m < 60
+        except (ValueError, AssertionError):
+            return _back(fehler="Uhrzeit bitte als HH:MM", to=to)
+        changes["backup_zeit"] = f"{h:02d}:{m:02d}"
+    if "drive_ordner" in f:
+        ordner = f["drive_ordner"].strip().strip("/")
+        if not ordner or any(c in ordner for c in "\\:\n\r") or ".." in ordner.split("/"):
+            return _back(fehler="Ungültiger Drive-Ordner", to=to)
+        changes["drive_ordner"] = ordner
+    if "create_policy" in f:
+        changes["create_policy"] = f["create_policy"] if f["create_policy"] in ("epmfs", "mfs", "lfs", "ff") else "epmfs"
+    for key, low, high in (("minfree_gb", 1, 500), ("puffer_minuten", 1, 240), ("behalten_tage", 1, 3650)):
+        if key in f:
+            changes[key] = _int(f[key], low, high, getattr(cfg, key))
+    if "backup_an" in f:  # Formular schickt verstecktes 0 und beim Haken 1 (der letzte Wert gewinnt)
+        changes["backup_an"] = f["backup_an"] == "1" and backup.drive_eingerichtet()
+    remount = any(k in changes and changes[k] != getattr(cfg, k) for k in ("create_policy", "minfree_gb"))
     cfg = config.update(**changes)
     if remount and not jobs.busy():
         def _re():
@@ -329,7 +404,7 @@ async def einstellungen(request: Request):
                 pool.unmount_pool()
                 pool.mount_all(cfg)
         await run_in_threadpool(_re)
-    return _back("Gespeichert")
+    return _back("Gespeichert", to=to)
 
 
 @app.post("/drive")
@@ -338,10 +413,10 @@ async def drive(request: Request):
         f = await _form(request)
         backup.write_rclone(f.get("token", ""), f.get("client_id", ""), f.get("client_secret", ""))
     except (backup.BackupError, PermissionError) as exc:
-        return _back(fehler=str(exc))
+        return _back(fehler=str(exc), to="/backup")
     if not jobs.run("Google Drive prüfen", backup.drive_testen_und_init):
-        return _back(fehler="Gespeichert, aber gerade läuft ein Auftrag – danach „Drive prüfen“ drücken")
-    return _back("Drive gespeichert – Prüfung läuft unten im Protokoll")
+        return _back(fehler="Gespeichert, aber gerade läuft ein Auftrag – danach „Drive prüfen“ drücken", to="/backup")
+    return _back("Drive verbunden – wird gerade geprüft", to="/backup")
 
 
 AKTIONEN = {
@@ -356,27 +431,28 @@ AKTIONEN = {
 @app.post("/aktion/{name}")
 async def aktion(request: Request, name: str):
     try:
-        await _form(request)
+        f = await _form(request)
     except PermissionError as exc:
         return _back(fehler=str(exc))
+    to = f.get("zurueck", "/")
     if name not in AKTIONEN:
-        return _back(fehler="Unbekannte Aktion")
+        return _back(fehler="Unbekannte Aktion", to=to)
     title, func = AKTIONEN[name]
     if not jobs.run(title, func):
-        return _back(fehler="Es läuft schon ein Auftrag")
-    return _back(f"{title} gestartet")
+        return _back(fehler="Es läuft schon ein Auftrag", to=to)
+    return _back(f"{title} gestartet", to=to)
 
 
 # ---------- Wiederherstellen ----------
 
-@app.get("/staende", response_class=HTMLResponse)
+@app.get("/wiederherstellen", response_class=HTMLResponse)
 async def staende(request: Request):
     fehler = ""
     try:
         items = await run_in_threadpool(backup.staende)
     except Exception as exc:  # noqa: BLE001
         items, fehler = [], str(exc)
-    return _page(request, "staende.html", staende=items, fehler=fehler)
+    return _page(request, "staende.html", active="/wiederherstellen", staende=items, fehler=fehler, drive=backup.drive_eingerichtet())
 
 
 @app.post("/wiederherstellen")
@@ -384,8 +460,8 @@ async def wiederherstellen(request: Request):
     try:
         f = await _form(request)
     except PermissionError as exc:
-        return _back(fehler=str(exc))
+        return _back(fehler=str(exc), to="/wiederherstellen")
     sid = f.get("id", "")
     if not jobs.run("Wiederherstellen aus Google Drive", backup.restore, sid, f.get("pfad", "")):
-        return _back(fehler="Es läuft schon ein Auftrag")
-    return _back("Wiederherstellung läuft – Ziel: pool/wiederhergestellt/")
+        return _back(fehler="Es läuft schon ein Auftrag", to="/wiederherstellen")
+    return _back("Wird zurückgeholt nach pool/wiederhergestellt/", to="/wiederherstellen")

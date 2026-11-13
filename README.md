@@ -201,7 +201,7 @@ wie im WLAN zu Hause (Werbeblocker, Sperren, VPN-Profile, Auto-Wechsel, Zugriff 
 
 ## 8. Speicher: Platten-Pool und Backup nach Google Drive (`cloudy-speicher`)
 
-Eigener Container mit Webseite unter **`http://<server>:8091`**. Beim ersten Aufruf legst du ein Passwort fest
+Eigener Container mit eigener Webseite (Material 3 Expressive, hell/dunkel, Handy und PC) unter **`http://<server>:8091`**. Beim ersten Aufruf legst du ein Passwort fest
 (oder fest über `SPEICHER_PASSWORD` in der `.env`).
 
 ```

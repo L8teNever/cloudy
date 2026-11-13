@@ -2,52 +2,54 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}Speicher{% endblock %} · cloudy</title>
-<style>
-:root{--page:#0c0e15;--card:#171924;--high:#202332;--highest:#2a2e40;--ink:#f1f3f9;--ink2:#cbd5e1;--muted:#9ca3af;--line:rgba(255,255,255,.07);
---brand:#38bdf8;--brand-soft:rgba(56,189,248,.14);--good:#34d399;--good-soft:rgba(16,185,129,.18);--warn:#fbbf24;--warn-soft:rgba(245,158,11,.16);
---bad:#f87171;--bad-soft:rgba(239,68,68,.16);--r:14px;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-*{box-sizing:border-box}
-body{margin:0;background:var(--page);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-header{border-bottom:1px solid var(--line);background:rgba(23,25,36,.9);position:sticky;top:0;z-index:2;backdrop-filter:blur(8px)}
-.bar{max-width:1100px;margin:auto;display:flex;align-items:center;gap:18px;padding:12px 18px}
-.logo{font-weight:700;font-size:18px;color:var(--ink);text-decoration:none}.logo span{color:var(--brand)}
-nav{display:flex;gap:6px;flex:1}nav a{color:var(--ink2);text-decoration:none;padding:6px 12px;border-radius:999px}nav a.active,nav a:hover{background:var(--brand-soft);color:var(--brand)}
-main{max-width:1100px;margin:auto;padding:22px 18px 60px}
-h1{font-size:24px;margin:0 0 4px}h2{font-size:17px;margin:0 0 12px}p.sub{color:var(--muted);margin:0 0 20px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px;margin-bottom:18px}
-.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
-.tile{background:var(--high);border-radius:12px;padding:14px}
-.tile .k{color:var(--muted);font-size:13px}.tile .v{font-size:20px;font-weight:650}
-.bar-u{height:8px;background:var(--highest);border-radius:99px;overflow:hidden;margin:8px 0 4px}.bar-u i{display:block;height:100%;background:var(--brand)}
-.pill{display:inline-block;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:600}
-.ok{background:var(--good-soft);color:var(--good)}.warn{background:var(--warn-soft);color:var(--warn)}.bad{background:var(--bad-soft);color:var(--bad)}.info{background:var(--brand-soft);color:var(--brand)}
-.msg{padding:12px 14px;border-radius:12px;margin-bottom:16px}
-table{width:100%;border-collapse:collapse}td,th{padding:10px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--muted);font-weight:500;font-size:13px}
-.muted{color:var(--muted)}.small{font-size:13px}.mono{font-family:var(--mono);font-size:13px}
-input,select,textarea{background:var(--high);color:var(--ink);border:1px solid var(--highest);border-radius:10px;padding:8px 10px;font:inherit}
-textarea{width:100%;min-height:90px;font-family:var(--mono);font-size:12px}
-input:focus,select:focus,textarea:focus{outline:2px solid var(--brand);outline-offset:0}
-button{background:var(--brand);color:#04111b;border:0;border-radius:999px;padding:8px 16px;font:inherit;font-weight:600;cursor:pointer}
-button.ghost{background:var(--highest);color:var(--ink)}button.danger{background:var(--bad);color:#1b0606}button:disabled{opacity:.5;cursor:default}
-form.inline{display:inline}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-label.f{display:flex;flex-direction:column;gap:4px;color:var(--ink2);font-size:13px}
-pre.log{background:#07080d;border-radius:10px;padding:12px;max-height:340px;overflow:auto;font-size:12px;margin:0;white-space:pre-wrap}
-details summary{cursor:pointer;color:var(--brand)}
-.fmt{display:none;margin-top:8px}.fmt.on{display:flex}
-@media(max-width:700px){nav{display:none}td,th{padding:8px 4px}}
-</style>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f4fbf8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1513" media="(prefers-color-scheme: dark)">
+<title>{% block title %}Speicher{% endblock %} · Speicher</title>
+<link rel="stylesheet" href="/static/m3.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='16' fill='%23006a60'/%3E%3Crect x='12' y='14' width='24' height='8' rx='4' fill='%239ef2e3'/%3E%3Crect x='12' y='26' width='24' height='8' rx='4' fill='%239ef2e3'/%3E%3C/svg%3E">
+<script src="/static/app.js" defer></script>
 </head>
 <body>
-<header><div class="bar"><a class="logo" href="/">cloudy <span>Speicher</span></a>
-{% if csrf %}<nav>{% for href, name in [("/", "Übersicht"), ("/staende", "Wiederherstellen")] %}<a href="{{ href }}" class="{{ 'active' if request.url.path == href }}">{{ name }}</a>{% endfor %}</nav>
-<form method="post" action="/logout" class="inline"><button class="ghost">Abmelden</button></form>{% endif %}
-</div></header>
-<main>
-{% if ok %}<div class="msg ok">{{ ok }}</div>{% endif %}
-{% if fehler %}<div class="msg bad">{{ fehler }}</div>{% endif %}
-{% block content %}{% endblock %}
-</main>
+{% block body %}
+<div class="app">
+  <nav class="rail" aria-label="Navigation">
+    <form method="post" action="/aktion/backup">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="zurueck" value="{{ active }}">
+      <button class="fab" title="Jetzt sichern" aria-label="Jetzt sichern" data-needs-idle {{ "disabled" if job or not drive }}><span class="ms">backup</span></button>
+    </form>
+    {% for href, name, icon in nav %}
+    <a class="nav-item {{ 'active' if active == href }}" href="{{ href }}" {{ 'aria-current=page' if active == href }}><span class="ind"><span class="ms">{{ icon }}</span></span>{{ name }}</a>
+    {% endfor %}
+    <div class="spacer"></div>
+    <form method="post" action="/logout"><button class="icon-btn" title="Abmelden" aria-label="Abmelden"><span class="ms">logout</span></button></form>
+  </nav>
+
+  <div class="content">
+    <div class="top-mobile">
+      <span class="title-l">{% block mtitle %}Speicher{% endblock %}</span>
+      <form method="post" action="/logout"><button class="icon-btn" title="Abmelden" aria-label="Abmelden"><span class="ms">logout</span></button></form>
+    </div>
+    <main class="page">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <form method="post" action="/aktion/backup" class="fab-mobile">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="zurueck" value="{{ active }}">
+    <button class="fab" aria-label="Jetzt sichern" data-needs-idle {{ "disabled" if job or not drive }}><span class="ms">backup</span></button>
+  </form>
+
+  <nav class="bottom-bar" aria-label="Navigation">
+    {% for href, name, icon in nav %}
+    <a class="nav-item {{ 'active' if active == href }}" href="{{ href }}"><span class="ind"><span class="ms">{{ icon }}</span></span>{{ name }}</a>
+    {% endfor %}
+  </nav>
+</div>
+{% endblock %}
+
+<div class="snackbar {{ 'err' if fehler }}" role="status" aria-live="polite" data-text="{{ fehler or ok }}">
+  <span class="ms">{{ "error" if fehler else "check_circle" }}</span><span class="txt"></span>
+</div>
 </body>
 </html>

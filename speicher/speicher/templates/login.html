@@ -1,22 +1,25 @@
 {% extends "base.html" %}
 {% block title %}{{ "Einrichten" if erst else "Anmelden" }}{% endblock %}
-{% block content %}
-<div class="card" style="max-width:420px;margin:40px auto">
-  {% if erst %}
-  <h1>Speicher einrichten</h1>
-  <p class="sub">Leg zuerst ein Passwort fest. Mit dieser Seite kann man Platten formatieren, also gut merken und nicht weitergeben.</p>
-  <form method="post" action="/einrichten" class="row" style="flex-direction:column;align-items:stretch">
-    <label class="f">Passwort (mind. 8 Zeichen)<input type="password" name="passwort" minlength="8" required autofocus autocomplete="new-password"></label>
-    <label class="f">Nochmal<input type="password" name="passwort2" minlength="8" required autocomplete="new-password"></label>
-    <button>Speichern</button>
-  </form>
-  {% else %}
-  <h1>Anmelden</h1>
-  <p class="sub">cloudy Speicher</p>
-  <form method="post" action="/login" class="row" style="flex-direction:column;align-items:stretch">
-    <label class="f">Passwort<input type="password" name="passwort" required autofocus autocomplete="current-password"></label>
-    <button>Anmelden</button>
-  </form>
-  {% endif %}
-</div>
+{% block body %}
+<main class="login">
+  <div class="card">
+    <div class="shape cookie primary"><span class="ms">{{ "key" if erst else "lock" }}</span></div>
+    {% if erst %}
+    <h1 class="headline">Willkommen</h1>
+    <p class="variant body-m" style="margin:8px 0 28px">Leg ein Passwort für den Speicher fest. Damit kann man Platten formatieren, also gut merken und nicht weitergeben.</p>
+    <form method="post" action="/einrichten">
+      <div class="field"><input type="password" name="passwort" id="p1" minlength="8" placeholder=" " required autofocus autocomplete="new-password"><label for="p1">Passwort</label><span class="sup">Mindestens 8 Zeichen</span></div>
+      <div class="field"><input type="password" name="passwort2" id="p2" minlength="8" placeholder=" " required autocomplete="new-password"><label for="p2">Nochmal</label></div>
+      <div class="actions"><button class="btn large" style="width:100%">Los geht's</button></div>
+    </form>
+    {% else %}
+    <h1 class="headline">Speicher</h1>
+    <p class="variant body-m" style="margin:8px 0 28px">Melde dich an, um Platten und Backups zu verwalten.</p>
+    <form method="post" action="/login">
+      <div class="field {{ 'error' if fehler }}"><input type="password" name="passwort" id="pw" placeholder=" " required autofocus autocomplete="current-password"><label for="pw">Passwort</label></div>
+      <div class="actions"><button class="btn large" style="width:100%">Anmelden</button></div>
+    </form>
+    {% endif %}
+  </div>
+</main>
 {% endblock %}

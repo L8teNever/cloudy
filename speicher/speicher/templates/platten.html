@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Platten{% endblock %}
+{% block mtitle %}Platten{% endblock %}
+{% block content %}
+<header class="appbar">
+  <div>
+    <h1 class="display">Platten</h1>
+    <p class="variant">Tippe eine Platte an, um ihr eine Aufgabe zu geben.</p>
+  </div>
+</header>
+{% if disk_fehler %}<div class="danger-box"><span class="ms">error</span><span>{{ disk_fehler }}</span></div>{% endif %}
+
+{% set gruppen = [
+  ("Im Pool", "Jede Datei liegt ganz auf einer Platte. Fällt eine aus, fehlen nur ihre Dateien.", disks|selectattr("path", "in", rollen)|rejectattr("path", "in", puffer_paths(rollen))|list),
+  ("Puffer-SSD", "Hält alles Neue doppelt fest, bis es in Google Drive gesichert ist.", disks|selectattr("path", "in", puffer_paths(rollen))|list),
+  ("Frei", "Noch keine Aufgabe.", disks|rejectattr("path", "in", rollen)|rejectattr("system")|list),
+  ("System", "Davon läuft der Server. Gesperrt, damit nichts kaputtgeht.", disks|selectattr("system")|list),
+] %}
+
+{% for titel, hilfe, liste in gruppen if liste %}
+<h2 class="title-m section-title">{{ titel }}</h2>
+<p class="body-m variant" style="margin:-8px 4px 12px">{{ hilfe }}</p>
+<div class="list">
+  {% for d in liste %}
+  {% set rolle = rollen.get(d.path, "") %}
+  {% set h = health.get(d.path) %}
+  {% set mount = (st.hdds|selectattr("name", "equalto", rolle)|first) if rolle.startswith("hdd") else (st.puffer if rolle == "puffer" else none) %}
+  <button class="li" type="button" {% if not d.system %}data-open="dlg-{{ d.name }}"{% else %}disabled{% endif %}>
+    <div class="shape {{ 'muted' if d.system else ('primary' if rolle else 'tertiary') }} {{ 'round' if d.ssd else 'cookie' }}">
+      <span class="ms">{{ "lock" if d.system else ("bolt" if d.ssd else "hard_drive") }}</span>
+    </div>
+    <div class="txt">
+      <p class="title-m">{{ d.model or d.name }}{% if rolle.startswith("hdd") %} <span class="variant">· {{ rolle }}</span>{% endif %}</p>
+      <p class="body-m variant" style="margin:0">{{ d.name }} · {{ d.size|bytes }} · {{ d.art }}{% if d.tran %} · {{ d.tran|upper }}{% endif %}</p>
+      {% if mount and mount.mounted %}
+      <div class="progress" style="margin-top:8px;max-width:320px"><i style="width:{{ pct(mount.size - mount.free, mount.size) }}%"></i></div>
+      <p class="body-s variant" style="margin:4px 0 0">{{ (mount.size - mount.free)|bytes }} von {{ mount.size|bytes }} belegt</p>
+      {% elif d.system %}<p class="body-s variant" style="margin:2px 0 0">{{ d.system_grund }}</p>{% endif %}
+    </div>
+    <div class="trail">
+      {% if mount and not mount.mounted %}<span class="chip bad"><span class="ms">error</span>{{ mount.fehler or "nicht eingehängt" }}</span>{% endif %}
+      {% if h == "ok" %}<span class="chip ok"><span class="ms">favorite</span>Gesund</span>
+      {% elif h == "FEHLER" %}<span class="chip bad"><span class="ms">heart_broken</span>Defekt – tauschen!</span>
+      {% else %}<span class="chip"><span class="ms">help</span>SMART –</span>{% endif %}
+      {% if not d.system %}<span class="ms variant">chevron_right</span>{% endif %}
+    </div>
+  </button>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty"><div class="shape cookie muted"><span class="ms">search_off</span></div><p class="title-m">Keine Platten gefunden</p></div>
+{% endfor %}
+
+{# Fehlende Platten (im Pool eingetragen, aber nicht angeschlossen) #}
+{% set fehlend = st.hdds|rejectattr("device")|list %}
+{% if fehlend %}
+<h2 class="title-m section-title">Fehlt</h2>
+<div class="list">
+  {% for h in fehlend %}
+  <div class="li"><div class="shape error cookie"><span class="ms">hard_drive</span></div>
+    <div class="txt"><p class="title-m">{{ h.name }}</p><p class="body-m variant" style="margin:0">Nicht angeschlossen oder defekt. Neue Platte einbauen, als Pool formatieren, dann unter Backup „Puffer zurückspielen“ und unter Zurückholen den Rest aus Drive holen.</p></div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{# Dialoge #}
+{% for d in disks if not d.system %}
+{% set rolle = rollen.get(d.path, "") %}
+<dialog id="dlg-{{ d.name }}" aria-labelledby="t-{{ d.name }}">
+  <form method="post" action="/platte">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="path" value="{{ d.path }}">
+    <div class="icon"><span class="ms" style="font-size:32px">{{ "bolt" if d.ssd else "hard_drive" }}</span></div>
+    <h2 class="headline" id="t-{{ d.name }}" style="font-size:24px;line-height:32px">{{ d.model or d.name }}</h2>
+    <p class="body-m variant" style="text-align:center;margin:-8px 0 20px">{{ d.name }} · {{ d.size|bytes }} · {{ d.art }}{% if d.serial %} · {{ d.serial }}{% endif %}</p>
+
+    <p class="label-l variant" style="margin:0">Aufgabe</p>
+    <div class="segmented" role="radiogroup">
+      <label><input type="radio" name="rolle" value="keine" {{ "checked" if not rolle }}><span><span class="ms">block</span>Keine</span></label>
+      <label><input type="radio" name="rolle" value="pool" {{ "checked" if rolle.startswith("hdd") }}><span><span class="ms">hard_drive</span>Pool</span></label>
+      <label><input type="radio" name="rolle" value="puffer" {{ "checked" if rolle == "puffer" }}><span><span class="ms">bolt</span>Puffer</span></label>
+    </div>
+
+    <label class="switch-row">
+      <span class="txt"><span class="title-m" style="display:block">Formatieren</span>
+        <span class="body-m variant">{% if d.dateisystem %}Vorhandene Daten ({{ d.dateisystem.fstype }}) behalten, wenn aus.{% else %}Nötig – kein nutzbares Dateisystem drauf.{% endif %}</span></span>
+      <span class="switch"><input type="checkbox" name="formatieren" value="1" data-toggle="fmt-{{ d.name }}" {{ "checked" if not d.dateisystem }}><span class="tr"></span><span class="th"></span></span>
+    </label>
+
+    <div class="collapse" id="fmt-{{ d.name }}">
+      <div class="danger-box"><span class="ms">warning</span><span class="body-m">Alles auf <b>{{ d.name }}</b> wird endgültig gelöscht. Zur Bestätigung den Namen eintippen.</span></div>
+      <div class="field"><input name="bestaetigung" placeholder=" " autocomplete="off" pattern="{{ d.name }}" id="b-{{ d.name }}"><label for="b-{{ d.name }}">{{ d.name }} eintippen</label></div>
+    </div>
+
+    <div class="actions">
+      <button type="button" class="btn text" data-close>Abbrechen</button>
+      <button class="btn">Übernehmen</button>
+    </div>
+  </form>
+</dialog>
+{% endfor %}
+{% endblock %}

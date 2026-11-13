@@ -1,26 +1,46 @@
 {% extends "base.html" %}
-{% block title %}Wiederherstellen{% endblock %}
+{% block title %}Zurückholen{% endblock %}
+{% block mtitle %}Zurückholen{% endblock %}
 {% block content %}
-<h1>Wiederherstellen</h1>
-<p class="sub">Aus Google Drive zurück in den Pool. Es landet immer in einem neuen Ordner <span class="mono">pool/wiederhergestellt/</span>, es wird nichts überschrieben.
-Einzelne Dateien kannst du auch einfach in Drive im Browser herunterladen.</p>
-<div class="card">
+<header class="appbar">
+  <div>
+    <h1 class="display">Zurückholen</h1>
+    <p class="variant">Aus Google Drive zurück in den Pool. Landet immer in <code>pool/wiederhergestellt/</code>, überschrieben wird nichts.</p>
+  </div>
+</header>
+
+{% if fehler %}<div class="danger-box"><span class="ms">error</span><span>{{ fehler }}</span></div>{% endif %}
 {% if staende %}
-<table>
-<tr><th>Stand</th><th>Wiederherstellen</th></tr>
-{% for s in staende %}
-<tr>
-  <td><b>{{ s.titel }}</b><br><span class="small muted">{{ s.info }}</span></td>
-  <td>
-    <form method="post" action="/wiederherstellen" class="row">
-      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ s.id }}">
-      <input name="pfad" placeholder="nur Ordner/Datei, z. B. Fotos/2026 (leer = alles)" style="min-width:260px">
-      <button class="ghost">Wiederherstellen</button>
-    </form>
-  </td>
-</tr>
-{% endfor %}
-</table>
-{% elif not fehler %}<p class="muted">Google Drive ist noch nicht verbunden.</p>{% endif %}
+<div class="list">
+  {% for s in staende %}
+  <button class="li" type="button" data-open="dlg-{{ loop.index }}">
+    <div class="shape {{ 'primary cookie' if loop.first else 'tertiary round' }}"><span class="ms">{{ "cloud_done" if loop.first else "history" }}</span></div>
+    <div class="txt"><p class="title-m">{{ s.titel }}</p><p class="body-m variant" style="margin:0">{{ s.info }}</p></div>
+    <div class="trail"><span class="ms variant">download</span></div>
+  </button>
+  {% endfor %}
 </div>
+<p class="body-m variant" style="margin:16px 4px">Einzelne Dateien kannst du auch direkt in Google Drive im Browser herunterladen.</p>
+
+{% for s in staende %}
+<dialog id="dlg-{{ loop.index }}" aria-labelledby="t-{{ loop.index }}">
+  <form method="post" action="/wiederherstellen">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ s.id }}">
+    <div class="icon"><span class="ms" style="font-size:32px">settings_backup_restore</span></div>
+    <h2 class="headline" id="t-{{ loop.index }}" style="font-size:24px;line-height:32px">{{ s.titel }}</h2>
+    <div class="field"><input name="pfad" id="p-{{ loop.index }}" placeholder=" " autocomplete="off"><label for="p-{{ loop.index }}">Nur Ordner oder Datei (optional)</label>
+      <span class="sup">z. B. <code>Fotos/2026</code>. Leer lassen für alles.</span></div>
+    <div class="actions"><button type="button" class="btn text" data-close>Abbrechen</button><button class="btn" data-needs-idle {{ "disabled" if job }}>Zurückholen</button></div>
+  </form>
+</dialog>
+{% endfor %}
+{% elif not fehler %}
+<div class="card empty">
+  <div class="shape cookie tertiary"><span class="ms">cloud_off</span></div>
+  <p class="title-m">{{ "Noch kein Backup" if drive else "Google Drive ist nicht verbunden" }}</p>
+  <a class="btn tonal" href="/backup" style="margin-top:16px">Zum Backup</a>
+</div>
+{% endif %}
+
+<div style="margin-top:24px">{% include "teile/auftrag.html" %}</div>
 {% endblock %}

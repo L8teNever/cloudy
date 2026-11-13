@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # cloudy Speicher: Platten-Pool (mergerfs), Puffer-SSD und Backup nach Google Drive (rclone, normale Dateien, unverschlüsselt).
 FROM python:3.12-slim-bookworm
 
@@ -27,6 +28,9 @@ WORKDIR /srv
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY speicher ./speicher
+# Material 3: Google Sans Flex + Material Symbols Rounded (beide OFL/Apache, lokal ausgeliefert – kein Google-CDN nötig).
+ADD --chmod=644 "https://github.com/google/fonts/raw/main/ofl/googlesansflex/GoogleSansFlex%5BROND,opsz,slnt,wdth,wght%5D.ttf" ./speicher/static/fonts/GoogleSansFlex.ttf
+ADD --chmod=644 "https://github.com/google/material-design-icons/raw/master/variablefont/MaterialSymbolsRounded%5BFILL,GRAD,opsz,wght%5D.woff2" ./speicher/static/fonts/MaterialSymbolsRounded.woff2
 
 VOLUME /data
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s \

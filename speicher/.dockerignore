@@ -1,2 +1,4 @@
 __pycache__
 *.pyc
+speicher/static/fonts/*.ttf
+speicher/static/fonts/*.woff2

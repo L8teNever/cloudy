@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Einstellungen{% endblock %}
+{% block mtitle %}Einstellungen{% endblock %}
+{% block content %}
+<header class="appbar"><div><h1 class="display">Einstellungen</h1></div></header>
+
+<form method="post" action="/einstellungen">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="zurueck" value="/einstellungen">
+  <section class="card">
+    <div class="card-head"><div class="shape round"><span class="ms">account_tree</span></div><h2 class="title-l">Wohin neue Dateien kommen</h2></div>
+    {% for value, titel, text in [
+      ("epmfs", "Zum Ordner (empfohlen)", "Bleibt auf der Platte, auf der sein Ordner liegt. Fällt eine Platte aus, fehlen ganze Ordner statt verstreuter Einzeldateien."),
+      ("mfs", "Am meisten Platz", "Immer auf die Platte mit dem meisten freien Platz."),
+      ("lfs", "Nacheinander füllen", "Erst eine Platte voll machen, dann die nächste. Die anderen können schlafen."),
+      ("ff", "Erste Platte", "Immer hdd1, solange Platz ist."),
+    ] %}
+    <label class="radio-row"><input type="radio" name="create_policy" value="{{ value }}" {{ "checked" if cfg.create_policy == value }}>
+      <span><span class="title-m" style="display:block">{{ titel }}</span><span class="body-m variant">{{ text }}</span></span></label>
+    {% endfor %}
+    <div class="field" style="max-width:280px;margin-top:16px"><input type="number" name="minfree_gb" id="mf" min="1" max="500" value="{{ cfg.minfree_gb }}" required><label for="mf">Pro Platte frei lassen (GB)</label></div>
+    <div class="actions"><button class="btn tonal">Speichern</button></div>
+  </section>
+</form>
+
+<section class="card">
+  <div class="card-head"><div class="shape round tertiary"><span class="ms">info</span></div><h2 class="title-l">Über diesen Dienst</h2></div>
+  <div class="list" style="margin:0">
+    <div class="li" style="background:var(--sc)"><span class="ms variant">folder</span><div class="txt"><p class="title-m">Pool auf dem Server</p><p class="mono variant" style="margin:0">{{ mount_root }}/pool</p></div></div>
+    <div class="li" style="background:var(--sc)"><span class="ms variant">lan</span><div class="txt"><p class="title-m">Adresse dieser Seite</p><p class="mono variant" style="margin:0">Port {{ port }}</p></div></div>
+    <div class="li" style="background:var(--sc)"><span class="ms variant">deployed_code</span><div class="txt"><p class="title-m">In anderen Containern einbinden</p><p class="mono variant" style="margin:0">- {{ mount_root }}/pool:/daten:rslave</p></div></div>
+  </div>
+</section>
+
+<form method="post" action="/logout" class="actions start"><button class="btn outlined"><span class="ms">logout</span>Abmelden</button></form>
+{% endblock %}

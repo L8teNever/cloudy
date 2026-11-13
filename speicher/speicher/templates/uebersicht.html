@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Übersicht{% endblock %}
+{% block content %}
+{% set p = st.pool %}
+{% set used = p.size - p.free if p.mounted else 0 %}
+<header class="appbar">
+  <div>
+    <h1 class="display">Speicher</h1>
+    <p class="variant">
+      {% if warnungen %}Es gibt {{ warnungen|length }} {{ "Hinweis" if warnungen|length == 1 else "Hinweise" }}.
+      {% elif not cfg.pool %}Noch keine Platten eingerichtet.
+      {% elif cfg.backup_an and cfg.letztes_backup_ende %}Alles gesichert.
+      {% else %}Pool läuft.{% endif %}
+    </p>
+  </div>
+</header>
+
+{% for w in warnungen %}
+<div class="card" style="background:var(--error-container);color:var(--on-error-container);display:flex;gap:16px;align-items:center;border-radius:var(--r-l);padding:16px 20px">
+  <span class="ms fill">warning</span><span class="body-m" style="flex:1">{{ w }}</span>
+</div>
+{% endfor %}
+
+{% if not cfg.pool %}
+<div class="card hero">
+  <div class="empty" style="color:inherit;padding:24px 8px">
+    <div class="shape cookie primary"><span class="ms">hard_drive</span></div>
+    <h2 class="headline">Los geht's</h2>
+    <p class="variant" style="max-width:420px;margin:8px auto 24px">Wähle deine HDDs für den Pool und die SSD als Puffer. Danach verbindest du Google Drive für das Backup.</p>
+    <a class="btn large" href="/platten"><span class="ms">add</span>Platten einrichten</a>
+  </div>
+</div>
+{% else %}
+<section class="card hero">
+  <div class="hero-grid">
+    <div class="ring">
+      {% set pr = pct(used, p.size) %}
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <circle class="track" cx="50" cy="50" r="42" fill="none" stroke-width="12"/>
+        <circle class="val" cx="50" cy="50" r="42" fill="none" stroke-width="12" stroke-linecap="round"
+          stroke-dasharray="263.9" stroke-dashoffset="{{ 263.9 * (1 - pr / 100) }}"/>
+      </svg>
+      <div class="center"><div><div class="pct num">{{ pr }}<span style="font-size:.5em">%</span></div><div class="body-s variant">belegt</div></div></div>
+    </div>
+    <div>
+      <p class="label-l variant" style="margin:0">Pool · {{ st.hdds|length }} {{ "Platte" if st.hdds|length == 1 else "Platten" }}</p>
+      <p class="headline num" style="margin:4px 0 0">{{ (p.free if p.mounted else 0)|bytes }} frei</p>
+      <p class="variant body-m" style="margin:4px 0 0">{{ used|bytes }} von {{ p.size|bytes }} belegt</p>
+      {% set total = st.hdds|sum(attribute="size") %}
+      <div class="segbar" aria-hidden="true">
+        {% for h in st.hdds %}
+        <div class="seg" style="flex:{{ h.size if h.mounted else (total / st.hdds|length if total else 1) }}">
+          {% if h.mounted %}<i class="c{{ loop.index }}" style="width:{{ pct(h.size - h.free, h.size) }}%"></i>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      <div class="legend body-m">
+        {% for h in st.hdds %}
+        <span><b class="c{{ loop.index }}"></b>{{ h.name }} · {% if h.mounted %}{{ (h.size - h.free)|bytes }} / {{ h.size|bytes }}{% else %}<strong>fehlt</strong>{% endif %}</span>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<div class="grid">
+  <a class="card high" href="/backup" style="text-decoration:none;color:inherit">
+    <div class="card-head">
+      {% if not drive %}<div class="shape tertiary round"><span class="ms">add_to_drive</span></div>
+      {% elif cfg.letzter_fehler %}<div class="shape error round"><span class="ms">cloud_off</span></div>
+      {% else %}<div class="shape primary round"><span class="ms">cloud_done</span></div>{% endif %}
+      <span class="title-m">Google Drive</span>
+    </div>
+    <div class="stat">
+      <span class="body-s variant">Letztes Backup</span>
+      <span class="big">{{ cfg.letztes_backup_ende|wann }}</span>
+      <span class="body-m variant">
+        {% if not drive %}Noch nicht verbunden
+        {% elif not cfg.backup_an %}Automatisch: aus
+        {% else %}Nächstes: {{ naechstes|wann }}{% endif %}
+      </span>
+    </div>
+  </a>
+
+  <a class="card high" href="/platten" style="text-decoration:none;color:inherit">
+    <div class="card-head"><div class="shape round {{ 'primary' if st.puffer and st.puffer.mounted else 'muted' }}"><span class="ms">bolt</span></div><span class="title-m">Puffer-SSD</span></div>
+    <div class="stat">
+      {% if st.puffer %}
+        <span class="body-s variant">Seit dem letzten Backup doppelt</span>
+        <span class="big num">{{ (st.puffer.size - st.puffer.free)|bytes if st.puffer.mounted else "–" }}</span>
+        <span class="body-m variant">Letzte Kopie {{ cfg.letzte_kopie|wann }} · alle {{ cfg.puffer_minuten }} Min.</span>
+      {% else %}
+        <span class="body-s variant">Nicht eingerichtet</span>
+        <span class="big">–</span>
+        <span class="body-m variant">Neue Dateien liegen nur einmal da</span>
+      {% endif %}
+    </div>
+  </a>
+
+  <a class="card high" href="/platten" style="text-decoration:none;color:inherit">
+    {% set ok = st.hdds|selectattr("mounted")|list|length %}
+    <div class="card-head"><div class="shape round {{ 'primary' if ok == st.hdds|length and ok else ('error' if st.hdds else 'muted') }}"><span class="ms">hard_drive</span></div><span class="title-m">Platten</span></div>
+    <div class="stat">
+      <span class="body-s variant">Im Pool eingehängt</span>
+      <span class="big num">{{ ok }} / {{ st.hdds|length }}</span>
+      <span class="body-m variant">{{ mount_root }}/pool</span>
+    </div>
+  </a>
+</div>
+
+<h2 class="title-m section-title">Aktivität</h2>
+{% include "teile/auftrag.html" %}
+<div class="actions start">
+  {% for name, title, icon in [("kopie", "Puffer-Kopie jetzt", "bolt"), ("einhaengen", "Neu einhängen", "refresh")] %}
+  <form method="post" action="/aktion/{{ name }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="zurueck" value="/">
+    <button class="btn tonal" data-needs-idle {{ "disabled" if job }}><span class="ms">{{ icon }}</span>{{ title }}</button></form>
+  {% endfor %}
+</div>
+{% endblock %}

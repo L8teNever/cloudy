@@ -251,6 +251,18 @@ def alte_ordner_zum_loeschen(namen: list[str], now: float, tage: int) -> list[st
     return sorted(weg)
 
 
+def naechstes_backup(now: float, zeit: str) -> float:
+    try:
+        hour, minute = (int(x) for x in zeit.split(":"))
+    except ValueError:
+        hour, minute = 0, 0
+    now_dt = datetime.fromtimestamp(now)
+    slot = now_dt.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if slot <= now_dt:
+        slot += timedelta(days=1)
+    return slot.timestamp()
+
+
 def backup(job) -> None:
     cfg = Config.load()
     if not drive_eingerichtet():

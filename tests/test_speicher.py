@@ -161,11 +161,12 @@ def web(monkeypatch):
     from fastapi.testclient import TestClient
     from speicher import main
 
-    monkeypatch.setattr(main, "_overview", lambda: {
-        "cfg": config.Config(), "disks": [], "rollen": {}, "health": {}, "drive": False, "disk_fehler": "",
-        "mount_root": "/mnt/cloudy",
+    status = {
+        "cfg": config.Config(), "drive": False, "mount_root": "/mnt/cloudy", "naechstes": 0, "warnungen": [],
         "st": {"hdds": [], "puffer": None, "pool": pool.Branch("pool", "", "/mnt/cloudy/pool")},
-    })
+    }
+    monkeypatch.setattr(main, "_status", lambda: status)
+    monkeypatch.setattr(main, "_disks", lambda: {"disks": [], "rollen": {}, "health": {}, "disk_fehler": ""})
     with TestClient(main.app, base_url="http://speicher.lan") as c:
         yield c
 
@@ -175,9 +176,12 @@ def test_web_erst_einrichten_dann_anmelden(web):
     assert r.headers["location"] == "/einrichten"
     r = web.post("/einrichten", data={"passwort": "geheim123", "passwort2": "geheim123"}, follow_redirects=False)
     assert r.status_code == 303 and auth.COOKIE in r.cookies
-    r = web.get("/")
-    assert r.status_code == 200 and "Platten" in r.text
+    for seite in ("/", "/platten", "/backup", "/einstellungen"):
+        r = web.get(seite)
+        assert r.status_code == 200 and "Platten" in r.text, seite
     assert r.headers["x-frame-options"] == "DENY"
+    assert "script-src 'self';" in r.headers["content-security-policy"]
+    assert web.get("/static/m3.css").status_code == 200
     # Zweites Einrichten geht nicht mehr
     r = web.post("/einrichten", data={"passwort": "anders1234", "passwort2": "anders1234"}, follow_redirects=False)
     assert r.headers["location"] == "/login"
@@ -197,6 +201,19 @@ def test_web_login_sperre(web):
     for _ in range(5):
         assert "Falsches Passwort" in web.post("/login", data={"passwort": "nein"}).text
     assert "Zu viele Versuche" in web.post("/login", data={"passwort": "geheim123"}).text
+
+
+def test_einstellungen_aendern_nur_gesendete_felder(web):
+    web.post("/einrichten", data={"passwort": "geheim123", "passwort2": "geheim123"})
+    config.update(backup_an=True, puffer_minuten=7)
+    csrf = auth.csrf_token(web.cookies.get(auth.COOKIE))
+    r = web.post("/einstellungen", data={"csrf": csrf, "zurueck": "/einstellungen", "create_policy": "mfs", "minfree_gb": "50"},
+                 follow_redirects=False)
+    assert r.headers["location"].startswith("/einstellungen?ok=")
+    cfg = config.Config.load()
+    assert cfg.create_policy == "mfs" and cfg.minfree_gb == 50 and cfg.backup_an and cfg.puffer_minuten == 7
+    r = web.post("/einstellungen", data={"csrf": csrf, "zurueck": "https://boese.example", "behalten_tage": "9"}, follow_redirects=False)
+    assert r.headers["location"].startswith("/?ok=") and config.Config.load().behalten_tage == 9
 
 
 def test_web_api_ohne_login(web):
