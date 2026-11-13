@@ -261,7 +261,7 @@ def test_render_pro_geraet():
     pc = fg.render(e, "pc")
     assert "config file" not in pc  # keine Schleife
     familie = pc[pc.index("[Familie]"):pc.index("[Filme]")]
-    assert "guest only = yes" in familie
+    assert "guest ok = yes" in familie and "guest only" not in familie and "valid users" not in familie
     assert "[Privat]" in pc and "valid users = simon\n" in pc
     filme = pc[pc.index("[Filme]"):pc.index("[Privat]")]
     assert "read only = yes" in filme and "guest ok = yes" in filme

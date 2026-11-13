@@ -5,7 +5,7 @@ Regeln pro Freigabe:
   - "geraete" überschreibt das pro Gerät (Schlüssel = MAC aus cloudy, sonst "ip:1.2.3.4").
 
 Umsetzung: Samba lädt pro Verbindung eine eigene Konfiguration für die IP des Geräts
-(config file = hosts/%I.conf). Darin fehlen versteckte Freigaben ganz, offene haben "guest only",
+(config file = hosts/%I.conf). Darin fehlen versteckte Freigaben ganz, offene haben "guest ok" (Gast oder jeder angemeldete Benutzer),
 Passwort-Freigaben "valid users". Geräte ohne eigene Datei bekommen die Standard-Konfiguration.
 Die IPs kommen aus cloudy (Geräteliste) und werden regelmäßig abgeglichen.
 """
@@ -46,7 +46,7 @@ class Freigabe:
     ordner: str = ""  # relativ zum Pool, "" = ganzer Pool
     nur_lesen: bool = False
     dlna: bool = False
-    standard: str = "passwort"
+    standard: str = "offen"
     geraete: dict[str, str] = field(default_factory=dict)
     benutzer: list[str] = field(default_factory=list)  # leer = alle Benutzer
 
@@ -250,7 +250,9 @@ def share_section(f: Freigabe, regel: str, alle_benutzer: list[str]) -> str:
         "  directory mask = 0775",
     ]
     if regel == "offen":
-        lines += ["  guest ok = yes", "  guest only = yes"]
+        # Kein "guest only": Windows 11 lässt Gast-Zugriff oft nicht zu, dann meldet man sich
+        # mit einem angelegten Benutzer an und kommt damit auch in die offenen Ordner.
+        lines += ["  guest ok = yes"]
     else:
         users = [u for u in (f.benutzer or alle_benutzer) if u in alle_benutzer]
         lines += ["  guest ok = no", f"  valid users = {' '.join(users) if users else 'nobody-darf-rein'}"]

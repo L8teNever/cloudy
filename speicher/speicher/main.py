@@ -550,7 +550,7 @@ async def freigabe_neu(request: Request):
         f = await _form(request)
         name = freigaben.check_name(f.get("name", ""))
         ordner = freigaben.check_ordner(f.get("ordner", ""))
-        standard = f.get("standard", "passwort")
+        standard = f.get("standard", "offen")
         if standard not in freigaben.REGELN:
             raise freigaben.FreigabeError("Unbekannte Regel")
         with freigaben._lock:
