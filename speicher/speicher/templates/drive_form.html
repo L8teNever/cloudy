@@ -1,0 +1,9 @@
+<form method="post" action="/drive" style="margin-top:10px">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label class="f">Token aus „rclone authorize drive“<textarea name="token" required placeholder='{"access_token":"…","token_type":"Bearer","refresh_token":"…","expiry":"…"}'></textarea></label>
+  <details style="margin:8px 0"><summary class="small">Eigene Google-API-Zugangsdaten (optional, schneller)</summary>
+    <div class="row" style="margin-top:8px"><input name="client_id" placeholder="client_id" autocomplete="off"><input name="client_secret" placeholder="client_secret" autocomplete="off"></div>
+    <p class="small muted">Wenn du die nutzt, musst du sie auch beim „rclone authorize drive &lt;client_id&gt; &lt;client_secret&gt;“ angeben.</p>
+  </details>
+  <button>Verbinden</button>
+</form>

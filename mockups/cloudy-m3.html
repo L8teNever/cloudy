@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111318">
+<title>cloudy – Material 3 Expressive (Mockup)</title>
+<style>
+:root{
+  --primary:#a8c7fa; --on-primary:#062e6f;
+  --primary-c:#0842a0; --on-primary-c:#d3e3fd;
+  --secondary-c:#3e4759; --on-secondary-c:#d8e2f9;
+  --tertiary-c:#574500; --on-tertiary-c:#ffe08b;
+  --success-c:#0f5223; --on-success-c:#a6f4b5;
+  --warn-c:#6b3a00; --on-warn-c:#ffdcbe;
+  --error:#ffb4ab;
+  --surface:#111318; --s-low:#191c20; --s-cont:#1d2024; --s-high:#282a2f; --s-highest:#33353a;
+  --on-surface:#e2e2e9; --on-variant:#c4c6d0; --outline:#8e9099; --outline-v:#44474f;
+  --spring:cubic-bezier(.34,1.45,.64,1); --emph:cubic-bezier(.2,0,0,1);
+  --font:"Google Sans Flex","Google Sans","Roboto Flex",Roboto,system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box;margin:0;-webkit-tap-highlight-color:transparent}
+body{font-family:var(--font);background:var(--surface);color:var(--on-surface);min-height:100vh;padding-bottom:110px}
+a{color:inherit;text-decoration:none}
+svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.wrap{max-width:760px;margin:0 auto;padding:0 16px}
+
+/* Obere Leiste (Large Top App Bar) */
+.top{padding:calc(14px + env(safe-area-inset-top)) 0 8px;display:flex;align-items:center;gap:12px}
+.logo{width:48px;height:48px;border-radius:16px;background:var(--primary-c);color:var(--on-primary-c);display:grid;place-items:center}
+.top h1{font-size:32px;font-weight:500;letter-spacing:-.3px;flex:1}
+.icon-btn{width:48px;height:48px;border-radius:999px;border:none;background:var(--secondary-c);color:var(--on-secondary-c);display:grid;place-items:center;cursor:pointer;transition:border-radius .28s var(--emph),transform .28s var(--spring)}
+.icon-btn:active{border-radius:14px;transform:scale(.92)}
+.hello{font-size:15px;color:var(--on-variant);margin:0 0 18px 2px}
+
+/* Status-Hero */
+.hero{background:var(--primary-c);color:var(--on-primary-c);border-radius:36px 36px 36px 12px;padding:22px 22px 20px;position:relative;overflow:hidden;margin-bottom:12px}
+.hero::after{content:"";position:absolute;right:-50px;top:-50px;width:190px;height:190px;border-radius:44% 56% 62% 38%;background:rgba(168,199,250,.16)}
+.hero .row{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:500}
+.dot{width:10px;height:10px;border-radius:50%;background:#6dd58c;box-shadow:0 0 0 0 rgba(109,213,140,.6);animation:ping 2s infinite}
+@keyframes ping{70%{box-shadow:0 0 0 10px rgba(109,213,140,0)}100%{box-shadow:0 0 0 0 rgba(109,213,140,0)}}
+.hero h2{font-size:30px;font-weight:500;margin:10px 0 4px;letter-spacing:-.3px;position:relative}
+.hero p{font-size:14px;opacity:.85;position:relative}
+.hero .chips{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;position:relative}
+.chip{height:34px;padding:0 14px;border-radius:12px;background:rgba(211,227,253,.16);display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:500}
+.chip svg{width:18px;height:18px}
+
+/* Kennzahlen */
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.stat{background:var(--s-high);border-radius:28px;padding:18px 18px 16px}
+.stat:nth-child(1){border-radius:28px 12px 12px 28px}
+.stat:nth-child(2){border-radius:12px 28px 28px 12px}
+.stat small{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--on-variant)}
+.stat small svg{width:18px;height:18px}
+.stat b{display:block;font-size:34px;font-weight:500;margin-top:6px;letter-spacing:-.5px}
+.stat b span{font-size:15px;font-weight:400;color:var(--on-variant);margin-left:3px}
+.spark{height:34px;margin-top:8px;width:100%}
+
+/* Abschnitte */
+h3.sec{font-size:14px;font-weight:500;color:var(--primary);margin:22px 6px 10px;letter-spacing:.3px}
+
+/* Mein Gerät */
+.mine{display:flex;align-items:center;gap:14px;background:var(--secondary-c);color:var(--on-secondary-c);border-radius:28px;padding:16px;margin-bottom:12px}
+.mine .ic{width:56px;height:56px;border-radius:20px;background:var(--primary);color:var(--on-primary);display:grid;place-items:center}
+.mine .t{flex:1;min-width:0}
+.mine .t b{display:block;font-size:17px;font-weight:500}
+.mine .t span{font-size:13px;opacity:.8}
+.seg{display:flex;background:var(--s-cont);border-radius:999px;padding:4px;gap:2px}
+.seg button{border:none;background:none;color:var(--on-variant);font:inherit;font-size:13px;font-weight:500;padding:8px 14px;border-radius:999px;cursor:pointer;transition:all .28s var(--emph)}
+.seg button.on{background:var(--primary);color:var(--on-primary)}
+
+/* Listenkacheln */
+.list{display:flex;flex-direction:column;gap:3px}
+.item{display:flex;align-items:center;gap:16px;background:var(--s-high);padding:14px 16px;cursor:pointer;transition:border-radius .28s var(--emph),background .2s}
+.item:first-child{border-radius:28px 28px 6px 6px}
+.item:last-child{border-radius:6px 6px 28px 28px}
+.item:only-child{border-radius:28px}
+.item:not(:first-child):not(:last-child){border-radius:6px}
+.item:hover{background:var(--s-highest)}
+.item:active{border-radius:20px}
+.item .ic{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:var(--primary-c);color:var(--on-primary-c)}
+.item .ic.g{background:var(--success-c);color:var(--on-success-c)}
+.item .ic.y{background:var(--tertiary-c);color:var(--on-tertiary-c)}
+.item .ic.o{background:var(--warn-c);color:var(--on-warn-c)}
+.item .ic.p{background:#4a2a5e;color:#f0dbff}
+.item .t{flex:1;min-width:0}
+.item .t b{display:block;font-size:16px;font-weight:500}
+.item .t span{display:block;font-size:13px;color:var(--on-variant);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item .go{color:var(--outline)}
+.badge{font-size:12px;font-weight:500;padding:4px 10px;border-radius:8px;background:var(--success-c);color:var(--on-success-c)}
+
+/* Schalter */
+.sw{width:52px;height:32px;border-radius:999px;background:var(--s-highest);border:2px solid var(--outline);position:relative;flex:none;cursor:pointer;transition:all .25s var(--emph)}
+.sw::after{content:"";position:absolute;left:6px;top:6px;width:16px;height:16px;border-radius:50%;background:var(--outline);transition:all .3s var(--spring)}
+.sw.on{background:var(--primary);border-color:var(--primary)}
+.sw.on::after{left:26px;top:4px;width:24px;height:24px;background:var(--on-primary);left:24px}
+
+/* Geräte-Kacheln */
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.dev{background:var(--s-high);border-radius:28px;padding:16px;cursor:pointer;transition:all .3s var(--emph);display:flex;flex-direction:column;gap:12px;min-height:128px}
+.dev.on{background:var(--primary-c);color:var(--on-primary-c);border-radius:20px 28px 28px 28px}
+.dev:active{transform:scale(.96)}
+.dev .top2{display:flex;justify-content:space-between;align-items:center}
+.dev .ic{width:44px;height:44px;border-radius:999px;background:var(--s-highest);display:grid;place-items:center;transition:all .3s var(--spring)}
+.dev.on .ic{background:var(--primary);color:var(--on-primary);border-radius:14px}
+.dev b{display:block;font-size:15px;font-weight:500}
+.dev span.s{font-size:12.5px;opacity:.75}
+.dev .st{margin-top:auto}
+
+/* Schutz-Karte */
+.card{background:var(--s-high);border-radius:28px;padding:18px}
+.bar{height:12px;border-radius:999px;background:var(--s-highest);overflow:hidden;display:flex;gap:3px;margin:12px 0 8px}
+.bar i{display:block;height:100%;border-radius:999px}
+.legend{display:flex;gap:14px;font-size:12.5px;color:var(--on-variant);flex-wrap:wrap}
+.legend em{font-style:normal;display:inline-flex;align-items:center;gap:6px}
+.legend em::before{content:"";width:10px;height:10px;border-radius:3px;background:var(--c)}
+
+/* Navigation unten */
+nav.bar-nav{position:fixed;left:0;right:0;bottom:0;background:var(--s-cont);padding:10px 8px calc(12px + env(safe-area-inset-bottom));display:flex;justify-content:center;gap:4px;z-index:5}
+nav.bar-nav a{flex:1;max-width:110px;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:12px;font-weight:500;color:var(--on-variant)}
+nav.bar-nav a .pill{width:64px;height:32px;border-radius:999px;display:grid;place-items:center;transition:all .3s var(--spring)}
+nav.bar-nav a.on{color:var(--on-surface)}
+nav.bar-nav a.on .pill{background:var(--secondary-c);color:var(--on-secondary-c)}
+
+/* FAB */
+.fab{position:fixed;right:18px;bottom:calc(98px + env(safe-area-inset-bottom));height:60px;padding:0 22px 0 18px;border-radius:20px;border:none;background:var(--primary);color:var(--on-primary);font:inherit;font-size:15px;font-weight:500;display:flex;align-items:center;gap:10px;box-shadow:0 4px 8px 3px rgba(0,0,0,.25);cursor:pointer;z-index:6;transition:border-radius .28s var(--emph),transform .28s var(--spring)}
+.fab:active{border-radius:30px;transform:scale(.95)}
+
+/* Desktop */
+@media(min-width:760px){.grid{grid-template-columns:repeat(3,1fr)}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <div class="logo"><svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.5-7.97A5.5 5.5 0 0 1 17 9a4.5 4.5 0 0 1 .5 9z"/></svg></div>
+    <h1>cloudy</h1>
+    <button class="icon-btn" aria-label="Einstellungen"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+  </header>
+  <p class="hello">Dein Heimnetz auf einen Blick</p>
+
+  <!-- Status -->
+  <section class="hero">
+    <div class="row"><span class="dot"></span>Alles in Ordnung</div>
+    <h2>Heimnetz läuft</h2>
+    <p>DNS, DHCP und Gateway aktiv · seit 12 Tagen</p>
+    <div class="chips">
+      <span class="chip"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg>Werbeblocker an</span>
+      <span class="chip"><svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>WARP aktiv</span>
+      <span class="chip"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>FRITZ!Box verbunden</span>
+    </div>
+  </section>
+
+  <!-- Kennzahlen -->
+  <div class="stats">
+    <div class="stat">
+      <small><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7"/></svg>Download</small>
+      <b>42,8<span>MB/s</span></b>
+      <svg class="spark" viewBox="0 0 120 34" preserveAspectRatio="none" style="stroke:var(--primary);stroke-width:2.5"><path d="M0 28 10 22 20 25 30 14 40 18 50 8 60 15 70 10 80 20 90 6 100 12 110 5 120 9"/></svg>
+    </div>
+    <div class="stat">
+      <small><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>Upload</small>
+      <b>6,1<span>MB/s</span></b>
+      <svg class="spark" viewBox="0 0 120 34" preserveAspectRatio="none" style="stroke:#ffd97a;stroke-width:2.5"><path d="M0 30 10 28 20 29 30 24 40 26 50 20 60 25 70 22 80 27 90 18 100 24 110 21 120 23"/></svg>
+    </div>
+  </div>
+
+  <!-- Mein Gerät -->
+  <h3 class="sec">Mein Gerät · Simons Handy</h3>
+  <div class="mine">
+    <div class="ic"><svg viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18h2"/></svg></div>
+    <div class="t"><b>Internet-Routing</b><span>Welcher Weg ins Netz?</span></div>
+  </div>
+  <div class="seg" id="seg" style="justify-content:space-between">
+    <button class="on" style="flex:1">Standard</button>
+    <button style="flex:1">WARP</button>
+    <button style="flex:1">VPN</button>
+  </div>
+
+  <!-- Geräte -->
+  <h3 class="sec">Geräte im Netz</h3>
+  <div class="grid" id="devs">
+    <div class="dev on"><div class="top2"><div class="ic"><svg viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2.5"/></svg></div><i class="sw on"></i></div><div class="st"><b>Simons Handy</b><span class="s">192.168.178.21 · WARP</span></div></div>
+    <div class="dev on"><div class="top2"><div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div><i class="sw on"></i></div><div class="st"><b>Simons PC</b><span class="s">192.168.178.30 · Standard</span></div></div>
+    <div class="dev"><div class="top2"><div class="ic"><svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="13" rx="2"/><path d="M8 21h8"/></svg></div><i class="sw"></i></div><div class="st"><b>Wohnzimmer-TV</b><span class="s">Offline</span></div></div>
+    <div class="dev on"><div class="top2"><div class="ic"><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 8h6"/></svg></div><i class="sw on"></i></div><div class="st"><b>Pi (cloudy)</b><span class="s">192.168.178.2 · Server</span></div></div>
+  </div>
+
+  <!-- Bereiche -->
+  <h3 class="sec">Bereiche</h3>
+  <div class="list">
+    <a class="item" href="#"><div class="ic"><svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 16v-7M12 16v-5M17 16V7"/></svg></div><div class="t"><b>Statistiken</b><span>Download, Upload, Top-Geräte und Domains</span></div><svg class="go" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></a>
+    <a class="item" href="#"><div class="ic g"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg></div><div class="t"><b>Schutz</b><span>Werbeblocker, Sperrseiten, Auto-VPN</span></div><span class="badge">Aktiv</span></a>
+    <a class="item" href="#"><div class="ic y"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/></svg></div><div class="t"><b>Gruppen</b><span>Geräte bündeln und gemeinsam steuern</span></div><svg class="go" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></a>
+    <a class="item" href="#"><div class="ic o"><svg viewBox="0 0 24 24"><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 17h.01M7 8a7 7 0 0 1 10 0M9.5 11a3.5 3.5 0 0 1 5 0"/></svg></div><div class="t"><b>FRITZ!Box</b><span>Verbindung, Geräte, Neustart</span></div><svg class="go" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></a>
+    <a class="item" href="#"><div class="ic p"><svg viewBox="0 0 24 24"><path d="M4 14a8 8 0 1 1 16 0M12 14l4-5"/></svg></div><div class="t"><b>Leistung</b><span>CPU, RAM, Temperatur des Raspberry Pi</span></div><svg class="go" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></a>
+  </div>
+
+  <!-- Blockiert heute -->
+  <h3 class="sec">Heute geblockt</h3>
+  <div class="card">
+    <div style="display:flex;align-items:baseline;gap:8px"><b style="font-size:38px;font-weight:500;letter-spacing:-.5px">3.482</b><span style="color:var(--on-variant);font-size:14px">von 21.907 Anfragen</span></div>
+    <div class="bar"><i style="width:16%;background:var(--error)"></i><i style="width:9%;background:#ffd97a"></i><i style="width:75%;background:var(--primary-c)"></i></div>
+    <div class="legend"><em style="--c:var(--error)">Werbung</em><em style="--c:#ffd97a">Tracker</em><em style="--c:var(--primary-c)">Erlaubt</em></div>
+  </div>
+</div>
+
+<button class="fab"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Gerät hinzufügen</button>
+
+<nav class="bar-nav">
+  <a class="on" href="#"><span class="pill"><svg viewBox="0 0 24 24"><path d="m3 11 9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span>Start</a>
+  <a href="#"><span class="pill"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/></svg></span>Geräte</a>
+  <a href="#"><span class="pill"><svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 16v-7M12 16v-5M17 16V7"/></svg></span>Statistik</a>
+  <a href="#"><span class="pill"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg></span>Schutz</a>
+  <a href="#"><span class="pill"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></span>Mehr</a>
+</nav>
+
+<script>
+// Nur Demo: Kacheln, Schalter und Routing-Auswahl reagieren
+document.querySelectorAll('.dev').forEach(d=>d.addEventListener('click',()=>{
+  d.classList.toggle('on'); d.querySelector('.sw').classList.toggle('on');
+}));
+document.querySelectorAll('#seg button').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('#seg button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+}));
+document.querySelectorAll('nav.bar-nav a').forEach(a=>a.addEventListener('click',e=>{
+  e.preventDefault(); document.querySelectorAll('nav.bar-nav a').forEach(x=>x.classList.remove('on')); a.classList.add('on');
+}));
+</script>
+</body>
+</html>

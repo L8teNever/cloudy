@@ -1,0 +1,192 @@
+"""Tests für den Speicher-Container (speicher/): Platten-Erkennung, Puffer, Backup-Planung, Anmeldung."""
+import json
+import os
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "speicher"))
+
+from speicher import auth, backup, config, disks, pool  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def speicher_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MOUNT_ROOT", str(tmp_path / "mnt"))
+    monkeypatch.delenv("SPEICHER_PASSWORD", raising=False)
+    auth._fails.clear()
+
+
+LSBLK = {
+    "blockdevices": [
+        {"name": "sda", "path": "/dev/sda", "size": 256060514304, "type": "disk", "model": "Samsung SSD", "serial": "S1",
+         "rota": False, "tran": "sata", "maj:min": "8:0", "children": [
+            {"name": "sda1", "path": "/dev/sda1", "size": 1, "type": "part", "fstype": "vfat", "maj:min": "8:1"},
+            {"name": "sda2", "path": "/dev/sda2", "size": 2, "type": "part", "fstype": "LVM2_member", "maj:min": "8:2",
+             "children": [{"name": "ubuntu--vg-root", "path": "/dev/mapper/ubuntu--vg-root", "type": "lvm", "fstype": "ext4", "maj:min": "252:0"}]},
+        ]},
+        {"name": "sdb", "path": "/dev/sdb", "size": 1000204886016, "type": "disk", "model": "WDC", "rota": True, "maj:min": "8:16",
+         "children": [{"name": "sdb1", "path": "/dev/sdb1", "size": 1000, "type": "part", "fstype": "ext4", "uuid": "u-b", "label": "cloudy-hdd1", "maj:min": "8:17"}]},
+        {"name": "sdc", "path": "/dev/sdc", "size": 500107862016, "type": "disk", "model": "Seagate", "rota": "1", "maj:min": "8:32"},
+        {"name": "nvme0n1", "path": "/dev/nvme0n1", "size": 256060514304, "type": "disk", "rota": "0", "tran": "nvme", "maj:min": "259:0",
+         "children": [{"name": "nvme0n1p1", "path": "/dev/nvme0n1p1", "size": 5, "type": "part", "fstype": "ntfs", "maj:min": "259:1"},
+                      {"name": "nvme0n1p2", "path": "/dev/nvme0n1p2", "size": 5, "type": "part", "fstype": "ext4", "uuid": "u-n", "maj:min": "259:2"}]},
+        {"name": "zram0", "path": "/dev/zram0", "size": 100, "type": "disk"},
+        {"name": "sr0", "path": "/dev/sr0", "size": 100, "type": "rom"},
+    ]
+}
+
+
+def test_parse_lsblk_sperrt_systemplatte_und_erkennt_arten():
+    result = {d.name: d for d in disks.parse_lsblk(LSBLK, {"252:0"}, set())}
+    assert set(result) == {"sda", "sdb", "sdc", "nvme0n1"}
+    assert result["sda"].system and result["sda"].art == "SSD"
+    assert not result["sdb"].system and result["sdb"].art == "HDD"
+    assert result["sdb"].dateisystem.uuid == "u-b"
+    assert result["sdc"].art == "HDD" and result["sdc"].dateisystem is None
+    assert result["nvme0n1"].art == "NVMe-SSD"
+    assert result["nvme0n1"].dateisystem.uuid == "u-n"  # NTFS zählt nicht, ext4 ist eindeutig
+
+
+def test_parse_lsblk_gemountete_platte_ist_system():
+    result = {d.name: d for d in disks.parse_lsblk(LSBLK, set(), {"/dev/sdb1"})}
+    assert result["sdb"].system and "sdb1" in result["sdb"].system_grund
+
+
+def test_host_used_ignoriert_eigene_mounts(tmp_path, monkeypatch):
+    proc = tmp_path / "proc"
+    (proc / "1").mkdir(parents=True)
+    root = config.mount_root()
+    (proc / "1" / "mountinfo").write_text(
+        "29 1 252:0 / / rw shared:1 - ext4 /dev/mapper/ubuntu--vg-root rw\n"
+        f"90 29 8:17 / {root}/platten/hdd1 rw shared:5 - ext4 /dev/sdb1 rw\n"
+    )
+    (proc / "swaps").write_text("Filename Type Size Used Priority\n/swap.img file 1 0 -2\n")
+    monkeypatch.setattr(disks, "HOST_PROC", str(proc))
+    majmin, paths = disks.host_used()
+    assert majmin == {"252:0"}
+    assert "/dev/sdb1" not in paths and "/swap.img" in paths
+
+
+def test_partition_path():
+    assert disks._partition_path("/dev/sdb") == "/dev/sdb1"
+    assert disks._partition_path("/dev/nvme0n1") == "/dev/nvme0n1p1"
+
+
+def test_mergerfs_options():
+    opts = pool.mergerfs_options(config.Config(create_policy="kaputt", minfree_gb=0))
+    assert "category.create=epmfs" in opts and "minfreespace=1G" in opts and "allow_other" in opts
+
+
+def test_changed_files_nutzt_auch_ctime(tmp_path):
+    root = tmp_path / "pool"
+    (root / "Fotos" / "2019").mkdir(parents=True)
+    alt = root / "Fotos" / "2019" / "urlaub.jpg"
+    alt.write_text("x")
+    os.utime(alt, (1_500_000_000, 1_500_000_000))  # altes Aufnahmedatum, aber gerade erst kopiert
+    (root / ".mergerfs").write_text("")
+    since = time.time() - 60
+    assert backup.changed_files(root, since) == ["Fotos/2019/urlaub.jpg"]
+    assert backup.changed_files(root, time.time() + 60) == []
+
+
+def test_puffer_aufraeumen_loescht_nur_gesichertes(tmp_path):
+    sicherung = backup.sicherung_dir()
+    (sicherung / "a").mkdir(parents=True)
+    (sicherung / "a" / "alt.txt").write_text("1")
+    cut = time.time() + 0.05
+    time.sleep(0.1)
+    (sicherung / "neu.txt").write_text("2")
+    assert backup.puffer_aufraeumen(None, cut) == 1
+    assert not (sicherung / "a").exists() and (sicherung / "neu.txt").exists()
+
+
+def test_kopie_marker_vor_erstem_backup():
+    cfg = config.Config(puffer_seit=100.0, letztes_backup_start=0.0)
+    assert backup.kopie_marker(cfg) == 100.0
+    cfg.letztes_backup_start = 200.0
+    assert backup.kopie_marker(cfg) == 200.0
+
+
+def ts(text):
+    return datetime.strptime(text, "%Y-%m-%d %H:%M").timestamp()
+
+
+def test_backup_due():
+    now = ts("2026-11-14 00:05")
+    assert backup.backup_due(now, "00:00", 0, 0)
+    assert not backup.backup_due(now, "00:00", ts("2026-11-14 00:01"), ts("2026-11-14 00:01"))
+    assert not backup.backup_due(now, "00:00", ts("2026-11-13 00:00"), ts("2026-11-14 00:01"))  # Fehler: 1 h warten
+    assert backup.backup_due(ts("2026-11-14 01:10"), "00:00", ts("2026-11-13 00:00"), ts("2026-11-14 00:01"))
+    assert not backup.backup_due(ts("2026-11-13 23:00"), "00:00", ts("2026-11-13 00:00"), 0)
+
+
+def test_write_rclone_nimmt_nur_json_und_erzeugt_schluessel():
+    text = 'Paste the following:\n--->\n{"access_token":"a","token_type":"Bearer","refresh_token":"r","expiry":"x"}\n<---End paste'
+    backup.write_rclone(text, client_id="id.apps")
+    conf = backup.rclone_conf().read_text()
+    assert "[cloudy-drive]" in conf and "client_id = id.apps" in conf and '"refresh_token":"r"' in conf
+    assert oct(backup.rclone_conf().stat().st_mode & 0o777) == "0o600"
+    assert len(config.secret("restic-passwort")) >= 32
+    with pytest.raises(backup.BackupError):
+        backup.write_rclone('{"access_token":"a"}')
+
+
+def test_config_update_roundtrip():
+    config.update(pool=["a", "b"], backup_zeit="03:30")
+    cfg = config.Config.load()
+    assert cfg.pool == ["a", "b"] and cfg.backup_zeit == "03:30"
+    with pytest.raises(KeyError):
+        config.update(gibtsnicht=1)
+
+
+@pytest.fixture
+def web(monkeypatch):
+    from fastapi.testclient import TestClient
+    from speicher import main
+
+    monkeypatch.setattr(main, "_overview", lambda: {
+        "cfg": config.Config(), "disks": [], "rollen": {}, "health": {}, "drive": False, "disk_fehler": "",
+        "mount_root": "/mnt/cloudy",
+        "st": {"hdds": [], "puffer": None, "pool": pool.Branch("pool", "", "/mnt/cloudy/pool")},
+    })
+    with TestClient(main.app, base_url="http://speicher.lan") as c:
+        yield c
+
+
+def test_web_erst_einrichten_dann_anmelden(web):
+    r = web.get("/", follow_redirects=False)
+    assert r.headers["location"] == "/einrichten"
+    r = web.post("/einrichten", data={"passwort": "geheim123", "passwort2": "geheim123"}, follow_redirects=False)
+    assert r.status_code == 303 and auth.COOKIE in r.cookies
+    r = web.get("/")
+    assert r.status_code == 200 and "Platten" in r.text
+    assert r.headers["x-frame-options"] == "DENY"
+    # Zweites Einrichten geht nicht mehr
+    r = web.post("/einrichten", data={"passwort": "anders1234", "passwort2": "anders1234"}, follow_redirects=False)
+    assert r.headers["location"] == "/login"
+    assert auth.check_password("geheim123") and not auth.check_password("anders1234")
+
+
+def test_web_ohne_csrf_und_fremde_herkunft_abgelehnt(web):
+    web.post("/einrichten", data={"passwort": "geheim123", "passwort2": "geheim123"})
+    r = web.post("/aktion/backup", data={}, follow_redirects=False)
+    assert "fehler=" in r.headers["location"]
+    r = web.post("/aktion/backup", data={}, headers={"origin": "http://boese.example"}, follow_redirects=False)
+    assert r.status_code == 403
+
+
+def test_web_login_sperre(web):
+    auth.set_password("geheim123")
+    for _ in range(5):
+        assert "Falsches Passwort" in web.post("/login", data={"passwort": "nein"}).text
+    assert "Zu viele Versuche" in web.post("/login", data={"passwort": "geheim123"}).text
+
+
+def test_web_api_ohne_login(web):
+    auth.set_password("geheim123")
+    assert web.get("/api/job").status_code == 401

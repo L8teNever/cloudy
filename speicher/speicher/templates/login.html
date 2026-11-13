@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{{ "Einrichten" if erst else "Anmelden" }}{% endblock %}
+{% block content %}
+<div class="card" style="max-width:420px;margin:40px auto">
+  {% if erst %}
+  <h1>Speicher einrichten</h1>
+  <p class="sub">Leg zuerst ein Passwort fest. Mit dieser Seite kann man Platten formatieren, also gut merken und nicht weitergeben.</p>
+  <form method="post" action="/einrichten" class="row" style="flex-direction:column;align-items:stretch">
+    <label class="f">Passwort (mind. 8 Zeichen)<input type="password" name="passwort" minlength="8" required autofocus autocomplete="new-password"></label>
+    <label class="f">Nochmal<input type="password" name="passwort2" minlength="8" required autocomplete="new-password"></label>
+    <button>Speichern</button>
+  </form>
+  {% else %}
+  <h1>Anmelden</h1>
+  <p class="sub">cloudy Speicher</p>
+  <form method="post" action="/login" class="row" style="flex-direction:column;align-items:stretch">
+    <label class="f">Passwort<input type="password" name="passwort" required autofocus autocomplete="current-password"></label>
+    <button>Anmelden</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

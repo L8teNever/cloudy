@@ -88,6 +88,34 @@ services:
       cloudy-tunnel:
         ipv4_address: 172.29.88.10
 
+  # Speicher: HDDs als ein Pool (mergerfs), SSD als Sicherheitskopie bis zum Backup, verschlüsseltes Backup nach
+  # Google Drive. Webseite: http://<server>:8091 (eigenes Passwort, beim ersten Aufruf festlegen).
+  # Pool für andere Container/Freigaben: /mnt/cloudy/pool (auf dem Host). Ohne zugeordnete Platten passiert nichts.
+  speicher:
+    image: ghcr.io/l8tenever/cloudy:speicher
+    container_name: cloudy-speicher
+    restart: unless-stopped
+    # Platten formatieren/einhängen und FUSE brauchen vollen Gerätezugriff.
+    privileged: true
+    ports:
+      - "${SPEICHER_PORT:-8091}:8091"
+    environment:
+      TZ: Europe/Berlin
+      SPEICHER_PASSWORD: ${SPEICHER_PASSWORD:-}
+    volumes:
+      - ./data/speicher:/data
+      # Live-/dev: neue Partitionen nach dem Formatieren sind sofort sichtbar.
+      - /dev:/dev
+      # Nur lesend: woran der Server selbst hängt (Systemplatte wird gesperrt).
+      - /proc:/host/proc:ro
+      # Einhängepunkte – rshared, damit Host und andere Container Pool und Platten sehen.
+      - type: bind
+        source: /mnt/cloudy
+        target: /mnt/cloudy
+        bind:
+          propagation: rshared
+          create_host_path: true
+
 networks:
   cloudy-warp:
     name: cloudy-warp

@@ -199,6 +199,44 @@ wie im WLAN zu Hause (Werbeblocker, Sperren, VPN-Profile, Auto-Wechsel, Zugriff 
 - Braucht WireGuard im Kernel des Pi (Raspberry Pi OS hat es) und `GATEWAY_ENABLED=1` für die VPN-Profile.
 - Ohne öffentliche IPv4 (DS-Lite) ist der Pi von außen meist nicht erreichbar.
 
+## 8. Speicher: Platten-Pool und Backup nach Google Drive (`cloudy-speicher`)
+
+Eigener Container mit Webseite unter **`http://<server>:8091`**. Beim ersten Aufruf legst du ein Passwort fest
+(oder fest über `SPEICHER_PASSWORD` in der `.env`).
+
+```
+HDDs (hdd1, hdd2, hdd3) ──mergerfs──► /mnt/cloudy/pool ──täglich, verschlüsselt──► Google Drive
+                                            │
+                                            └─ alle 10 Min Neues ──► Puffer-SSD (bis zum nächsten Backup)
+```
+
+- **Platten zuordnen:** Auf der Webseite jede Platte als **Pool** (HDDs) oder **Puffer-SSD** wählen. Neue Platten mit
+  „formatieren“ (Platten-Namen zur Bestätigung eintippen) – dabei wird alles darauf gelöscht. Die Systemplatte erkennt der
+  Container selbst und sperrt sie.
+- **Pool:** Jede Datei liegt ganz auf einer Platte (normales ext4). Fällt eine Platte aus, fehlen nur ihre Dateien, der Rest
+  läuft weiter. Standard: neue Dateien bleiben bei ihrem Ordner auf derselben Platte (`epmfs`).
+- **Puffer-SSD:** Was seit dem letzten Backup neu oder geändert ist, liegt zusätzlich auf der SSD. Nach einem
+  **erfolgreichen** Backup wird dort gelöscht, was jetzt in Drive steckt. Schlägt das Backup fehl, bleibt alles liegen.
+- **Backup:** restic (verschlüsselt, mit Versionen) über rclone nach Google Drive. Täglich zur eingestellten Uhrzeit,
+  nach Fehlern stündlich neu. Fehlt eine Pool-Platte, wird **nicht** gesichert, damit keine unvollständigen Stände die
+  alten verdrängen. Alte Stände: 7 Tage, 4 Wochen, 12 Monate (einstellbar).
+- **Drive verbinden:** Auf dem PC `rclone authorize "drive"` ausführen und den ausgegebenen Token auf der Webseite einfügen.
+- **Schlüssel:** Unter „Schlüssel“ steht das Backup-Passwort. **Unbedingt abschreiben** – ohne ihn ist das Backup nach
+  einem Totalausfall wertlos.
+- **Plattentausch:** neue Platte einbauen → als Pool formatieren → „Puffer → Pool zurückspielen“ → unter
+  „Wiederherstellen“ den Rest aus Drive holen (landet in `pool/wiederhergestellt/`).
+
+Andere Container (z. B. Nextcloud, Jellyfin) binden den Pool so ein, damit sie ihn auch nach einem Neustart von
+`cloudy-speicher` sehen:
+
+```yaml
+volumes:
+  - /mnt/cloudy/pool:/daten:rslave
+```
+
+Leere Einhängepunkte sind schreibgeschützt (`chattr +i`): Ist der Pool nicht da, landet nichts aus Versehen auf der
+Systemplatte. Docker-Daten und Datenbanken gehören nicht in den Pool.
+
 ## FRITZ!Box-Steuerung & Topologie
 
 Unter dem Menüpunkt **FRITZ!Box** im Dashboard:

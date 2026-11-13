@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cloudy – Material 3 Expressive (Desktop-Mockup)</title>
+<style>
+:root{
+  --primary:#a8c7fa; --on-primary:#062e6f;
+  --primary-c:#0842a0; --on-primary-c:#d3e3fd;
+  --secondary-c:#3e4759; --on-secondary-c:#d8e2f9;
+  --tertiary:#ffd97a; --tertiary-c:#574500; --on-tertiary-c:#ffe08b;
+  --success-c:#0f5223; --on-success-c:#a6f4b5;
+  --warn-c:#6b3a00; --on-warn-c:#ffdcbe;
+  --error:#ffb4ab;
+  --surface:#111318; --s-low:#191c20; --s-cont:#1d2024; --s-high:#282a2f; --s-highest:#33353a;
+  --on-surface:#e2e2e9; --on-variant:#c4c6d0; --outline:#8e9099; --outline-v:#44474f;
+  --spring:cubic-bezier(.34,1.45,.64,1); --emph:cubic-bezier(.2,0,0,1);
+  --font:"Google Sans Flex","Google Sans","Roboto Flex",Roboto,system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box;margin:0;-webkit-tap-highlight-color:transparent}
+body{font-family:var(--font);background:var(--surface);color:var(--on-surface);min-height:100vh;display:grid;grid-template-columns:280px 1fr}
+a{color:inherit;text-decoration:none}
+svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+/* Seitenleiste (Navigation Drawer) */
+aside{background:var(--s-low);padding:20px 12px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:4px;border-radius:0 28px 28px 0}
+.brand{display:flex;align-items:center;gap:12px;padding:6px 12px 22px}
+.logo{width:44px;height:44px;border-radius:15px;background:var(--primary-c);color:var(--on-primary-c);display:grid;place-items:center}
+.brand b{font-size:24px;font-weight:500;letter-spacing:-.3px}
+.nav{display:flex;align-items:center;gap:14px;height:56px;padding:0 20px;border-radius:999px;font-size:15px;font-weight:500;color:var(--on-variant);cursor:pointer;transition:background .2s,border-radius .28s var(--emph)}
+.nav:hover{background:var(--s-high)}
+.nav.on{background:var(--secondary-c);color:var(--on-secondary-c)}
+.nav .n{margin-left:auto;font-size:12px;padding:2px 9px;border-radius:8px;background:var(--s-highest)}
+.nav.on .n{background:var(--primary);color:var(--on-primary)}
+aside .sp{flex:1}
+.side-card{background:var(--s-high);border-radius:24px;padding:16px;font-size:13px;color:var(--on-variant)}
+.side-card b{display:flex;align-items:center;gap:8px;color:var(--on-surface);font-size:14px;font-weight:500;margin-bottom:6px}
+.dot{width:10px;height:10px;border-radius:50%;background:#6dd58c;animation:ping 2s infinite}
+@keyframes ping{70%{box-shadow:0 0 0 9px rgba(109,213,140,0)}100%{box-shadow:0 0 0 0 rgba(109,213,140,0)}}
+
+/* Inhalt */
+main{padding:24px 40px 48px;max-width:1280px;width:100%}
+header.top{display:flex;align-items:center;gap:16px;margin-bottom:24px}
+.search{flex:1;max-width:520px;height:56px;border-radius:999px;background:var(--s-high);display:flex;align-items:center;gap:12px;padding:0 20px;color:var(--on-variant);font-size:15px}
+header.top .sp{flex:1}
+.icon-btn{width:48px;height:48px;border-radius:999px;border:none;background:var(--secondary-c);color:var(--on-secondary-c);display:grid;place-items:center;cursor:pointer;transition:border-radius .28s var(--emph),transform .28s var(--spring)}
+.icon-btn:active{border-radius:14px;transform:scale(.92)}
+.avatar{width:48px;height:48px;border-radius:16px;background:var(--tertiary-c);color:var(--on-tertiary-c);display:grid;place-items:center;font-weight:500}
+.btn{height:48px;padding:0 24px;border-radius:999px;border:none;background:var(--primary);color:var(--on-primary);font:inherit;font-size:15px;font-weight:500;display:inline-flex;align-items:center;gap:8px;cursor:pointer;transition:border-radius .28s var(--emph),transform .28s var(--spring)}
+.btn:active{border-radius:14px;transform:scale(.96)}
+
+h1{font-size:40px;font-weight:500;letter-spacing:-.6px;margin-bottom:4px}
+.sub{font-size:16px;color:var(--on-variant);margin-bottom:24px}
+
+/* Raster */
+.g{display:grid;gap:16px;grid-template-columns:repeat(12,1fr)}
+.c4{grid-column:span 4}.c5{grid-column:span 5}.c6{grid-column:span 6}.c7{grid-column:span 7}.c8{grid-column:span 8}.c12{grid-column:span 12}
+@media(max-width:1180px){.c4,.c5,.c7,.c8{grid-column:span 6}}
+@media(max-width:900px){body{grid-template-columns:1fr}aside{display:none}.g>*{grid-column:span 12!important}main{padding:20px}}
+
+.card{background:var(--s-high);border-radius:28px;padding:22px}
+.card h3{font-size:16px;font-weight:500;display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.card h3 svg{width:20px;height:20px;color:var(--primary)}
+.card h3 a{margin-left:auto;font-size:13px;color:var(--primary)}
+
+/* Hero */
+.hero{background:var(--primary-c);color:var(--on-primary-c);border-radius:44px 44px 44px 14px;padding:30px;position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between;min-height:260px}
+.hero::after{content:"";position:absolute;right:-70px;top:-70px;width:280px;height:280px;border-radius:44% 56% 62% 38%;background:rgba(168,199,250,.16)}
+.hero::before{content:"";position:absolute;right:60px;bottom:-60px;width:160px;height:160px;border-radius:58% 42% 38% 62%;background:rgba(168,199,250,.1)}
+.hero .row{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:500;position:relative}
+.hero h2{font-size:44px;font-weight:500;letter-spacing:-.8px;margin:10px 0 6px;position:relative}
+.hero p{font-size:15px;opacity:.85;position:relative}
+.chips{display:flex;gap:8px;flex-wrap:wrap;position:relative;margin-top:20px}
+.chip{height:36px;padding:0 15px;border-radius:12px;background:rgba(211,227,253,.16);display:inline-flex;align-items:center;gap:8px;font-size:13.5px;font-weight:500}
+.chip svg{width:18px;height:18px}
+
+/* Kennzahlen */
+.stat small{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--on-variant)}
+.stat small svg{width:20px;height:20px}
+.stat b{display:block;font-size:44px;font-weight:500;letter-spacing:-1px;margin:8px 0 0}
+.stat b span{font-size:16px;font-weight:400;color:var(--on-variant);margin-left:4px}
+.spark{height:50px;width:100%;margin-top:10px}
+
+/* Chart */
+.chart{height:190px;display:flex;align-items:flex-end;gap:7px;padding-top:10px}
+.chart i{flex:1;border-radius:10px 10px 4px 4px;background:var(--secondary-c);position:relative;transition:all .3s var(--spring);min-height:8px}
+.chart i:hover{background:var(--primary)}
+.chart i.hi{background:var(--primary)}
+.axis{display:flex;justify-content:space-between;font-size:12px;color:var(--outline);margin-top:8px}
+.tabs{display:flex;background:var(--s-cont);border-radius:999px;padding:4px;margin-left:auto;gap:2px}
+.tabs button{border:none;background:none;color:var(--on-variant);font:inherit;font-size:13px;font-weight:500;padding:7px 14px;border-radius:999px;cursor:pointer}
+.tabs button.on{background:var(--primary);color:var(--on-primary)}
+
+/* Tabelle / Liste */
+.rows{display:flex;flex-direction:column;gap:3px}
+.r{display:flex;align-items:center;gap:14px;background:var(--s-cont);padding:11px 14px;cursor:pointer;transition:background .2s,border-radius .28s var(--emph)}
+.r:first-child{border-radius:20px 20px 6px 6px}
+.r:last-child{border-radius:6px 6px 20px 20px}
+.r:hover{background:var(--s-highest)}
+.r .ic{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:var(--primary-c);color:var(--on-primary-c)}
+.r .ic.g2{background:var(--success-c);color:var(--on-success-c)}
+.r .ic.y{background:var(--tertiary-c);color:var(--on-tertiary-c)}
+.r .ic.o{background:var(--warn-c);color:var(--on-warn-c)}
+.r .t{flex:1;min-width:0}
+.r .t b{display:block;font-size:15px;font-weight:500}
+.r .t span{font-size:12.5px;color:var(--on-variant)}
+.pill{font-size:12px;font-weight:500;padding:4px 10px;border-radius:8px;background:var(--secondary-c);color:var(--on-secondary-c)}
+.pill.ok{background:var(--success-c);color:var(--on-success-c)}
+.pill.off{background:var(--s-highest);color:var(--on-variant)}
+.sw{width:52px;height:32px;border-radius:999px;background:var(--s-highest);border:2px solid var(--outline);position:relative;flex:none;cursor:pointer;transition:all .25s var(--emph)}
+.sw::after{content:"";position:absolute;left:6px;top:6px;width:16px;height:16px;border-radius:50%;background:var(--outline);transition:all .3s var(--spring)}
+.sw.on{background:var(--primary);border-color:var(--primary)}
+.sw.on::after{top:4px;width:24px;height:24px;background:var(--on-primary);left:24px}
+
+/* Schutz */
+.bar{height:14px;border-radius:999px;background:var(--s-highest);overflow:hidden;display:flex;gap:3px;margin:14px 0 10px}
+.bar i{display:block;height:100%;border-radius:999px}
+.legend{display:flex;gap:16px;font-size:13px;color:var(--on-variant);flex-wrap:wrap}
+.legend em{font-style:normal;display:inline-flex;align-items:center;gap:7px}
+.legend em::before{content:"";width:10px;height:10px;border-radius:3px;background:var(--c)}
+.big{font-size:48px;font-weight:500;letter-spacing:-1px}
+
+/* Routing-Auswahl */
+.seg{display:flex;background:var(--s-cont);border-radius:999px;padding:4px;gap:2px;margin-top:14px}
+.seg button{flex:1;border:none;background:none;color:var(--on-variant);font:inherit;font-size:14px;font-weight:500;padding:11px 14px;border-radius:999px;cursor:pointer;transition:all .28s var(--emph)}
+.seg button.on{background:var(--primary);color:var(--on-primary)}
+
+/* Leistung */
+.meter{margin-bottom:14px}
+.meter .l{display:flex;justify-content:space-between;font-size:13px;color:var(--on-variant);margin-bottom:6px}
+.meter .l b{color:var(--on-surface);font-weight:500}
+.meter .b{height:10px;border-radius:999px;background:var(--s-highest);overflow:hidden}
+.meter .b i{display:block;height:100%;border-radius:999px;background:var(--primary)}
+.meter .b i.w{background:var(--tertiary)}
+</style>
+</head>
+<body>
+
+<aside>
+  <div class="brand"><div class="logo"><svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.5-7.97A5.5 5.5 0 0 1 17 9a4.5 4.5 0 0 1 .5 9z"/></svg></div><b>cloudy</b></div>
+  <a class="nav on"><svg viewBox="0 0 24 24"><path d="m3 11 9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Übersicht</a>
+  <a class="nav"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>Geräte<span class="n">12</span></a>
+  <a class="nav"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/></svg>Gruppen<span class="n">3</span></a>
+  <a class="nav"><svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 16v-7M12 16v-5M17 16V7"/></svg>Statistiken</a>
+  <a class="nav"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg>Schutz</a>
+  <a class="nav"><svg viewBox="0 0 24 24"><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 17h.01M7 8a7 7 0 0 1 10 0M9.5 11a3.5 3.5 0 0 1 5 0"/></svg>FRITZ!Box</a>
+  <a class="nav"><svg viewBox="0 0 24 24"><path d="M4 14a8 8 0 1 1 16 0M12 14l4-5"/></svg>Leistung</a>
+  <a class="nav"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L19 9l-4.2 3 1.4 5L12 14.3 7.8 17l1.4-5L5 9l5.2-1.3z"/></svg>Assistent</a>
+  <div class="sp"></div>
+  <div class="side-card"><b><span class="dot"></span>Raspberry Pi online</b>Läuft seit 12 Tagen · 47 °C</div>
+  <a class="nav"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>Einstellungen</a>
+</aside>
+
+<main>
+  <header class="top">
+    <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Geräte, Domains oder Einstellungen suchen</div>
+    <div class="sp"></div>
+    <button class="icon-btn" aria-label="Benachrichtigungen"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0"/></svg></button>
+    <div class="avatar">S</div>
+  </header>
+
+  <h1>Heimnetz</h1>
+  <p class="sub">cloudy.lan · alles auf einen Blick</p>
+
+  <div class="g">
+    <!-- Hero -->
+    <section class="hero c8">
+      <div>
+        <div class="row"><span class="dot"></span>Alles in Ordnung</div>
+        <h2>Heimnetz läuft</h2>
+        <p>DNS, DHCP und Gateway aktiv · seit 12 Tagen · 12 Geräte online</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg>Werbeblocker an</span>
+        <span class="chip"><svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>WARP aktiv</span>
+        <span class="chip"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>FRITZ!Box verbunden</span>
+        <span class="chip"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Auto-VPN bereit</span>
+      </div>
+    </section>
+
+    <!-- Mein Gerät -->
+    <section class="card c4">
+      <h3><svg viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18h2"/></svg>Mein Gerät</h3>
+      <b style="font-size:20px;font-weight:500">Simons Handy</b>
+      <div style="font-size:13px;color:var(--on-variant);margin-top:2px">192.168.178.21 · Internet-Routing</div>
+      <div class="seg" id="seg"><button class="on">Standard</button><button>WARP</button><button>VPN</button></div>
+      <div style="margin-top:16px;display:flex;align-items:center;gap:12px;font-size:14px;color:var(--on-variant)"><span class="sw on"></span>Automatischer VPN-Wechsel</div>
+    </section>
+
+    <!-- Verkehr -->
+    <section class="card c8">
+      <h3><svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 16v-7M12 16v-5M17 16V7"/></svg>Datenverkehr heute
+        <div class="tabs" id="tabs"><button>Stunde</button><button class="on">Tag</button><button>Woche</button></div></h3>
+      <div class="chart" id="chart"></div>
+      <div class="axis"><span>00</span><span>04</span><span>08</span><span>12</span><span>16</span><span>20</span><span>24 Uhr</span></div>
+    </section>
+
+    <section class="card stat c4" style="display:flex;flex-direction:column;justify-content:space-between">
+      <div>
+        <small><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7"/></svg>Download</small>
+        <b>42,8<span>MB/s</span></b>
+        <svg class="spark" viewBox="0 0 120 40" preserveAspectRatio="none" style="stroke:var(--primary);stroke-width:2.5"><path d="M0 32 10 26 20 29 30 16 40 21 50 9 60 17 70 12 80 24 90 7 100 14 110 6 120 10"/></svg>
+      </div>
+      <div style="margin-top:18px">
+        <small><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>Upload</small>
+        <b>6,1<span>MB/s</span></b>
+        <svg class="spark" viewBox="0 0 120 40" preserveAspectRatio="none" style="stroke:var(--tertiary);stroke-width:2.5"><path d="M0 35 10 33 20 34 30 28 40 30 50 23 60 29 70 26 80 31 90 21 100 28 110 24 120 27"/></svg>
+      </div>
+    </section>
+
+    <!-- Geräte -->
+    <section class="card c7">
+      <h3><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/></svg>Geräte im Netz<a href="#">Alle anzeigen</a></h3>
+      <div class="rows" id="devs">
+        <div class="r"><div class="ic"><svg viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2.5"/></svg></div><div class="t"><b>Simons Handy</b><span>192.168.178.21 · WARP</span></div><span class="pill ok">Online</span><i class="sw on"></i></div>
+        <div class="r"><div class="ic g2"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/></svg></div><div class="t"><b>Simons PC</b><span>192.168.178.30 · Standard</span></div><span class="pill ok">Online</span><i class="sw on"></i></div>
+        <div class="r"><div class="ic y"><svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="13" rx="2"/><path d="M8 21h8"/></svg></div><div class="t"><b>Wohnzimmer-TV</b><span>192.168.178.44 · Standard</span></div><span class="pill off">Offline</span><i class="sw"></i></div>
+        <div class="r"><div class="ic o"><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 8h6"/></svg></div><div class="t"><b>Raspberry Pi</b><span>192.168.178.2 · Server</span></div><span class="pill ok">Online</span><i class="sw on"></i></div>
+        <div class="r"><div class="ic"><svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2.5"/></svg></div><div class="t"><b>Melanies Handy</b><span>192.168.178.25 · VPN</span></div><span class="pill ok">Online</span><i class="sw on"></i></div>
+      </div>
+    </section>
+
+    <!-- Schutz + Leistung -->
+    <div class="c5" style="display:flex;flex-direction:column;gap:16px">
+      <section class="card">
+        <h3><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg>Heute geblockt</h3>
+        <div style="display:flex;align-items:baseline;gap:10px"><span class="big">3.482</span><span style="color:var(--on-variant);font-size:14px">von 21.907 Anfragen</span></div>
+        <div class="bar"><i style="width:16%;background:var(--error)"></i><i style="width:9%;background:var(--tertiary)"></i><i style="width:75%;background:var(--primary-c)"></i></div>
+        <div class="legend"><em style="--c:var(--error)">Werbung 16 %</em><em style="--c:var(--tertiary)">Tracker 9 %</em><em style="--c:var(--primary-c)">Erlaubt 75 %</em></div>
+      </section>
+      <section class="card">
+        <h3><svg viewBox="0 0 24 24"><path d="M4 14a8 8 0 1 1 16 0M12 14l4-5"/></svg>Raspberry Pi</h3>
+        <div class="meter"><div class="l"><span>CPU</span><b>23 %</b></div><div class="b"><i style="width:23%"></i></div></div>
+        <div class="meter"><div class="l"><span>Arbeitsspeicher</span><b>61 %</b></div><div class="b"><i style="width:61%"></i></div></div>
+        <div class="meter" style="margin:0"><div class="l"><span>Temperatur</span><b>47 °C</b></div><div class="b"><i class="w" style="width:47%"></i></div></div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<script>
+// Nur Demo: Diagramm, Schalter, Tabs und Routing reagieren
+const vals=[18,12,9,7,6,8,14,26,34,41,38,45,52,48,44,50,58,66,78,92,84,70,52,32];
+const ch=document.getElementById('chart');
+vals.forEach((v,i)=>{const b=document.createElement('i');b.style.height=v+'%';if(v>80)b.className='hi';ch.appendChild(b)});
+document.querySelectorAll('.r').forEach(r=>r.addEventListener('click',()=>r.querySelector('.sw').classList.toggle('on')));
+for(const id of ['seg','tabs']) document.querySelectorAll('#'+id+' button').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('#'+id+' button').forEach(x=>x.classList.remove('on'));b.classList.add('on')}));
+document.querySelectorAll('aside .nav').forEach(a=>a.addEventListener('click',()=>{
+  document.querySelectorAll('aside .nav').forEach(x=>x.classList.remove('on'));a.classList.add('on')}));
+</script>
+</body>
+</html>
