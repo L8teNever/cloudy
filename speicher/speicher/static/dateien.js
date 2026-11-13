@@ -65,7 +65,7 @@
     }
   }
 
-  // Hochladen: nacheinander, jede Datei als eigener PUT (große Dateien ohne Zwischenspeicher)
+  // Hochladen: wenige Dateien nacheinander, jede als eigener PUT (große Dateien ohne Zwischenspeicher)
   const titel = $("[data-upload-titel]", box);
   const balken = $("[data-upload-balken]", box);
   const text = $("[data-upload-text]", box);
@@ -99,8 +99,116 @@
     });
   }
 
+  // ---------- Viele Dateien als ein Paket (TAR) ----------
+  // Der Browser liest dafür nichts in den Speicher: das Paket ist ein Blob aus Kopfdaten und den Dateien selbst.
+  // Der Server entpackt es beim Empfang direkt in den Ordner.
+  const AB_ANZAHL = 10;
+  const enc = new TextEncoder();
+  const NULL1K = new Uint8Array(1024);
+
+  function oktal(buf, pos, len, wert) {
+    const t = wert.toString(8).padStart(len - 1, "0");
+    for (let i = 0; i < len - 1; i++) buf[pos + i] = t.charCodeAt(i);
+    buf[pos + len - 1] = 0;
+  }
+  function kopf(name, groesse, typ, mtime) {
+    const h = new Uint8Array(512);
+    const n = enc.encode(name).slice(0, 99);
+    h.set(n, 0);
+    oktal(h, 100, 8, 0o644);
+    oktal(h, 108, 8, 0);
+    oktal(h, 116, 8, 0);
+    oktal(h, 124, 12, groesse < 0o77777777777 ? groesse : 0);
+    oktal(h, 136, 12, Math.floor(mtime / 1000));
+    h.fill(32, 148, 156);
+    h[156] = typ.charCodeAt(0);
+    h.set(enc.encode("ustar\0" + "00"), 257);
+    let summe = 0;
+    for (const b of h) summe += b;
+    const c = summe.toString(8).padStart(6, "0");
+    for (let i = 0; i < 6; i++) h[148 + i] = c.charCodeAt(i);
+    h[154] = 0; h[155] = 32;
+    return h;
+  }
+  function paxEintrag(key, wert) {
+    const rest = enc.encode(` ${key}=${wert}\n`).length;
+    let len = rest + String(rest).length;
+    if (String(len).length !== String(rest).length) len = rest + String(len).length;
+    return `${len} ${key}=${wert}\n`;
+  }
+  const auffuellen = (n) => new Uint8Array((512 - (n % 512)) % 512);
+
+  function paket(liste) {
+    const teile = [];
+    liste.forEach((item, i) => {
+      const pax = enc.encode(paxEintrag("path", item.pfad) + paxEintrag("size", String(item.file.size)));
+      teile.push(kopf(`PaxHeaders/${i}`, pax.length, "x", Date.now()), pax, auffuellen(pax.length));
+      teile.push(kopf(`datei${i}`, item.file.size, "0", item.file.lastModified || Date.now()), item.file, auffuellen(item.file.size));
+    });
+    teile.push(NULL1K);
+    return new Blob(teile, { type: "application/x-tar" });
+  }
+
+  function paketSenden(blob, ersetzen, onprogress) {
+    return new Promise((resolve) => {
+      xhr = new XMLHttpRequest();
+      xhr.open("PUT", box.dataset.paket + (ersetzen ? "?ersetzen=1" : ""));
+      xhr.setRequestHeader("X-CSRF", box.dataset.csrf);
+      xhr.setRequestHeader("Content-Type", "application/x-tar");
+      xhr.upload.onprogress = (ev) => onprogress(ev.loaded);
+      xhr.onload = () => {
+        let data = {};
+        try { data = JSON.parse(xhr.responseText); } catch (_) { /* leer */ }
+        resolve({ status: xhr.status, data, msg: data.fehler && !Array.isArray(data.fehler) ? data.fehler : "" });
+      };
+      xhr.onerror = () => resolve({ status: 0, data: {}, msg: "Verbindung unterbrochen" });
+      xhr.onabort = () => resolve({ status: -1, data: {}, msg: "Abgebrochen" });
+      xhr.send(blob);
+    });
+  }
+
+  async function alsPaket(liste) {
+    abgebrochen = false;
+    box.hidden = false;
+    box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    const blob = paket(liste);
+    const gesamt = blob.size || 1;
+    titel.textContent = `${liste.length} Dateien als ein Paket`;
+    const fortschritt = (geladen) => {
+      balken.style.width = Math.min(100, (geladen / gesamt) * 100) + "%";
+      text.textContent = `${fmt(geladen)} von ${fmt(gesamt)}` + (geladen >= gesamt ? " · wird entpackt …" : "");
+    };
+    fortschritt(0);
+    let r = await paketSenden(blob, false, fortschritt);
+    let ok = r.data.ok || 0;
+    const fehler = [...(Array.isArray(r.data.fehler) ? r.data.fehler : [])];
+    const doppelt = r.data.uebersprungen || [];
+    if (r.status === 200 && doppelt.length && !abgebrochen) {
+      xhr = null;
+      if (confirm(`${doppelt.length} ${doppelt.length === 1 ? "Datei gibt" : "Dateien gibt"} es schon. Ersetzen?`)) {
+        const nochmal = liste.filter((i) => doppelt.includes(i.pfad));
+        const blob2 = paket(nochmal);
+        titel.textContent = `${nochmal.length} Dateien ersetzen`;
+        const r2 = await paketSenden(blob2, true, (g) => {
+          balken.style.width = Math.min(100, (g / (blob2.size || 1)) * 100) + "%";
+          text.textContent = `${fmt(g)} von ${fmt(blob2.size)}`;
+        });
+        ok += r2.data.ok || 0;
+        if (r2.status !== 200) fehler.push(r2.msg || "Fehler " + r2.status);
+      }
+    }
+    xhr = null;
+    const params = new URLSearchParams();
+    if (r.status === -1) params.set("fehler", `Abgebrochen, ${ok} hochgeladen`);
+    else if (r.status !== 200) params.set("fehler", `${ok} hochgeladen, Fehler: ${r.msg || "Fehler " + r.status}`);
+    else if (fehler.length) params.set("fehler", `${ok} hochgeladen, ${fehler.length} nicht: ${fehler.slice(0, 3).join(" · ")}`);
+    else params.set("ok", ok === 1 ? "1 Datei hochgeladen" : `${ok} Dateien hochgeladen`);
+    location.href = location.pathname + "?" + params;
+  }
+
   async function starten(liste) {
     if (!liste.length || xhr) return;
+    if (liste.length >= AB_ANZAHL && box.dataset.paket) return alsPaket(liste);
     abgebrochen = false;
     box.hidden = false;
     box.scrollIntoView({ behavior: "smooth", block: "nearest" });

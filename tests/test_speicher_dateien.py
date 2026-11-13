@@ -228,3 +228,46 @@ def test_rechte_pro_freigabe_und_sperren(umgebung, web):
     assert r.status_code == 403
     fg.set_freigabe_rechte("Familie", {"simon": ""})  # wieder wie überall
     assert "simon" not in fg.Einstellungen.load().get("Familie").rechte
+
+
+# ---------- Pakete: viele Dateien auf einmal, Entpacken ----------
+
+def _tar(dateien_: dict[str, bytes]) -> bytes:
+    import tarfile
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w", format=tarfile.PAX_FORMAT) as tf:
+        for name, data in dateien_.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def test_paket_hochladen_entpackt_direkt(umgebung, web):
+    data = _tar({"Welt/region/r.0.0.mca": b"a" * 5000, "Welt/level.dat": b"lvl", "hallo.txt": b"neu", "../boese.txt": b"x"})
+    r = web.put("/api/paket/Familie/Spiele", content=data, headers={"x-csrf": _csrf(web)})
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["ok"] == 3 and j["uebersprungen"] == [] and len(j["fehler"]) == 1
+    assert (umgebung / "Familie" / "Spiele" / "Welt" / "region" / "r.0.0.mca").read_bytes() == b"a" * 5000
+    assert not (umgebung / "Familie" / "boese.txt").exists()
+    # Nochmal: alles schon da -> übersprungen, mit ersetzen=1 überschrieben
+    r = web.put("/api/paket/Familie/Spiele", content=_tar({"hallo.txt": b"zwei"}), headers={"x-csrf": _csrf(web)})
+    assert r.json()["uebersprungen"] == ["hallo.txt"]
+    r = web.put("/api/paket/Familie/Spiele?ersetzen=1", content=_tar({"hallo.txt": b"zwei"}), headers={"x-csrf": _csrf(web)})
+    assert r.json()["ok"] == 1 and (umgebung / "Familie" / "Spiele" / "hallo.txt").read_bytes() == b"zwei"
+    # Nur lesen: abgelehnt
+    assert web.put("/api/paket/Filme", content=data, headers={"x-csrf": _csrf(web)}).status_code == 403
+
+
+def test_zip_entpacken_im_ordner(umgebung, web):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("a/b.txt", "drin")
+        zf.writestr("../../raus.txt", "nein")
+    (umgebung / "Familie" / "paket.zip").write_bytes(buf.getvalue())
+    assert "Entpacken" in web.get("/d/Familie").text
+    r = web.post("/aktion/Familie/entpacken", data={"csrf": _csrf(web), "pfad": "paket.zip"}, follow_redirects=False)
+    assert "fehler=" in r.headers["location"]  # der böse Eintrag wird gemeldet
+    assert (umgebung / "Familie" / "paket" / "a" / "b.txt").read_text() == "drin"
+    assert not (umgebung / "raus.txt").exists() and not (umgebung.parent / "raus.txt").exists()

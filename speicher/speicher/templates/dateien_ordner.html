@@ -24,7 +24,7 @@
 {% if schreiben %}
 <input type="file" id="up-dateien" multiple hidden>
 <input type="file" id="up-ordner" webkitdirectory hidden>
-<div class="card high upload-box" id="upload" hidden data-ziel="/api/hochladen/{{ f.name|urlencode }}{{ ('/' ~ rel|urlencode) if rel }}" data-csrf="{{ csrf }}">
+<div class="card high upload-box" id="upload" hidden data-ziel="/api/hochladen/{{ f.name|urlencode }}{{ ('/' ~ rel|urlencode) if rel }}" data-paket="/api/paket/{{ f.name|urlencode }}{{ ('/' ~ rel|urlencode) if rel }}" data-csrf="{{ csrf }}">
   <div class="card-head"><div class="shape round primary"><span class="ms">upload</span></div>
     <span class="title-m" style="flex:1" data-upload-titel>Hochladen …</span>
     <button type="button" class="icon-btn" data-upload-abbrechen title="Abbrechen" aria-label="Abbrechen"><span class="ms">close</span></button></div>
@@ -48,6 +48,11 @@
     </a>
     <div class="trail">
       <a class="icon-btn" href="{{ url(f.name, p) }}?{{ 'zip=1' if e.ordner else 'dl=1' }}" title="Herunterladen" aria-label="{{ e.name }} herunterladen"><span class="ms">download</span></a>
+      {% if schreiben and not e.ordner and ist_paket(e.name) %}
+      <form method="post" action="/aktion/{{ f.name|urlencode }}/entpacken" data-confirm="„{{ e.name }}“ hier in einen neuen Ordner entpacken?">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="pfad" value="{{ p }}">
+        <button class="icon-btn" title="Entpacken" aria-label="{{ e.name }} entpacken"><span class="ms">unarchive</span></button></form>
+      {% endif %}
       {% if aendern %}
       <button type="button" class="icon-btn" data-umbenennen="{{ p }}" data-name="{{ e.name }}" title="Umbenennen" aria-label="{{ e.name }} umbenennen"><span class="ms">edit</span></button>
       <form method="post" action="/aktion/{{ f.name|urlencode }}/loeschen" data-confirm="„{{ e.name }}“ {{ 'mit allem Inhalt ' if e.ordner }}löschen?">

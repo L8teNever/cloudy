@@ -4,6 +4,7 @@ Läuft als zweite Webseite im selben Container (DATEIEN_PORT, Standard 8092) und
 wie das Netzlaufwerk: pro Freigabe und Gerät offen, mit Passwort oder unsichtbar. Das Gerät wird an seiner
 IP erkannt (Geräteliste aus cloudy), angemeldet wird mit den Benutzern aus „Freigaben“.
 """
+import asyncio
 import hashlib
 import hmac
 import mimetypes
@@ -24,7 +25,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, freigaben, mediathek, mediathek_db, mediathek_providers, medien, pool
+from . import auth, freigaben, mediathek, mediathek_db, mediathek_providers, medien, pakete, pool
 from .freigaben import Freigabe
 
 BASE = Path(__file__).parent
@@ -441,7 +442,7 @@ async def ansehen(request: Request, name: str, rel: str = ""):
         teile = [p for p in rel.split("/") if p]
         pfad = [(teile[i], "/".join(teile[: i + 1])) for i in range(len(teile))]
         return _page(request, "dateien_ordner.html", f=z.f, rel="/".join(teile), pfad=pfad, eintraege=eintraege,
-                     schreiben=z.schreiben, aendern=z.aendern, url=_url, oben=_url(name, "/".join(teile[:-1])) if teile else "/")
+                     schreiben=z.schreiben, aendern=z.aendern, ist_paket=pakete.ist_paket, url=_url, oben=_url(name, "/".join(teile[:-1])) if teile else "/")
     if not path.is_file():
         raise Fehler(404, "Nicht gefunden")
     typ = _medientyp(path)
@@ -618,6 +619,95 @@ async def hochladen(request: Request, name: str, rel: str):
         tmp.unlink(missing_ok=True)  # Abbruch im Browser
         raise
     return {"ok": True, "name": dateiname}
+
+
+@app.put("/api/paket/{name}")
+@app.put("/api/paket/{name}/{rel:path}")
+async def paket_hochladen(request: Request, name: str, rel: str = ""):
+    """Viele Dateien als ein TAR-Paket (packt der Browser) – wird beim Empfang direkt in den Ordner entpackt."""
+    _csrf(request, request.headers.get("x-csrf", ""))
+    z = zugang(request, name)
+    if not z.schreiben:
+        raise Fehler(403, f"„{z.f.name}“ ist nur zum Lesen freigegeben")
+    ersetzen = request.query_params.get("ersetzen") == "1"
+    if ersetzen and not z.aendern:
+        raise Fehler(403, "Du darfst hier nur Neues anlegen, nichts ersetzen")
+    ordner = ziel(z, rel)
+    if not ordner.is_dir():
+        await run_in_threadpool(lambda: ordner.mkdir(parents=True, exist_ok=True))
+        p = ordner
+        while p != z.root.resolve() and z.root.resolve() in p.parents:
+            _besitzer(p)
+            p = p.parent
+    schreiber = pakete.Schreiber(z.root, ordner, ersetzen, _besitzer, medien.anmelden)
+    rohr = pakete.Rohr()
+    loop = asyncio.get_running_loop()
+    arbeit = loop.run_in_executor(None, pakete.tar_entpacken, rohr, schreiber)
+
+    def _rein(chunk) -> bool:
+        """Chunk in die Warteschlange; False, wenn das Entpacken schon vorbei ist (Fehler)."""
+        while not arbeit.done():
+            try:
+                rohr.q.put(chunk, timeout=0.5)
+                return True
+            except Exception:  # noqa: BLE001 – queue.Full
+                continue
+        return False
+
+    try:
+        async for chunk in request.stream():
+            if chunk and not await run_in_threadpool(_rein, chunk):
+                break
+    except BaseException:
+        await run_in_threadpool(_rein, None)
+        try:
+            await arbeit
+        except Exception:  # noqa: BLE001
+            pass
+        raise
+    await run_in_threadpool(_rein, None)
+    try:
+        erg = await arbeit
+    except pakete.PaketFehler as exc:
+        raise Fehler(400, str(exc)) from exc
+    except OSError as exc:
+        raise Fehler(507 if exc.errno == 28 else 500, "Kein Platz mehr" if exc.errno == 28 else f"Ging nicht: {exc.strerror}") from exc
+    return {"ok": erg.ok, "uebersprungen": erg.uebersprungen, "fehler": erg.fehler[:50]}
+
+
+@app.post("/aktion/{name}/entpacken")
+async def entpacken(request: Request, name: str):
+    z, f = await _aktion(request, name)
+    rel = f.get("pfad", "")
+    ordner = "/".join(rel.split("/")[:-1])
+    try:
+        path = ziel(z, rel)
+        if not path.is_file() or not pakete.ist_paket(path.name):
+            raise Fehler(400, "Das ist kein ZIP- oder TAR-Paket")
+        basis = pakete.ordner_name(path.name)
+        dest = path.parent / basis
+        n = 2
+        while dest.exists():
+            dest = path.parent / f"{basis} ({n})"
+            n += 1
+        dest.mkdir()
+        _besitzer(dest)
+        schreiber = pakete.Schreiber(z.root, dest, False, _besitzer, medien.anmelden)
+        erg = await run_in_threadpool(pakete.entpacken, path, schreiber)
+    except Fehler as exc:
+        return _zurueck(name, ordner, fehler=exc.text)
+    except pakete.PaketFehler as exc:
+        try:
+            dest.rmdir()
+        except (OSError, UnboundLocalError):
+            pass
+        return _zurueck(name, ordner, fehler=str(exc))
+    except OSError as exc:
+        return _zurueck(name, ordner, fehler=f"Ging nicht: {exc.strerror}")
+    text = f"{erg.ok} Dateien nach „{dest.name}“ entpackt"
+    if erg.fehler:
+        return _zurueck(name, ordner, fehler=text + f", {len(erg.fehler)} nicht: " + " · ".join(erg.fehler[:3]))
+    return _zurueck(name, ordner, ok=text)
 
 
 # ---------- Zugriffsschutz für Streaming & Medien ----------
