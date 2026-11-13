@@ -82,6 +82,8 @@
     <div class="txt"><p class="title-m">{{ u }}</p>
       {% if fe.windows.get(u) %}<p class="body-s variant" style="margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="ms" style="font-size:14px;vertical-align:-2px">desktop_windows</span> {{ fe.windows[u]|join(", ") }}</p>{% endif %}</div>
     <div class="trail">
+      {% set r = fe.recht(u) %}
+      <button type="button" class="chip {{ '' if r == 'voll' else 'info' }}" data-open="dlg-recht-{{ u }}" title="Rechte ändern"><span class="ms">{{ "edit_note" if r == "voll" else ("note_add" if r == "erstellen" else "visibility") }}</span>{{ recht_text[r] }}</button>
       <button type="button" class="btn text" data-open="dlg-win-{{ u }}"><span class="ms">desktop_windows</span>Windows</button>
       <button type="button" class="btn text" data-open="dlg-pw-{{ u }}"><span class="ms">password</span>Passwort ändern</button>
       <button type="button" class="icon-btn danger" data-open="dlg-del-{{ u }}" aria-label="{{ u }} löschen"><span class="ms">delete</span></button>
@@ -93,6 +95,26 @@
     <div class="txt"><p class="title-m">Benutzer hinzufügen</p></div>
   </button>
 </div>
+
+{% if fe.benutzer %}
+<h2 class="title-m section-title">Angemeldete Geräte</h2>
+<p class="body-m variant" style="margin:-8px 4px 12px">{% if fe.anmelde_ordner %}Im Netzlaufwerk liegt der Ordner <b>{{ anmelde_freigabe }}</b> mit „{{ anmelde_datei }}“. Öffnen, anmelden – dann kommt das Gerät ohne Passwort an alles, was der Benutzer darf, mit seinen Rechten. Direkt: <code>{{ anmelde_url }}</code>{% else %}Geräte melden sich unter <code>{{ anmelde_url }}</code> an.{% endif %}</p>
+<div class="list">
+  {% for key, g in fe.geraet_login.items() %}
+  <div class="li">
+    <div class="shape round"><span class="ms">devices</span></div>
+    <div class="txt"><p class="title-m">{{ g.name or g.ip }}</p>
+      <p class="body-s variant" style="margin:0">{{ g.benutzer }} · {{ recht_text[fe.recht(g.benutzer)] }} · {{ g.ip }}{% if g.seit %} · seit {{ g.seit|zeit }}{% endif %}</p></div>
+    <div class="trail">
+      <form method="post" action="/geraete/abmelden"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="key" value="{{ key }}">
+        <button class="btn text"><span class="ms">logout</span>Abmelden</button></form>
+    </div>
+  </div>
+  {% else %}
+  <div class="li"><div class="shape round muted"><span class="ms">devices</span></div><div class="txt"><p class="body-m variant" style="margin:0">Noch kein Gerät angemeldet.</p></div></div>
+  {% endfor %}
+</div>
+{% endif %}
 
 <h2 class="title-m section-title">So verbindest du dich</h2>
 <div class="card">
@@ -114,7 +136,10 @@
     <span class="switch"><input type="checkbox" name="dlna_an" value="1" {{ "checked" if fe.dlna_an }}><span class="tr"></span><span class="th"></span></span></label>
   <label class="switch-row"><span class="txt"><span class="title-m" style="display:block">MP4-Videos für Fernseher &amp; Browser optimieren</span><span class="body-m variant">Fragmentierte oder nicht direkt abspielbare MP4s automatisch verlustfrei umpacken</span></span>
     <span class="switch"><input type="checkbox" name="videos_optimieren" value="1" {{ "checked" if fe.videos_optimieren }}><span class="tr"></span><span class="th"></span></span></label>
+  <label class="switch-row"><span class="txt"><span class="title-m" style="display:block">Ordner „{{ anmelde_freigabe }}“</span><span class="body-m variant">Jedes Gerät sieht eine Seite zum Anmelden und bekommt danach die Rechte seines Benutzers</span></span>
+    <span class="switch"><input type="checkbox" name="anmelde_ordner" value="1" {{ "checked" if fe.anmelde_ordner }}><span class="tr"></span><span class="th"></span></span></label>
   <div class="form-grid" style="margin-top:8px">
+    <div class="field"><input name="anmelde_adresse" id="aa" value="{{ fe.anmelde_adresse }}" maxlength="200" placeholder=" " autocomplete="off"><label for="aa">Adresse der Dateien-Seite (optional)</label><span class="sup">Leer = automatisch, gerade <code>{{ anmelde_url }}</code></span></div>
     <div class="field"><input name="netzwerkname" id="nn" value="{{ fe.netzwerkname }}" maxlength="15" placeholder=" " required><label for="nn">Name im Netzwerk</label></div>
     <div class="field"><input name="dlna_name" id="dn" value="{{ fe.dlna_name }}" maxlength="48" placeholder=" " required><label for="dn">Name auf dem Fernseher</label></div>
   </div>
@@ -164,6 +189,20 @@
     <div class="field"><input name="windows" id="win-{{ u }}" value="{{ fe.windows.get(u, [])|join(', ') }}" placeholder=" " autocomplete="off" autocapitalize="none" maxlength="300"><label for="win-{{ u }}">Windows-Namen</label>
       <span class="sup">E-Mail vom Microsoft-Konto oder Windows-Benutzername, mehrere mit Komma. Leer = keine.</span></div>
     <p class="body-s variant" style="margin:0 4px 8px">Damit Windows sich von selbst anmeldet, muss das Passwort von {{ u }} dasselbe sein wie dein Windows-Passwort (nicht die PIN).</p>
+    <div class="actions"><button type="button" class="btn text" data-close>Abbrechen</button><button class="btn">Speichern</button></div>
+  </form>
+</dialog>
+<dialog id="dlg-recht-{{ u }}">
+  <form method="post" action="/benutzer/{{ u }}/rechte">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="icon"><span class="ms" style="font-size:32px">admin_panel_settings</span></div>
+    <h2 class="headline" style="font-size:24px;line-height:32px">Rechte von {{ u }}</h2>
+    <div class="segmented">
+      {% for r, icon in [("voll", "edit_note"), ("erstellen", "note_add"), ("lesen", "visibility")] %}
+      <label><input type="radio" name="recht" value="{{ r }}" {{ "checked" if fe.recht(u) == r }}><span><span class="ms">{{ icon }}</span>{{ recht_text[r] }}</span></label>
+      {% endfor %}
+    </div>
+    <p class="body-s variant" style="margin:0 4px 8px"><b>Alles:</b> lesen, anlegen, ändern, löschen. <b>Nur erstellen:</b> neue Dateien und Ordner anlegen, aber nichts löschen oder überschreiben (frisch Angelegtes darf 10 Minuten noch umbenannt werden). <b>Nur lesen:</b> ansehen und herunterladen. Gilt im Browser und für angemeldete Geräte; bei der Anmeldung mit Passwort im Netzlaufwerk wirkt nur „Nur lesen“.</p>
     <div class="actions"><button type="button" class="btn text" data-close>Abbrechen</button><button class="btn">Speichern</button></div>
   </form>
 </dialog>

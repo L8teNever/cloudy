@@ -8,6 +8,10 @@ Umsetzung: Samba lädt pro Verbindung eine eigene Konfiguration für die IP des 
 (config file = hosts/%I.conf). Darin fehlen versteckte Freigaben ganz, offene haben "guest ok" (Gast oder jeder angemeldete Benutzer),
 Passwort-Freigaben "valid users". Geräte ohne eigene Datei bekommen die Standard-Konfiguration.
 Die IPs kommen aus cloudy (Geräteliste) und werden regelmäßig abgeglichen.
+
+Geräte-Anmeldung: Jedes Gerät sieht die Freigabe „Anmelden“ mit einer HTML-Seite. Die führt zur Login-Seite der
+Dateien-Seite; wer sich dort anmeldet, verknüpft dieses Gerät mit seinem Benutzer. Das Gerät kommt dann ohne
+Passwort an alles, was der Benutzer darf – mit dessen Rechten (alles, nur erstellen oder nur lesen).
 """
 import base64
 import hashlib
@@ -30,10 +34,18 @@ from .config import data_dir
 
 REGELN = ("offen", "passwort", "versteckt")
 REGEL_TEXT = {"offen": "Ohne Passwort", "passwort": "Mit Passwort", "versteckt": "Unsichtbar"}
+# Rechte pro Benutzer: alles, nur neue Dateien/Ordner anlegen (nichts löschen/ändern) oder nur lesen.
+RECHTE = ("voll", "erstellen", "lesen")
+RECHTE_TEXT = {"voll": "Alles", "erstellen": "Nur erstellen", "lesen": "Nur lesen", "gesperrt": "Gesperrt"}
+# Pro Freigabe zusätzlich: Benutzer ganz aussperren (sieht die Freigabe nicht, kommt nicht rein).
+FREIGABE_RECHTE = RECHTE + ("gesperrt",)
+ANMELDE_FREIGABE = "Anmelden"
+ANMELDE_DATEI = "Gerät anmelden.html"
+WORM_FRIST = 600  # „nur erstellen“: so lange (Sekunden) darf man frisch Angelegtes noch ändern/umbenennen
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,39}$")
 IPV4_RE = re.compile(r"(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}")
 USER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
-RESERVED = {"global", "homes", "printers", "print$", "ipc$"}
+RESERVED = {"global", "homes", "printers", "print$", "ipc$", ANMELDE_FREIGABE.lower()}
 FORCE_USER = "speicher"
 _lock = threading.RLock()
 
@@ -51,6 +63,7 @@ class Freigabe:
     standard: str = "offen"
     geraete: dict[str, str] = field(default_factory=dict)
     benutzer: list[str] = field(default_factory=list)  # leer = alle Benutzer
+    rechte: dict[str, str] = field(default_factory=dict)  # Rechte pro Benutzer nur für diese Freigabe (fehlt = wie überall)
 
 
 @dataclass
@@ -67,6 +80,28 @@ class Einstellungen:
     windows: dict[str, list[str]] = field(default_factory=dict)
     # Eigene Geräte, falls cloudy ein Gerät nicht kennt: {"ip:1.2.3.4": "Name"}
     eigene_geraete: dict[str, str] = field(default_factory=dict)
+    # Rechte pro Benutzer (fehlt = "voll")
+    rechte: dict[str, str] = field(default_factory=dict)
+    # Angemeldete Geräte: {key: {"benutzer": "simon", "ip": "1.2.3.4", "name": "…", "seit": 1700000000}}
+    geraet_login: dict[str, dict] = field(default_factory=dict)
+    anmelde_ordner: bool = True
+    anmelde_adresse: str = ""  # leer = http://<server-ip>:<DATEIEN_PORT>
+
+    def recht(self, benutzer: str) -> str:
+        r = self.rechte.get(benutzer, "voll")
+        return r if r in RECHTE else "voll"
+
+    def recht_fuer(self, f: "Freigabe", benutzer: str) -> str:
+        """Recht eines Benutzers in einer Freigabe: eigene Regel der Freigabe, sonst sein allgemeines Recht."""
+        r = f.rechte.get(benutzer, "")
+        return r if r in FREIGABE_RECHTE else self.recht(benutzer)
+
+    def geraet_benutzer(self, key: str | None) -> str:
+        """Benutzer, mit dem dieses Gerät angemeldet ist ('' = keiner)."""
+        if not key:
+            return ""
+        user = (self.geraet_login.get(key) or {}).get("benutzer", "")
+        return user if user in self.benutzer else ""
 
     @classmethod
     def load(cls) -> "Einstellungen":
@@ -282,39 +317,148 @@ def global_section(e: Einstellungen, main: bool) -> str:
     return "\n".join(lines) + "\n"
 
 
-def share_section(f: Freigabe, regel: str, alle_benutzer: list[str]) -> str:
+def _worm(lines: list[str]) -> None:
+    """Nur erstellen: Neues anlegen geht, Älteres (nach WORM_FRIST) nicht mehr ändern, umbenennen oder löschen."""
+    lines += ["  vfs objects = catia fruit streams_xattr worm", f"  worm:grace_period = {WORM_FRIST}"]
+
+
+def share_section(f: Freigabe, regel: str, alle_benutzer: list[str], geraet_user: str = "",
+                  rechte: dict[str, str] | None = None) -> str:
     if regel == "versteckt":
         return ""
+    rechte = {u: (f.rechte.get(u) if f.rechte.get(u) in FREIGABE_RECHTE else r) for u, r in (rechte or {}).items()}
+    for u, r in f.rechte.items():
+        rechte.setdefault(u, r)
+    gesperrt = sorted(u for u, r in rechte.items() if r == "gesperrt" and u in alle_benutzer)
+    if geraet_user and geraet_user in gesperrt:
+        return ""  # angemeldetes Gerät, Benutzer hier ausgesperrt -> Freigabe unsichtbar
     path = share_path(f)
     lines = [
         f"[{f.name}]",
         f"  path = {path}",
         "  browseable = yes",
+    ]
+    if geraet_user and darf(f, regel, geraet_user, alle_benutzer):
+        # Angemeldetes Gerät: ohne Passwort rein, mit den Rechten seines Benutzers.
+        recht = rechte.get(geraet_user, "voll")
+        lines += [
+            f"  read only = {'yes' if f.nur_lesen or recht == 'lesen' else 'no'}",
+            f"  force user = {FORCE_USER}",
+            f"  force group = {FORCE_USER}",
+            "  create mask = 0664",
+            "  directory mask = 0775",
+            "  guest ok = yes",
+        ]
+        if recht == "erstellen" and not f.nur_lesen:
+            _worm(lines)
+        return "\n".join(lines) + "\n"
+    lines += [
         f"  read only = {'yes' if f.nur_lesen else 'no'}",
         f"  force user = {FORCE_USER}",
         f"  force group = {FORCE_USER}",
         "  create mask = 0664",
         "  directory mask = 0775",
     ]
+    nur_lesen = sorted(u for u, r in rechte.items() if r == "lesen" and u in alle_benutzer)
+    if nur_lesen and not f.nur_lesen:
+        lines.append(f"  read list = {' '.join(nur_lesen)}")
     if regel == "offen":
         # Kein "guest only": Windows 11 lässt Gast-Zugriff oft nicht zu, dann meldet man sich
         # mit einem angelegten Benutzer an und kommt damit auch in die offenen Ordner.
         lines += ["  guest ok = yes"]
+        if gesperrt:
+            lines.append(f"  invalid users = {' '.join(gesperrt)}")
     else:
-        users = [u for u in (f.benutzer or alle_benutzer) if u in alle_benutzer]
+        users = [u for u in (f.benutzer or alle_benutzer) if u in alle_benutzer and u not in gesperrt]
         lines += ["  guest ok = no", f"  valid users = {' '.join(users) if users else 'nobody-darf-rein'}"]
     return "\n".join(lines) + "\n"
+
+
+def anmelde_dir() -> Path:
+    return samba_dir() / "anmelden"
+
+
+def anmelde_section() -> str:
+    return "\n".join([
+        f"[{ANMELDE_FREIGABE}]",
+        f"  path = {anmelde_dir()}",
+        "  browseable = yes",
+        "  read only = yes",
+        "  guest ok = yes",
+        f"  force user = {FORCE_USER}",
+        f"  force group = {FORCE_USER}",
+    ]) + "\n"
 
 
 def render(e: Einstellungen, key: str | None) -> str:
     """Komplette smb.conf – für ein Gerät (key) oder die Standard-Konfiguration (key=None)."""
     parts = [global_section(e, main=key is None)]
+    if e.anmelde_ordner and e.benutzer:
+        parts.append(anmelde_section())
+    geraet_user = e.geraet_benutzer(key)
+    rechte = {u: e.recht(u) for u in e.benutzer}
     for f in e.freigaben:
         regel = regel_fuer(f, key)
-        sec = share_section(f, regel, e.benutzer)
+        sec = share_section(f, regel, e.benutzer, geraet_user, rechte)
         if sec:
             parts.append(sec)
     return "\n".join(parts)
+
+
+def anmelde_url(e: Einstellungen) -> str:
+    """Adresse der Login-Seite für Geräte (steht in der HTML-Datei im Ordner „Anmelden“)."""
+    if e.anmelde_adresse:
+        return e.anmelde_adresse.rstrip("/") + "/geraet"
+    port = os.environ.get("DATEIEN_PORT", "8092") or "8092"
+    return f"http://{server_ip()}:{port}/geraet"
+
+
+def server_ip() -> str:
+    """Eigene IP im Heimnetz."""
+    import socket
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))
+            return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
+def anmelde_html(url: str) -> str:
+    from html import escape
+
+    u = escape(url, quote=True)
+    return f"""<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="0; url={u}"><title>Gerät anmelden</title>
+<style>body{{font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;margin:0;background:#f6f6fb;color:#1b1b21}}
+a{{display:inline-block;padding:14px 28px;border-radius:99px;background:#4f5bd5;color:#fff;text-decoration:none;font-size:18px}}</style>
+</head><body><main style="text-align:center;padding:24px"><h1>Gerät anmelden</h1>
+<p>Melde dich an, damit dieses Gerät deine Ordner sieht.</p><p><a href="{u}">Zur Anmeldung</a></p>
+<p style="color:#666;font-size:14px">{u}</p></main></body></html>
+"""
+
+
+def write_anmelde_ordner(e: Einstellungen) -> bool:
+    d = anmelde_dir()
+    if not (e.anmelde_ordner and e.benutzer):
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)
+            return True
+        return False
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / ANMELDE_DATEI
+    text = anmelde_html(anmelde_url(e))
+    try:
+        if path.read_text() == text:
+            return False
+    except OSError:
+        pass
+    path.write_text(text)
+    for p in (d, path):
+        p.chmod(0o755 if p.is_dir() else 0o644)
+    return True
 
 
 def username_map(e: Einstellungen) -> str:
@@ -339,11 +483,19 @@ def write_configs(e: Einstellungen | None = None) -> bool:
     (data_dir() / "samba").mkdir(mode=0o700, exist_ok=True)  # Passwörter (passdb/secrets) bleiben im Daten-Ordner
     wanted: dict[Path, str] = {d / "smb.conf": render(e, None), d / "benutzer.map": username_map(e)}
     devices, _ = geraete()
-    # Nur für Geräte mit eigener Regel eine Extra-Datei (sonst gilt ohnehin der Standard).
+    # Nur für Geräte mit eigener Regel oder Anmeldung eine Extra-Datei (sonst gilt ohnehin der Standard).
     keys_with_rules = {k for f in e.freigaben for k in f.geraete}
+    keys_with_rules |= {k for k in e.geraet_login if e.geraet_benutzer(k)}
+    ips_done: set[str] = set()
     for g in devices:
         if g.key in keys_with_rules and g.ip:
             wanted[d / "hosts" / f"{g.ip}.conf"] = render(e, g.key)
+            ips_done.add(g.ip)
+    # Angemeldete Geräte, die cloudy (gerade) nicht kennt: über die IP von der Anmeldung
+    for k, info in e.geraet_login.items():
+        ip = str(info.get("ip", ""))
+        if e.geraet_benutzer(k) and IPV4_RE.fullmatch(ip) and ip not in ips_done and k == f"ip:{ip}":
+            wanted[d / "hosts" / f"{ip}.conf"] = render(e, k)
     changed = False
     for path, text in wanted.items():
         try:
@@ -359,6 +511,10 @@ def write_configs(e: Einstellungen | None = None) -> bool:
         if old not in wanted:
             old.unlink(missing_ok=True)
             changed = True
+    try:
+        changed = write_anmelde_ordner(e) or changed
+    except OSError:
+        pass
     return changed
 
 
@@ -469,7 +625,60 @@ def key_fuer_ip(ip: str) -> str | None:
     for g in devices:
         if g.ip == ip:
             return g.key
+    if IPV4_RE.fullmatch(ip or "") and f"ip:{ip}" in Einstellungen.load().geraet_login:
+        return f"ip:{ip}"
     return None
+
+
+def set_recht(name: str, recht: str) -> None:
+    if recht not in RECHTE:
+        raise FreigabeError("Unbekanntes Recht")
+    with _lock:
+        e = Einstellungen.load()
+        if name not in e.benutzer:
+            raise FreigabeError("Unbekannter Benutzer")
+        if recht == "voll":
+            e.rechte.pop(name, None)
+        else:
+            e.rechte[name] = recht
+        e.save()
+
+
+def set_freigabe_rechte(share: str, werte: dict[str, str]) -> None:
+    """werte: {benutzer: recht oder "" (= wie überall)}."""
+    with _lock:
+        e = Einstellungen.load()
+        f = e.get(share)
+        for user, recht in werte.items():
+            if user not in e.benutzer:
+                continue
+            if recht in FREIGABE_RECHTE:
+                f.rechte[user] = recht
+            else:
+                f.rechte.pop(user, None)
+        e.save()
+
+
+def geraet_anmelden(ip: str, benutzer: str) -> str:
+    """Gerät mit dieser IP mit dem Benutzer verknüpfen. Gibt den Geräte-Schlüssel zurück."""
+    if not IPV4_RE.fullmatch(ip or ""):
+        raise FreigabeError("Dieses Gerät hat keine IPv4-Adresse im Heimnetz – Anmelden geht nur im Heimnetz")
+    key = key_fuer_ip(ip) or f"ip:{ip}"
+    name = next((g.name for g in geraete()[0] if g.key == key), ip)
+    with _lock:
+        e = Einstellungen.load()
+        if benutzer not in e.benutzer:
+            raise FreigabeError("Unbekannter Benutzer")
+        e.geraet_login[key] = {"benutzer": benutzer, "ip": ip, "name": name, "seit": int(time.time())}
+        e.save()
+    return key
+
+
+def geraet_abmelden(key: str) -> None:
+    with _lock:
+        e = Einstellungen.load()
+        if e.geraet_login.pop(key, None) is not None:
+            e.save()
 
 
 def regel_fuer(f: Freigabe, key: str | None) -> str:
@@ -479,6 +688,8 @@ def regel_fuer(f: Freigabe, key: str | None) -> str:
 def darf(f: Freigabe, regel: str, benutzer: str, alle_benutzer: list[str]) -> bool:
     """Darf jemand (benutzer = "" für nicht angemeldet) in die Freigabe – gleiche Logik wie share_section."""
     if regel == "versteckt":
+        return False
+    if benutzer and f.rechte.get(benutzer) == "gesperrt":
         return False
     if regel == "offen":
         return True
@@ -550,9 +761,12 @@ def delete_user(name: str) -> None:
             raise FreigabeError("Unbekannter Benutzer")
         e.benutzer.remove(name)
         e.windows.pop(name, None)
+        e.rechte.pop(name, None)
+        e.geraet_login = {k: v for k, v in e.geraet_login.items() if v.get("benutzer") != name}
         for f in e.freigaben:
             if name in f.benutzer:
                 f.benutzer.remove(name)
+            f.rechte.pop(name, None)
         e.save()
         write_configs(e)  # Windows-Zuordnung sofort entfernen
         _run(["smbpasswd", "-c", str(samba_dir() / "smb.conf"), "-x", name])

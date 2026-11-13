@@ -42,6 +42,31 @@
   <div class="actions"><button class="btn">Speichern</button></div>
 </form>
 
+{% if fe.benutzer %}
+<form method="post" action="{{ share_url }}/rechte" class="card">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="card-head"><div class="shape round primary"><span class="ms">admin_panel_settings</span></div><h2 class="title-l">Rechte in „{{ share.name }}“</h2></div>
+  <p class="body-m variant" style="margin-top:0"><b>Wie überall</b> = das Recht vom Benutzer unter Freigaben. <b>Gesperrt</b> = sieht diese Freigabe nicht und kommt nicht rein, auch nicht über ein angemeldetes Gerät.</p>
+  <div class="list" style="margin:0">
+    {% for u in fe.benutzer %}
+    {% set r = share.rechte.get(u, "") %}
+    <div class="li" style="background:var(--sc)">
+      <div class="shape round"><span class="ms">person</span></div>
+      <div class="txt"><p class="title-m">{{ u }}</p><p class="body-s variant" style="margin:0">überall: {{ recht_text[fe.recht(u)] }}</p></div>
+      <div class="trail">
+        <div class="segmented mini" role="radiogroup" aria-label="Rechte für {{ u }}">
+          {% for value, icon, text in [("", "remove", "Wie überall"), ("voll", "edit_note", "Alles"), ("erstellen", "note_add", "Nur erstellen"), ("lesen", "visibility", "Nur lesen"), ("gesperrt", "block", "Gesperrt")] %}
+          <label title="{{ text }}"><input type="radio" name="recht:{{ u }}" value="{{ value }}" {{ "checked" if r == value }}><span><span class="ms">{{ icon }}</span><span class="lbl">{{ text }}</span></span></label>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="actions"><button class="btn"><span class="ms">save</span>Rechte speichern</button></div>
+</form>
+{% endif %}
+
 <form method="post" action="{{ share_url }}/geraete">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <div class="card" style="padding-bottom:16px">

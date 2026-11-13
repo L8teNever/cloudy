@@ -108,6 +108,15 @@ async def security(request: Request, call_next):
         neu = make_session()
         sess = ("", neu)
     request.state.benutzer, request.state.session = sess
+    request.state.geraet_benutzer = ""
+    e = freigaben.Einstellungen.load()
+    if e.geraet_login:
+        key = await run_in_threadpool(freigaben.key_fuer_ip, _ip(request))
+        request.state.geraet_benutzer = e.geraet_benutzer(key)
+        if not request.state.benutzer:
+            # Angemeldetes Gerät: gilt wie angemeldet, auch ohne Cookie
+            request.state.benutzer = request.state.geraet_benutzer
+    request.state.recht = e.recht(request.state.benutzer) if request.state.benutzer else "voll"
     if request.method in ("POST", "PUT", "DELETE"):
         origin = request.headers.get("origin") or request.headers.get("referer") or ""
         if origin and urlparse(origin).netloc != request.headers.get("host", ""):
@@ -148,6 +157,8 @@ def _page(request: Request, vorlage: str, status: int = 200, **ctx) -> HTMLRespo
     ctx.update(
         request=request,
         benutzer=request.state.benutzer,
+        recht=request.state.recht,
+        recht_text=freigaben.RECHTE_TEXT,
         csrf=csrf_token(request.state.session),
         ok=ctx.get("ok") or request.query_params.get("ok", ""),
         fehler=ctx.get("fehler") or request.query_params.get("fehler", ""),
@@ -170,7 +181,8 @@ def _ip(request: Request) -> str:
 class Zugang:
     f: Freigabe
     root: Path
-    schreiben: bool
+    schreiben: bool  # neue Dateien/Ordner anlegen
+    aendern: bool = True  # umbenennen, löschen, ersetzen
 
 
 def sichtbar(request: Request) -> list[tuple[Freigabe, bool]]:
@@ -182,6 +194,8 @@ def sichtbar(request: Request) -> list[tuple[Freigabe, bool]]:
     out = []
     for f in e.freigaben:
         regel = freigaben.regel_fuer(f, key)
+        if request.state.benutzer and f.rechte.get(request.state.benutzer) == "gesperrt":
+            continue  # ausgesperrt: Freigabe gar nicht zeigen
         if regel != "versteckt":
             out.append((f, freigaben.darf(f, regel, request.state.benutzer, e.benutzer)))
     return out
@@ -194,7 +208,7 @@ def zugang(request: Request, name: str) -> Zugang:
     except freigaben.FreigabeError:
         f = None
     regel = freigaben.regel_fuer(f, freigaben.key_fuer_ip(_ip(request))) if f else "versteckt"
-    if not e.an or regel == "versteckt":
+    if not e.an or regel == "versteckt" or (f and request.state.benutzer and f.rechte.get(request.state.benutzer) == "gesperrt"):
         raise Fehler(404, "Diesen Ordner gibt es nicht")
     if not freigaben.darf(f, regel, request.state.benutzer, e.benutzer):
         if request.state.benutzer:
@@ -202,7 +216,9 @@ def zugang(request: Request, name: str) -> Zugang:
         raise Fehler(401, "Für diesen Ordner musst du dich anmelden")
     if str(pool.paths()["pool"]) not in pool.mounts():
         raise Fehler(503, "Der Speicher ist gerade nicht eingehängt")
-    return Zugang(f, freigaben.share_path(f), not f.nur_lesen)
+    recht = e.recht_fuer(f, request.state.benutzer) if request.state.benutzer else "voll"
+    schreiben = not f.nur_lesen and recht in ("voll", "erstellen")
+    return Zugang(f, freigaben.share_path(f), schreiben, schreiben and recht == "voll")
 
 
 def check_name(name: str) -> str:
@@ -267,7 +283,7 @@ async def login_form(request: Request, weiter: str = "/"):
 
 
 def _sicher(weiter: str) -> str:
-    return weiter if weiter.startswith(("/d/", "/?", "/streaming", "/medien")) or weiter == "/" else "/"
+    return weiter if weiter.startswith(("/d/", "/?", "/streaming", "/medien", "/geraet")) or weiter == "/" else "/"
 
 
 @app.post("/login")
@@ -287,6 +303,60 @@ async def login(request: Request):
         return _page(request, "dateien_login.html", weiter=weiter, name=name, fehler=fehler)
     resp = RedirectResponse(weiter, 303)
     _set_cookie(resp, make_session(freigaben.benutzer_fuer(name)))
+    return resp
+
+
+# ---------- Gerät anmelden (Ordner „Anmelden“ im Netzlaufwerk führt hierher) ----------
+
+def _geraet_info(request: Request) -> dict:
+    e = freigaben.Einstellungen.load()
+    ip = _ip(request)
+    key = freigaben.key_fuer_ip(ip)
+    name = next((g.name for g in freigaben.geraete()[0] if g.key == key), "") if key else ""
+    user = e.geraet_benutzer(key)
+    return {"ip": ip, "geraet_name": name or ip, "geraet_user": user, "geraet_recht": e.recht(user) if user else "voll",
+            "hat_benutzer": bool(e.benutzer)}
+
+
+@app.get("/geraet", response_class=HTMLResponse)
+async def geraet_seite(request: Request):
+    info = await run_in_threadpool(_geraet_info, request)
+    return _page(request, "dateien_geraet.html", nav="geraet", **info)
+
+
+@app.post("/geraet")
+async def geraet_anmelden(request: Request):
+    form = await request.form()
+    _csrf(request, str(form.get("csrf", "")))
+    name, pw = str(form.get("name", "")).strip(), str(form.get("passwort", ""))
+    ip = _ip(request) or "?"
+    info = await run_in_threadpool(_geraet_info, request)
+    if auth.throttled("dateien:" + ip):
+        return _page(request, "dateien_geraet.html", nav="geraet", name=name, fehler="Zu viele Versuche – in 10 Minuten nochmal", **info)
+    if not await run_in_threadpool(freigaben.check_login, name, pw):
+        auth.failed("dateien:" + ip)
+        return _page(request, "dateien_geraet.html", nav="geraet", name=name, fehler="Benutzer oder Passwort falsch", **info)
+    user = freigaben.benutzer_fuer(name)
+    try:
+        await run_in_threadpool(freigaben.geraet_anmelden, ip, user)
+        await run_in_threadpool(freigaben.dienste.abgleichen)
+    except freigaben.FreigabeError as exc:
+        return _page(request, "dateien_geraet.html", nav="geraet", name=name, fehler=str(exc), **info)
+    resp = RedirectResponse("/geraet?ok=" + quote(f"Dieses Gerät ist jetzt als {user} angemeldet"), 303)
+    _set_cookie(resp, make_session(user))
+    return resp
+
+
+@app.post("/geraet/abmelden")
+async def geraet_abmelden(request: Request):
+    form = await request.form()
+    _csrf(request, str(form.get("csrf", "")))
+    key = await run_in_threadpool(freigaben.key_fuer_ip, _ip(request))
+    if key:
+        await run_in_threadpool(freigaben.geraet_abmelden, key)
+        await run_in_threadpool(freigaben.dienste.abgleichen)
+    resp = RedirectResponse("/geraet?ok=" + quote("Gerät abgemeldet"), 303)
+    _set_cookie(resp, make_session())
     return resp
 
 
@@ -371,7 +441,7 @@ async def ansehen(request: Request, name: str, rel: str = ""):
         teile = [p for p in rel.split("/") if p]
         pfad = [(teile[i], "/".join(teile[: i + 1])) for i in range(len(teile))]
         return _page(request, "dateien_ordner.html", f=z.f, rel="/".join(teile), pfad=pfad, eintraege=eintraege,
-                     schreiben=z.schreiben, url=_url, oben=_url(name, "/".join(teile[:-1])) if teile else "/")
+                     schreiben=z.schreiben, aendern=z.aendern, url=_url, oben=_url(name, "/".join(teile[:-1])) if teile else "/")
     if not path.is_file():
         raise Fehler(404, "Nicht gefunden")
     typ = _medientyp(path)
@@ -466,6 +536,8 @@ async def umbenennen(request: Request, name: str):
     z, f = await _aktion(request, name)
     rel = f.get("pfad", "")
     ordner = "/".join(rel.split("/")[:-1])
+    if not z.aendern:
+        return _zurueck(name, ordner, fehler="Du darfst hier nur Neues anlegen, nichts umbenennen")
     try:
         alt = ziel(z, rel)
         if alt == z.root.resolve():
@@ -486,6 +558,8 @@ async def loeschen(request: Request, name: str):
     z, f = await _aktion(request, name)
     rel = f.get("pfad", "")
     ordner = "/".join(rel.split("/")[:-1])
+    if not z.aendern:
+        return _zurueck(name, ordner, fehler="Du darfst hier nur Neues anlegen, nichts löschen")
     try:
         path = ziel(z, rel)
         if path == z.root.resolve():
@@ -521,7 +595,7 @@ async def hochladen(request: Request, name: str, rel: str):
             _besitzer(p)
             p = p.parent
     path = ordner / dateiname
-    if path.exists() and request.query_params.get("ersetzen") != "1":
+    if path.exists() and (request.query_params.get("ersetzen") != "1" or not z.aendern):
         raise Fehler(409, f"„{dateiname}“ gibt es schon")
     if path.is_dir():
         raise Fehler(409, f"„{dateiname}“ ist ein Ordner")
@@ -560,10 +634,19 @@ def _allowed_shares(request: Request, write_only: bool = False) -> list[tuple[Fr
             continue
         if not freigaben.darf(f, regel, request.state.benutzer, e.benutzer):
             continue
-        if write_only and f.nur_lesen:
+        if write_only and (f.nur_lesen or _recht(request, e, f) not in ("voll", "erstellen")):
             continue
         out.append((f, freigaben.share_path(f)))
     return out
+
+
+def _recht(request: Request, e, f: Freigabe) -> str:
+    return e.recht_fuer(f, request.state.benutzer) if request.state.benutzer else "voll"
+
+
+def _bestes_recht(request: Request, e, shares: list[Freigabe]) -> str:
+    rs = {_recht(request, e, f) for f in shares if not f.nur_lesen}
+    return next((r for r in ("voll", "erstellen") if r in rs), "lesen")
 
 
 def _check_mediathek_access(
@@ -595,7 +678,8 @@ def _check_mediathek_access(
             if not request.state.benutzer:
                 raise Fehler(401, "Für diesen Bereich musst du dich anmelden")
             raise Fehler(403, f"{request.state.benutzer} darf nicht auf diesen Bereich zugreifen")
-        can_write = any(not f.nur_lesen for f in allowed)
+        can_write = any(not f.nur_lesen and _recht(request, e, f) in ("voll", "erstellen") for f in allowed)
+        request.state.bereich_recht = _bestes_recht(request, e, allowed)
         if write and not can_write:
             raise Fehler(403, "Nur zum Lesen freigegeben")
     elif e.freigaben:
@@ -605,7 +689,8 @@ def _check_mediathek_access(
             if vis and not request.state.benutzer:
                 raise Fehler(401, "Bitte anmelden")
             raise Fehler(403 if vis else 404, "Für dieses Gerät nicht freigegeben")
-        can_write = any(not f.nur_lesen for f in allowed_shares)
+        can_write = any(not f.nur_lesen and _recht(request, e, f) in ("voll", "erstellen") for f in allowed_shares)
+        request.state.bereich_recht = _bestes_recht(request, e, allowed_shares)
         if write and not can_write:
             raise Fehler(403, "Nur zum Lesen freigegeben")
     else:
@@ -983,6 +1068,8 @@ async def api_mediathek_delete_file(request: Request, file_id: int):
     _csrf(request, request.headers.get("x-csrf", ""))
     cfg = mediathek_db.Einstellungen.load()
     await run_in_threadpool(_check_mediathek_access, request, cfg.streaming_ordner, write=True, require_pool=True)
+    if getattr(request.state, "bereich_recht", "voll") != "voll":
+        raise Fehler(403, f"{request.state.benutzer} darf hier nichts löschen")
 
     def _delete():
         item = mediathek_db.get_file(file_id)

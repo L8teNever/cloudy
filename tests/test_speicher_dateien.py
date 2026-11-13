@@ -166,3 +166,65 @@ def test_web_passwort_wird_mit_benutzer_entfernt(umgebung):
     assert not fg.check_login("niemand", "geheim123")
     fg.set_web_password("simon", None)
     assert not fg.check_login("simon", "geheim123")
+
+
+# ---------- Geräte-Anmeldung und Rechte ----------
+
+@pytest.fixture()
+def handy(umgebung, monkeypatch):
+    """Ein Gerät mit echter IPv4 (für die Geräte-Anmeldung), Samba-Abgleich ohne Dienste."""
+    geraete = [fg.Geraet("aa:bb", "Handy", "192.168.178.50")]
+    monkeypatch.setattr(fg, "geraete", lambda max_age=30: (geraete, ""))
+    monkeypatch.setattr(dateien, "_ip", lambda request: "192.168.178.50")
+    monkeypatch.setattr(fg.dienste, "abgleichen", lambda: fg.write_configs())
+    return umgebung
+
+
+def test_geraet_anmelden_gibt_samba_rechte(handy, web):
+    fg.set_recht("simon", "erstellen")
+    r = web.post("/geraet", data={"csrf": _csrf(web), "name": "simon", "passwort": "geheim123"}, follow_redirects=False)
+    assert r.status_code == 303
+    e = fg.Einstellungen.load()
+    assert e.geraet_login["aa:bb"]["benutzer"] == "simon"
+    conf = (Path(os.environ["SAMBA_CONF_DIR"]) / "hosts" / "192.168.178.50.conf").read_text()
+    privat = conf.split("[Privat]")[1].split("\n[")[0]
+    assert "guest ok = yes" in privat and "worm" in privat  # ohne Passwort, nur erstellen
+    assert "[Anmelden]" in conf
+    html = (Path(os.environ["SAMBA_CONF_DIR"]) / "anmelden" / fg.ANMELDE_DATEI).read_text()
+    assert "/geraet" in html
+    # Ohne Cookie zählt das Gerät als angemeldet
+    web.cookies.clear()
+    web.get("/")
+    assert web.get("/d/Privat").status_code == 200
+    # Nur erstellen: anlegen ja, löschen nein
+    ok = web.put("/api/hochladen/Privat/neu.txt", content=b"x", headers={"x-csrf": _csrf(web)})
+    assert ok.status_code == 200
+    r = web.post("/aktion/Privat/loeschen", data={"csrf": _csrf(web), "pfad": "geheim.txt"}, follow_redirects=False)
+    assert "fehler=" in r.headers["location"] and (handy / "Privat" / "geheim.txt").exists()
+    # Abmelden entfernt die Geräte-Regel
+    web.post("/geraet/abmelden", data={"csrf": _csrf(web)})
+    assert "aa:bb" not in fg.Einstellungen.load().geraet_login
+
+
+def test_nur_lesen_recht(umgebung, web):
+    fg.set_recht("mama", "lesen")
+    _login(web, "mama", "mama1234")
+    r = web.put("/api/hochladen/Familie/x.txt", content=b"x", headers={"x-csrf": _csrf(web)})
+    assert r.status_code == 403
+    conf = fg.render(fg.Einstellungen.load(), None)
+    assert "read list = mama" in conf.split("[Familie]")[1].split("\n[")[0]
+
+
+def test_rechte_pro_freigabe_und_sperren(umgebung, web):
+    fg.set_freigabe_rechte("Familie", {"mama": "gesperrt", "simon": "lesen"})
+    e = fg.Einstellungen.load()
+    familie = fg.render(e, None).split("[Familie]")[1].split("\n[")[0]
+    assert "invalid users = mama" in familie and "read list = simon" in familie
+    _login(web, "mama", "mama1234")
+    assert "Familie" not in web.get("/").text
+    assert web.get("/d/Familie").status_code == 404
+    _login(web)
+    r = web.put("/api/hochladen/Familie/x.txt", content=b"x", headers={"x-csrf": _csrf(web)})
+    assert r.status_code == 403
+    fg.set_freigabe_rechte("Familie", {"simon": ""})  # wieder wie überall
+    assert "simon" not in fg.Einstellungen.load().get("Familie").rechte

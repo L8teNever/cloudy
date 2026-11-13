@@ -10,7 +10,7 @@
 <header class="appbar">
   <div style="min-width:0">
     <h1 class="display files-title">{{ pfad[-1][0] if pfad else f.name }}</h1>
-    <p class="variant">{{ eintraege|length }} {{ "Eintrag" if eintraege|length == 1 else "Einträge" }}{% if not schreiben %} · nur lesen{% endif %}</p>
+    <p class="variant">{{ eintraege|length }} {{ "Eintrag" if eintraege|length == 1 else "Einträge" }}{% if not schreiben %} · nur lesen{% elif not aendern %} · nur neues anlegen{% endif %}</p>
   </div>
   <div class="files-actions">
     <a class="btn outlined" href="{{ url(f.name, rel) }}?zip=1" title="Ganzen Ordner als ZIP herunterladen"><span class="ms">download</span>ZIP</a>
@@ -48,7 +48,7 @@
     </a>
     <div class="trail">
       <a class="icon-btn" href="{{ url(f.name, p) }}?{{ 'zip=1' if e.ordner else 'dl=1' }}" title="Herunterladen" aria-label="{{ e.name }} herunterladen"><span class="ms">download</span></a>
-      {% if schreiben %}
+      {% if aendern %}
       <button type="button" class="icon-btn" data-umbenennen="{{ p }}" data-name="{{ e.name }}" title="Umbenennen" aria-label="{{ e.name }} umbenennen"><span class="ms">edit</span></button>
       <form method="post" action="/aktion/{{ f.name|urlencode }}/loeschen" data-confirm="„{{ e.name }}“ {{ 'mit allem Inhalt ' if e.ordner }}löschen?">
         <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="pfad" value="{{ p }}">

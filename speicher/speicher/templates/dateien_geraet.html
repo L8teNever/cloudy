@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Gerät anmelden{% endblock %}
+{% block body %}
+<main class="login">
+  <div class="card">
+    <div class="shape cookie primary"><span class="ms">{{ "devices" if geraet_user else "lock" }}</span></div>
+    <h1 class="headline">Gerät anmelden</h1>
+    <p class="variant body-m" style="margin:8px 0 4px"><span class="ms" style="font-size:16px;vertical-align:-3px">router</span> {{ geraet_name }}{% if geraet_name != ip %} · {{ ip }}{% endif %}</p>
+    {% if geraet_user %}
+    <p class="body-m" style="margin:8px 0 20px">Angemeldet als <b>{{ geraet_user }}</b> – Rechte: <b>{{ recht_text[geraet_recht] }}</b>.
+      Dieses Gerät kommt im Netzlaufwerk ohne Passwort an deine Ordner.</p>
+    <div class="actions" style="flex-direction:column;gap:8px">
+      <a class="btn large" style="width:100%" href="/"><span class="ms">folder_open</span>Zu den Dateien</a>
+      <form method="post" action="/geraet/abmelden" style="width:100%"><input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="btn text" style="width:100%"><span class="ms">logout</span>Gerät abmelden</button></form>
+    </div>
+    <p class="body-s variant" style="margin:20px 0 8px">Mit anderem Benutzer anmelden:</p>
+    {% elif not hat_benutzer %}
+    <p class="variant body-m" style="margin:8px 0 0">Es gibt noch keine Benutzer. Leg sie auf der Speicher-Seite unter „Freigaben“ an.</p>
+    {% else %}
+    <p class="variant body-m" style="margin:8px 0 28px">Melde dich einmal an. Danach sieht dieses Gerät im Netzlaufwerk und hier deine Ordner – ohne Passwort, mit deinen Rechten.</p>
+    {% endif %}
+    {% if hat_benutzer %}
+    <form method="post" action="/geraet">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="field {{ 'error' if fehler }}"><input name="name" id="n" value="{{ name or '' }}" placeholder=" " required autocapitalize="none" autocomplete="username" {{ "autofocus" if not name and not geraet_user }}><label for="n">Benutzer</label></div>
+      <div class="field {{ 'error' if fehler }}"><input type="password" name="passwort" id="pw" placeholder=" " required autocomplete="current-password" {{ "autofocus" if name }}><label for="pw">Passwort</label></div>
+      <div class="actions"><button class="btn {{ 'tonal' if geraet_user else 'large' }}" style="width:100%">{{ "Wechseln" if geraet_user else "Dieses Gerät anmelden" }}</button></div>
+    </form>
+    {% endif %}
+    {% if not geraet_user %}<p style="margin:16px 0 0;text-align:center"><a class="btn text" href="/"><span class="ms">arrow_back</span>Ohne Anmeldung weiter</a></p>{% endif %}
+  </div>
+</main>
+{% endblock %}

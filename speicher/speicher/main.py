@@ -508,6 +508,8 @@ def _freigaben_data() -> dict:
         "fe": e, "geraete": geraete, "cloudy_fehler": fehler, "server_ip": _server_ip(),
         "smb_laeuft": d.laeuft("smbd"), "dlna_laeuft": d.laeuft("minidlna"), "dienst_fehler": d.fehler,
         "medien": medien.status(), "regel_text": freigaben.REGEL_TEXT, "pool_da": pool.status()["pool"].mounted,
+        "recht_text": freigaben.RECHTE_TEXT, "anmelde_url": freigaben.anmelde_url(e),
+        "anmelde_freigabe": freigaben.ANMELDE_FREIGABE, "anmelde_datei": freigaben.ANMELDE_DATEI,
     }
 
 
@@ -533,6 +535,11 @@ async def freigaben_einstellungen(request: Request):
         e.an = f.get("an") == "1"
         e.dlna_an = f.get("dlna_an") == "1"
         e.videos_optimieren = f.get("videos_optimieren") == "1"
+        e.anmelde_ordner = f.get("anmelde_ordner") == "1"
+        adresse = f.get("anmelde_adresse", e.anmelde_adresse).strip().rstrip("/")
+        if adresse and not re.fullmatch(r"https?://[A-Za-z0-9.-]+(:\d{1,5})?", adresse):
+            raise freigaben.FreigabeError("Adresse der Dateien-Seite: z. B. http://192.168.178.2:8092 oder https://dateien.example.com")
+        e.anmelde_adresse = adresse
         name = re.sub(r"[^A-Za-z0-9-]", "", f.get("netzwerkname", e.netzwerkname)).upper()[:15]
         if not name:
             raise freigaben.FreigabeError("Netzwerkname: Buchstaben, Zahlen und -")
@@ -630,6 +637,18 @@ async def freigabe_geraete(request: Request, name: str):
     return _back("Geräte-Regeln gespeichert", to=_share_url(name))
 
 
+@app.post("/freigaben/{name}/rechte")
+async def freigabe_rechte(request: Request, name: str):
+    try:
+        f = await _form(request)
+        werte = {k[6:]: v for k, v in f.items() if k.startswith("recht:")}
+        await run_in_threadpool(freigaben.set_freigabe_rechte, name, werte)
+        await _apply()
+    except (freigaben.FreigabeError, PermissionError) as exc:
+        return _back(fehler=str(exc), to=_share_url(name))
+    return _back("Rechte gespeichert", to=_share_url(name))
+
+
 @app.post("/freigaben/{name}/loeschen")
 async def freigabe_loeschen(request: Request, name: str):
     try:
@@ -675,6 +694,28 @@ async def benutzer_passwort(request: Request, name: str):
     except (freigaben.FreigabeError, PermissionError) as exc:
         return _back(fehler=str(exc), to="/freigaben")
     return _back(f"Passwort von {name} geändert", to="/freigaben")
+
+
+@app.post("/benutzer/{name}/rechte")
+async def benutzer_rechte(request: Request, name: str):
+    try:
+        f = await _form(request)
+        await run_in_threadpool(freigaben.set_recht, name, f.get("recht", ""))
+        await _apply()
+    except (freigaben.FreigabeError, PermissionError) as exc:
+        return _back(fehler=str(exc), to="/freigaben")
+    return _back(f"Rechte von {name}: {freigaben.RECHTE_TEXT[f['recht']]}", to="/freigaben")
+
+
+@app.post("/geraete/abmelden")
+async def geraet_abmelden(request: Request):
+    try:
+        f = await _form(request)
+        await run_in_threadpool(freigaben.geraet_abmelden, f.get("key", ""))
+        await _apply()
+    except (freigaben.FreigabeError, PermissionError) as exc:
+        return _back(fehler=str(exc), to="/freigaben")
+    return _back("Gerät abgemeldet", to="/freigaben")
 
 
 @app.post("/benutzer/{name}/loeschen")
