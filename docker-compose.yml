@@ -90,7 +90,7 @@ services:
 
   # Speicher: HDDs als ein Pool (mergerfs), SSD als Sicherheitskopie bis zum Backup, Backup nach Google Drive,
   # Netzlaufwerk (Samba) für PCs/Handys und DLNA für Fernseher. Webseite: http://<server>:8091 (eigenes Passwort).
-  # Host-Netz: Windows (wsdd) und Fernseher (DLNA) finden den Server nur so; Ports 8091, 445, 3702/5357, 8200, 1900.
+  # Host-Netz: Windows (wsdd) und Fernseher (DLNA) finden den Server nur so; Ports 8091, 445, 137/138 (NetBIOS-Name), 3702/5357, 8200, 1900.
   # Geräteliste für Regeln pro Gerät kommt aus cloudy (http://127.0.0.1:DASHBOARD_PORT/api/devices).
   speicher:
     image: ghcr.io/l8tenever/cloudy:speicher

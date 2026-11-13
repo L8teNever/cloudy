@@ -205,8 +205,10 @@ def global_section(e: Einstellungen, main: bool) -> str:
         f"  passdb backend = tdbsam:{state}/passdb.tdb",
         f"  private dir = {state}",
         "  server min protocol = SMB2_10",
-        "  disable netbios = yes",
+        # NetBIOS-Namensdienst (nmbd) bleibt an: Windows löst „\\SPEICHER“ sonst nicht auf,
+        # weil der Name nicht der Hostname des Servers ist und wsdd nur ankündigt, nicht auflöst.
         "  smb ports = 445",
+        "  dns proxy = no",
         "  load printers = no",
         "  printing = bsd",
         "  printcap name = /dev/null",
@@ -406,7 +408,7 @@ def minidlna_conf(e: Einstellungen) -> str:
     return "\n".join(lines) + "\n"
 
 
-# ---------- Dienste (smbd, wsdd, minidlna) ----------
+# ---------- Dienste (smbd, nmbd, wsdd, minidlna) ----------
 
 class Dienste:
     """Startet und überwacht die Netzwerk-Dienste im Container."""
@@ -463,6 +465,12 @@ class Dienste:
             elif not smb_soll:
                 self._stop("wsdd")
 
+            # nmbd beantwortet „Wer ist SPEICHER?“ im Heimnetz (NetBIOS, UDP 137/138).
+            if smb_soll and not self.laeuft("nmbd"):
+                self._start("nmbd", ["nmbd", "--foreground", "--no-process-group", "-s", str(samba_dir() / "smb.conf")])
+            elif not smb_soll:
+                self._stop("nmbd")
+
             dlna_soll = e.dlna_an and pool_da and any(f.dlna for f in e.freigaben)
             conf = minidlna_conf(e)
             if dlna_soll:
@@ -478,7 +486,9 @@ class Dienste:
                 self._dlna_conf = ""
 
     def neustart_wsdd(self) -> None:
+        """Nach Namensänderung: Ankündigung (wsdd) und Namensdienst (nmbd) neu starten."""
         self._stop("wsdd")
+        self._stop("nmbd")
         self.abgleichen()
 
     def stop_all(self) -> None:
