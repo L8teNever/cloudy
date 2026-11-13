@@ -1,0 +1,212 @@
+{% extends "dateien_base.html" %}
+{% block title %}Streaming{% endblock %}
+{% block content %}
+<header class="appbar">
+  <div style="min-width:0">
+    <h1 class="display">Streaming</h1>
+    <p class="variant">Filme, Serien &amp; Anime auf cloudy und wo du sie online streamen kannst.</p>
+  </div>
+  <div class="files-actions">
+    <button type="button" class="icon-btn" id="btn-settings" title="Mediathek-Einstellungen" aria-label="Einstellungen"><span class="ms">settings</span></button>
+    {% if can_write %}
+    <button type="button" class="btn large" id="btn-open-upload" {{ "disabled" if not pool_da }}><span class="ms">upload</span>Hochladen</button>
+    {% endif %}
+  </div>
+</header>
+
+{% if not pool_da %}
+<div class="danger-box"><span class="ms">error</span><span class="body-m">Der Speicher ist gerade nicht eingehängt. Online-Suche klappt trotzdem, Hochladen &amp; Abspielen pausieren solange.</span></div>
+{% endif %}
+
+{% if not has_tmdb_key %}
+<div class="card high" id="tmdb-hint" style="display:flex;gap:12px;align-items:center;padding:14px 18px;border-radius:var(--r-l)">
+  <span class="ms" style="color:var(--primary)">info</span>
+  <span class="body-m" style="flex:1">TVmaze &amp; AniList laufen sofort. Für Filme &amp; deutsche Streaming-Anbieter (Netflix, Prime, Disney+ …) kannst du in den <a href="#einstellungen" id="link-tmdb-settings">Einstellungen</a> einen TMDB-Key eintragen.</span>
+</div>
+{% endif %}
+
+<section class="tv-banner" id="tv-banner" hidden>
+  <div class="card-head">
+    <div class="shape round primary"><span class="ms">tv</span></div>
+    <div style="flex:1;min-width:0">
+      <p class="title-m" style="margin:0">Jetzt auf dem Fernseher ({{ cfg.temp_ordner }})</p>
+      <p class="body-s" style="margin:0;opacity:.85">{% if dlna_an %}Auf dem TV unter „{{ dlna_name }}“ ganz oben sichtbar{% else %}Im Heimnetz-Ordner „{{ cfg.temp_ordner }}“ bereit{% endif %}</p>
+    </div>
+    <button type="button" class="btn tonal" id="tv-clear-btn"><span class="ms">delete_sweep</span>Alle weg</button>
+  </div>
+  <div id="tv-list"></div>
+</section>
+
+<div class="media-search-bar">
+  <div class="search">
+    <span class="ms">search</span>
+    <input type="search" id="stream-search" placeholder="Film, Serie oder Anime suchen …" autocomplete="off">
+  </div>
+  <button type="button" class="icon-btn" id="stream-search-clear" title="Suche leeren" aria-label="Suche leeren" hidden><span class="ms">close</span></button>
+</div>
+
+<div class="filter-row" id="filter-row">
+  <button type="button" class="pill active" data-filter="all">Alle</button>
+  <button type="button" class="pill" data-filter="movie"><span class="ms">movie</span>Filme</button>
+  <button type="button" class="pill" data-filter="show"><span class="ms">tv</span>Serien &amp; Anime</button>
+</div>
+
+<div id="search-status" class="body-m variant" style="margin:0 0 12px" hidden></div>
+<div id="stream-grid" class="poster-grid"></div>
+
+<div id="stream-empty" class="card empty" hidden>
+  <div class="shape cookie tertiary"><span class="ms">movie_filter</span></div>
+  <p class="title-m" id="stream-empty-title">Noch nichts in deiner Mediathek</p>
+  <p class="body-m" id="stream-empty-sub">Such oben nach einem Film, einer Serie oder einem Anime – oder lad direkt eigene Videos hoch.</p>
+  {% if can_write and pool_da %}
+  <p><button type="button" class="btn tonal" id="btn-empty-upload"><span class="ms">upload</span>Video hochladen</button></p>
+  {% endif %}
+</div>
+
+{# Detail-Sheet #}
+<dialog id="dlg-detail" class="sheet-dlg" aria-labelledby="det-title">
+  <div class="sheet-hero">
+    <img class="sheet-bg" id="det-bg" alt="" hidden>
+    <button type="button" class="icon-btn sheet-close" data-close aria-label="Schließen"><span class="ms">close</span></button>
+    <div class="sheet-head">
+      <div class="sheet-poster" id="det-poster"></div>
+      <div style="flex:1;min-width:0">
+        <div id="det-badges" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>
+        <h2 class="headline" id="det-title" style="text-align:left;margin:0 0 6px;font-size:26px;line-height:32px"></h2>
+        <p class="body-m variant" id="det-sub" style="margin:0"></p>
+      </div>
+    </div>
+  </div>
+  <div class="sheet-body">
+    <p class="body-m" id="det-summary" style="margin:0 0 16px"></p>
+    <div id="det-links" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px"></div>
+
+    <div class="card high" id="det-local-box">
+      <div class="card-head">
+        <div class="shape round primary"><span class="ms">hard_drive</span></div>
+        <span class="title-m" style="flex:1">Auf cloudy</span>
+        <span id="det-local-chip"></span>
+      </div>
+      <div id="det-local-content"></div>
+    </div>
+
+    <div class="card outlined" id="det-watch-box">
+      <div class="card-head">
+        <div class="shape round tertiary"><span class="ms">play_circle</span></div>
+        <span class="title-m" style="flex:1">Wo anzusehen (DE)</span>
+        <a class="btn text" id="det-jw-link" target="_blank" rel="noopener" hidden>JustWatch<span class="ms">open_in_new</span></a>
+      </div>
+      <div id="det-watch-content"></div>
+    </div>
+
+    <div id="det-cast-box" hidden>
+      <h3 class="title-m" style="margin:16px 0 8px">Besetzung &amp; Figuren</h3>
+      <div id="det-cast-list" style="display:flex;gap:10px;overflow-x:auto;padding-bottom:8px"></div>
+    </div>
+  </div>
+</dialog>
+
+{# Upload-Wizard #}
+<dialog id="dlg-wizard" class="sheet-dlg" aria-labelledby="wiz-h">
+  <div style="padding:20px 24px 28px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+      <div class="shape round primary"><span class="ms">upload</span></div>
+      <h2 class="title-l" id="wiz-h" style="flex:1;margin:0;text-align:left">In Mediathek hochladen</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Schließen"><span class="ms">close</span></button>
+    </div>
+
+    <input type="file" id="wiz-file-input" multiple accept="video/*,.mkv,.avi,.mov,.webm,.m4v,.mp4,.ts,.m2ts,.flv,.wmv" hidden>
+
+    <div id="wiz-step-files" style="margin-bottom:16px">
+      <div class="wizard-drop" id="wiz-drop">
+        <span class="ms" style="font-size:36px;color:var(--primary)">video_file</span>
+        <p class="title-m" style="margin:8px 0 4px">Videodatei(en) auswählen</p>
+        <p class="body-s variant" style="margin:0">MP4, MKV, WebM, MOV, AVI … Nicht-MP4 wird automatisch TV-tauglich in MP4 umgewandelt (Rohdatei danach gelöscht).</p>
+      </div>
+      <div id="wiz-picked-summary" class="body-m" style="margin-top:8px" hidden></div>
+    </div>
+
+    <div id="wiz-step-match" style="margin-bottom:16px">
+      <label class="label-l" style="display:block;margin-bottom:6px">1. Film, Serie oder Anime zuordnen</label>
+      <div class="media-search-bar" style="margin-bottom:8px">
+        <div class="search">
+          <span class="ms">search</span>
+          <input type="search" id="wiz-search" placeholder="Titel suchen …" autocomplete="off">
+        </div>
+      </div>
+      <div id="wiz-selected-card" class="card high" style="padding:12px 16px;margin-bottom:8px" hidden></div>
+      <div id="wiz-match-list" style="max-height:240px;overflow:auto"></div>
+      <div id="wiz-manual-fallback" style="margin-top:8px" hidden>
+        <button type="button" class="btn text" id="wiz-use-custom"><span class="ms">edit</span>Ohne Online-Treffer mit eigenem Titel speichern</button>
+      </div>
+    </div>
+
+    <div id="wiz-step-episodes" style="margin-bottom:16px" hidden>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <label class="label-l">2. Staffel &amp; Folge zuordnen</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="body-s variant">Alle als Staffel:</span>
+          <input type="number" id="wiz-bulk-season" min="1" max="99" value="1" style="width:68px;height:36px;padding:0 8px;border-radius:8px;border:1px solid var(--outline);background:var(--surface);color:var(--on-surface)">
+        </div>
+      </div>
+      <div id="wiz-file-map" style="max-height:240px;overflow:auto"></div>
+    </div>
+
+    <div id="wiz-progress-box" class="card high" style="margin-bottom:16px" hidden>
+      <div class="card-head" style="margin-bottom:8px">
+        <span class="title-m" id="wiz-prog-title" style="flex:1">Hochladen …</span>
+        <button type="button" class="icon-btn" id="wiz-abort" title="Abbrechen"><span class="ms">close</span></button>
+      </div>
+      <div class="progress"><i id="wiz-prog-bar" style="width:0"></i></div>
+      <p class="body-s variant" id="wiz-prog-text" style="margin:8px 0 0"></p>
+    </div>
+
+    <div class="actions">
+      <button type="button" class="btn text" data-close>Abbrechen</button>
+      <button type="button" class="btn" id="wiz-start" disabled><span class="ms">cloud_upload</span>Jetzt hochladen</button>
+    </div>
+  </div>
+</dialog>
+
+{# Video-Player #}
+<dialog id="dlg-player" class="player-dlg" aria-labelledby="pl-title">
+  <div class="player-bar">
+    <span class="title-m" id="pl-title">Wiedergabe</span>
+    <button type="button" class="btn tonal" id="pl-tv-btn" style="height:34px;padding:0 14px"><span class="ms">tv</span>Auf TV</button>
+    <button type="button" class="icon-btn" id="pl-close" style="color:#fff" aria-label="Schließen"><span class="ms">close</span></button>
+  </div>
+  <video id="pl-video" controls playsinline preload="metadata"></video>
+</dialog>
+
+{# Einstellungen #}
+<dialog id="dlg-settings" aria-labelledby="set-h">
+  <form id="settings-form">
+    <div class="icon"><span class="ms" style="font-size:32px">tune</span></div>
+    <h2 class="headline" id="set-h" style="font-size:24px;line-height:32px">Mediathek-Einstellungen</h2>
+    <div class="field">
+      <input type="password" id="set-tmdb" placeholder=" " autocomplete="off">
+      <label for="set-tmdb">TMDB API-Key oder Bearer-Token</label>
+      <span class="sup" id="set-tmdb-hint">Für Filme &amp; deutsche Streaming-Anbieter (tmdb.org, kostenlos).</span>
+    </div>
+    <div class="form-grid">
+      <div class="field"><input id="set-streaming" placeholder=" " required><label for="set-streaming">Streaming-Ordner im Pool</label></div>
+      <div class="field"><input id="set-medien" placeholder=" " required><label for="set-medien">Medien-Ordner im Pool</label></div>
+      <div class="field"><input id="set-temp" placeholder=" " required><label for="set-temp">Schnell-TV Ordner</label></div>
+      <div class="field"><input type="number" id="set-vhours" min="0" max="720" placeholder=" "><label for="set-vhours">TV-Video Ablauf (Std., 0 = manuell)</label></div>
+      <div class="field"><input type="number" id="set-idays" min="0" max="365" placeholder=" "><label for="set-idays">TV-Bilder Ablauf (Tage, 0 = manuell)</label></div>
+    </div>
+    <div style="margin:8px 0 16px">
+      <span class="label-l" style="display:block;margin-bottom:4px">Online-Quellen</span>
+      <label class="check-row"><input type="checkbox" name="q" value="tmdb"><span>TMDB (Filme, Serien, deutsche Streaming-Anbieter)</span></label>
+      <label class="check-row"><input type="checkbox" name="q" value="tvmaze"><span>TVmaze (Serien, kein Key nötig)</span></label>
+      <label class="check-row"><input type="checkbox" name="q" value="anilist"><span>AniList (Anime, kein Key nötig)</span></label>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn text" data-close>Abbrechen</button>
+      <button type="submit" class="btn">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/static/streaming.js" defer></script>
+{% endblock %}

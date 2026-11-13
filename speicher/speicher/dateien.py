@@ -11,6 +11,7 @@ import os
 import secrets
 import shutil
 import stat
+import threading
 import time
 import zipfile
 from dataclasses import dataclass
@@ -23,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, freigaben, pool
+from . import auth, freigaben, mediathek, mediathek_db, mediathek_providers, medien, pool
 from .freigaben import Freigabe
 
 BASE = Path(__file__).parent
@@ -143,6 +144,7 @@ async def _fehler_handler(request: Request, exc: Fehler):
 
 
 def _page(request: Request, vorlage: str, status: int = 200, **ctx) -> HTMLResponse:
+    ctx.setdefault("nav", "ordner")
     ctx.update(
         request=request,
         benutzer=request.state.benutzer,
@@ -265,7 +267,7 @@ async def login_form(request: Request, weiter: str = "/"):
 
 
 def _sicher(weiter: str) -> str:
-    return weiter if weiter.startswith(("/d/", "/?")) or weiter == "/" else "/"
+    return weiter if weiter.startswith(("/d/", "/?", "/streaming", "/medien")) or weiter == "/" else "/"
 
 
 @app.post("/login")
@@ -325,11 +327,16 @@ def _icon(name: str, ordner: bool) -> str:
     return "draft"
 
 
+_TEMP_TAGS = (".hochladen-", ".tvfix-", ".raw-", ".tvcopy-", ".conv-", ".mp4tmp-")
+
+
 def auflisten(path: Path, ist_pool_wurzel: bool) -> list[Eintrag]:
     out = []
     with os.scandir(path) as it:
         for entry in it:
             if ist_pool_wurzel and entry.name == ".mergerfs":
+                continue
+            if entry.name.startswith(".") and any(tag in entry.name for tag in _TEMP_TAGS):
                 continue
             try:
                 st = entry.stat()
@@ -406,6 +413,8 @@ def _zip(path: Path, name: str) -> StreamingResponse:
                 for fn in sorted(filenames):
                     full = Path(dirpath) / fn
                     if full.is_symlink() or not full.is_file() or fn == ".mergerfs":
+                        continue
+                    if fn.startswith(".") and any(tag in fn for tag in _TEMP_TAGS):
                         continue
                     arc = str(full.relative_to(path))
                     try:
@@ -527,6 +536,7 @@ async def hochladen(request: Request, name: str, rel: str):
             await run_in_threadpool(fh.close)
         _besitzer(tmp)
         os.replace(tmp, path)
+        medien.anmelden(path)
     except OSError as exc:
         tmp.unlink(missing_ok=True)
         raise Fehler(507 if exc.errno == 28 else 500, "Kein Platz mehr" if exc.errno == 28 else f"Ging nicht: {exc.strerror}") from exc
@@ -534,3 +544,724 @@ async def hochladen(request: Request, name: str, rel: str):
         tmp.unlink(missing_ok=True)  # Abbruch im Browser
         raise
     return {"ok": True, "name": dateiname}
+
+
+# ---------- Zugriffsschutz für Streaming & Medien ----------
+
+def _allowed_shares(request: Request, write_only: bool = False) -> list[tuple[Freigabe, Path]]:
+    e = freigaben.Einstellungen.load()
+    if not e.an:
+        return []
+    key = freigaben.key_fuer_ip(_ip(request))
+    out: list[tuple[Freigabe, Path]] = []
+    for f in e.freigaben:
+        regel = freigaben.regel_fuer(f, key)
+        if regel == "versteckt":
+            continue
+        if not freigaben.darf(f, regel, request.state.benutzer, e.benutzer):
+            continue
+        if write_only and f.nur_lesen:
+            continue
+        out.append((f, freigaben.share_path(f)))
+    return out
+
+
+def _check_mediathek_access(
+    request: Request,
+    folder_rel: str = "",
+    *,
+    write: bool = False,
+    require_pool: bool = False,
+) -> bool:
+    """Prüft Zugriff anhand der Freigabe-Regeln. Gibt True zurück, wenn Schreibrecht besteht."""
+    e = freigaben.Einstellungen.load()
+    if not e.an:
+        raise Fehler(404, "Freigaben sind ausgeschaltet")
+    key = freigaben.key_fuer_ip(_ip(request))
+    folder_norm = folder_rel.strip("/")
+
+    covering: list[tuple[Freigabe, str]] = []
+    for f in e.freigaben:
+        fo = (f.ordner or "").strip("/")
+        if fo == "" or (folder_norm and (folder_norm == fo or folder_norm.startswith(fo + "/"))):
+            covering.append((f, freigaben.regel_fuer(f, key)))
+
+    if covering:
+        visible = [(f, r) for f, r in covering if r != "versteckt"]
+        if not visible:
+            raise Fehler(404, "Für dieses Gerät nicht freigegeben")
+        allowed = [f for f, r in visible if freigaben.darf(f, r, request.state.benutzer, e.benutzer)]
+        if not allowed:
+            if not request.state.benutzer:
+                raise Fehler(401, "Für diesen Bereich musst du dich anmelden")
+            raise Fehler(403, f"{request.state.benutzer} darf nicht auf diesen Bereich zugreifen")
+        can_write = any(not f.nur_lesen for f in allowed)
+        if write and not can_write:
+            raise Fehler(403, "Nur zum Lesen freigegeben")
+    elif e.freigaben:
+        vis = sichtbar(request)
+        allowed_shares = [f for f, ok in vis if ok]
+        if not allowed_shares:
+            if vis and not request.state.benutzer:
+                raise Fehler(401, "Bitte anmelden")
+            raise Fehler(403 if vis else 404, "Für dieses Gerät nicht freigegeben")
+        can_write = any(not f.nur_lesen for f in allowed_shares)
+        if write and not can_write:
+            raise Fehler(403, "Nur zum Lesen freigegeben")
+    else:
+        if e.benutzer and not request.state.benutzer:
+            raise Fehler(401, "Bitte anmelden")
+        can_write = True
+
+    if require_pool and not mediathek.pool_mounted():
+        raise Fehler(503, "Der Speicher ist gerade nicht eingehängt")
+    return can_write
+
+
+def _ensure_pool_rel_allowed(request: Request, pool_rel: str, *, allow_temp: bool = False) -> Path:
+    try:
+        target = mediathek.safe_pool_path(pool_rel)
+    except ValueError as exc:
+        raise Fehler(400, str(exc)) from exc
+    if not target.is_file():
+        raise Fehler(404, "Datei nicht gefunden")
+    cfg = mediathek_db.Einstellungen.load()
+    if allow_temp:
+        tdir = mediathek.temp_dir().resolve()
+        if tdir in target.parents:
+            _check_mediathek_access(request, cfg.temp_ordner, require_pool=True)
+            return target
+    for _, share_root in _allowed_shares(request):
+        sr = share_root.resolve()
+        if target == sr or sr in target.parents:
+            return target
+    raise Fehler(403, "Kein Zugriff auf diese Datei")
+
+
+# ---------- Seiten: Streaming & Medien ----------
+
+@app.get("/streaming", response_class=HTMLResponse)
+async def streaming_page(request: Request):
+    cfg = mediathek_db.Einstellungen.load()
+    try:
+        can_write = await run_in_threadpool(_check_mediathek_access, request, cfg.streaming_ordner, write=False, require_pool=False)
+    except Fehler as exc:
+        if exc.status == 401:
+            return RedirectResponse("/login?weiter=" + quote("/streaming"), 303)
+        raise
+    fe = freigaben.Einstellungen.load()
+    return _page(
+        request,
+        "streaming.html",
+        nav="streaming",
+        can_write=can_write,
+        pool_da=mediathek.pool_mounted(),
+        cfg=cfg,
+        has_tmdb_key=bool(cfg.effective_tmdb_key()),
+        dlna_an=fe.dlna_an,
+        dlna_name=fe.dlna_name,
+    )
+
+
+@app.get("/medien", response_class=HTMLResponse)
+async def medien_page(request: Request):
+    cfg = mediathek_db.Einstellungen.load()
+    try:
+        can_write = await run_in_threadpool(_check_mediathek_access, request, cfg.medien_ordner, write=False, require_pool=False)
+    except Fehler as exc:
+        if exc.status == 401:
+            return RedirectResponse("/login?weiter=" + quote("/medien"), 303)
+        raise
+    fe = freigaben.Einstellungen.load()
+    return _page(
+        request,
+        "medien.html",
+        nav="medien",
+        can_write=can_write,
+        pool_da=mediathek.pool_mounted(),
+        cfg=cfg,
+        dlna_an=fe.dlna_an,
+        dlna_name=fe.dlna_name,
+    )
+
+
+# ---------- API: Streaming & Mediathek ----------
+
+@app.get("/api/mediathek/bibliothek")
+async def api_mediathek_bibliothek(request: Request):
+    cfg = mediathek_db.Einstellungen.load()
+    await run_in_threadpool(_check_mediathek_access, request, cfg.streaming_ordner)
+
+    def _load():
+        if mediathek.pool_mounted():
+            mediathek_db.sync_disk(mediathek.pool_root())
+        return {
+            "items": mediathek_db.list_local_library(),
+            "tv": mediathek_db.list_tv_items(),
+            "pool_da": mediathek.pool_mounted(),
+            "streaming_ordner": cfg.streaming_ordner,
+            "temp_ordner": cfg.temp_ordner,
+        }
+
+    return await run_in_threadpool(_load)
+
+
+@app.get("/api/mediathek/suche")
+async def api_mediathek_suche(request: Request, q: str = ""):
+    cfg = mediathek_db.Einstellungen.load()
+    await run_in_threadpool(_check_mediathek_access, request, cfg.streaming_ordner)
+    query = q.strip()
+    if not query:
+        return {"results": [], "errors": [], "local": []}
+
+    def _run_search():
+        res = mediathek_providers.search(query, cfg.quellen, cfg.effective_tmdb_key())
+        refs = [r["ref"] for r in res["results"] if r.get("ref")]
+        avail = mediathek_db.local_availability_map(refs) if refs else {}
+        for r in res["results"]:
+            r["local"] = avail.get(r["ref"], {"ready_count": 0, "busy_count": 0, "total_count": 0})
+        nq = mediathek_providers.norm(query)
+        local_hits = [
+            t for t in mediathek_db.list_local_library()
+            if nq in mediathek_providers.norm(t.get("name", ""))
+        ]
+        res["local"] = local_hits
+        return res
+
+    return await run_in_threadpool(_run_search)
+
+
+@app.get("/api/mediathek/details")
+async def api_mediathek_details(request: Request, ref: str = ""):
+    cfg = mediathek_db.Einstellungen.load()
+    await run_in_threadpool(_check_mediathek_access, request, cfg.streaming_ordner)
+    if not ref or ":" not in ref:
+        raise Fehler(400, "Ungültige Referenz")
+
+    def _load():
+        local = mediathek_db.get_title_by_ref(ref)
+        online = None
+        err = ""
+        try:
+            online = mediathek_providers.full(ref, cfg.effective_tmdb_key())
+            if local:
+                # Cached Metadaten still aktualisieren, falls Title schon in DB
+                mediathek_db.upsert_title(online)
+                local = mediathek_db.get_title_by_ref(ref)
+        except Exception as exc:  # noqa: BLE001
+            err = str(exc)
+        if not online and not local:
+            raise Fehler(404, err or "Titel nicht gefunden")
+        if not online and local:
+            meta_extra = local.get("meta") or {}
+            online = {
+                "ref": local["ref"],
+                "provider": local["provider"],
+                "type": local["type"],
+                "anime": local["anime"],
+                "name": local["name"],
+                "year": local["year"],
+                "poster": local["poster"],
+                "backdrop": local["backdrop"],
+                "summary": local["summary"],
+                "genres": local["genres"],
+                "watch": local["watch"],
+                **meta_extra,
+            }
+        return {"item": online, "local": local, "error": err}
+
+    return await run_in_threadpool(_load)
+
+
+@app.get("/api/mediathek/staffel")
+async def api_mediathek_staffel(request: Request, ref: str = "", s: int = 1):
+    cfg = mediathek_db.Einstellungen.load()
+    await run_in_threadpool(_check_mediathek_access, request, cfg.streaming_ordner)
+    if not ref or ":" not in ref:
+        raise Fehler(400, "Ungültige Referenz")
+    try:
+        eps = await run_in_threadpool(mediathek_providers.season_episodes, ref, max(1, s), cfg.effective_tmdb_key())
+    except Exception as exc:  # noqa: BLE001
+        raise Fehler(502, str(exc)) from exc
+    return {"episodes": eps}
+
+
+@app.get("/api/mediathek/bild")
+async def api_mediathek_bild(request: Request, url: str = ""):
+    if not mediathek_providers.is_allowed_image_url(url):
+        raise Fehler(400, "Bildquelle nicht erlaubt")
+    res = await run_in_threadpool(mediathek_providers.fetch_cached_image, url)
+    if not res:
+        raise Fehler(404, "Bild nicht verfügbar")
+    data, ctype = res
+    return Response(content=data, media_type=ctype, headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/api/mediathek/einstellungen")
+async def api_mediathek_einstellungen_get(request: Request):
+    await run_in_threadpool(_check_mediathek_access, request, "")
+    cfg = mediathek_db.Einstellungen.load()
+    key = cfg.effective_tmdb_key()
+    return {
+        "has_tmdb_key": bool(key),
+        "tmdb_key_hinweis": ("••••" + key[-4:]) if len(key) >= 4 else ("••••" if key else ""),
+        "tmdb_env": bool(os.environ.get("TMDB_API_KEY")),
+        "streaming_ordner": cfg.streaming_ordner,
+        "medien_ordner": cfg.medien_ordner,
+        "temp_ordner": cfg.temp_ordner,
+        "video_ablauf_stunden": cfg.video_ablauf_stunden,
+        "bild_ablauf_tage": cfg.bild_ablauf_tage,
+        "auto_entfernen_nach_player": cfg.auto_entfernen_nach_player,
+        "quellen": cfg.quellen,
+    }
+
+
+@app.post("/api/mediathek/einstellungen")
+async def api_mediathek_einstellungen_post(request: Request):
+    _csrf(request, request.headers.get("x-csrf", ""))
+    await run_in_threadpool(_check_mediathek_access, request, "", write=True)
+    body = await request.json()
+    cfg = mediathek_db.Einstellungen.load()
+    if "tmdb_key" in body:
+        val = str(body.get("tmdb_key") or "").strip()
+        if val != "__KEEP__":
+            cfg.tmdb_key = val
+    for field in ("streaming_ordner", "medien_ordner", "temp_ordner"):
+        if field in body and str(body[field] or "").strip():
+            try:
+                setattr(cfg, field, freigaben.check_ordner(str(body[field])))
+            except freigaben.FreigabeError as exc:
+                raise Fehler(400, str(exc)) from exc
+    if "video_ablauf_stunden" in body:
+        cfg.video_ablauf_stunden = max(0, min(720, int(body["video_ablauf_stunden"] or 0)))
+    if "bild_ablauf_tage" in body:
+        cfg.bild_ablauf_tage = max(0, min(365, int(body["bild_ablauf_tage"] or 0)))
+    if "auto_entfernen_nach_player" in body:
+        cfg.auto_entfernen_nach_player = bool(body["auto_entfernen_nach_player"])
+    if "quellen" in body and isinstance(body["quellen"], list):
+        q = [str(x) for x in body["quellen"] if x in ("tmdb", "tvmaze", "anilist")]
+        if q:
+            cfg.quellen = q
+    await run_in_threadpool(cfg.save)
+    return {"ok": True}
+
+
+@app.put("/api/mediathek/hochladen")
+async def api_mediathek_hochladen(request: Request):
+    """Streamt ein Video in die Mediathek und wandelt Nicht-MP4/fragmentierte Videos im Hintergrund um."""
+    _csrf(request, request.headers.get("x-csrf", ""))
+    cfg = mediathek_db.Einstellungen.load()
+    await run_in_threadpool(_check_mediathek_access, request, cfg.streaming_ordner, write=True, require_pool=True)
+
+    qp = request.query_params
+    ref = str(qp.get("ref", "")).strip()
+    dateiname = check_name(str(qp.get("dateiname", "")).strip() or "video.mp4")
+    ext = Path(dateiname).suffix.lower()
+    if ext not in mediathek.VIDEO_EXTS:
+        raise Fehler(400, f"Dateiformat „{ext or 'ohne Endung'}“ ist kein unterstütztes Video")
+
+    fallback_name = str(qp.get("name", "")).strip() or Path(dateiname).stem
+    typ = "movie" if qp.get("type") == "movie" else "show"
+    year_raw = qp.get("year")
+    year = int(year_raw) if year_raw and str(year_raw).isdigit() else None
+    staffel = int(qp["staffel"]) if qp.get("staffel") and str(qp["staffel"]).isdigit() else None
+    folge = int(qp["folge"]) if qp.get("folge") and str(qp["folge"]).isdigit() else None
+    folgentitel = str(qp.get("folgentitel", "")).strip()
+    ersetzen = qp.get("ersetzen") == "1"
+
+    def _prepare():
+        meta = None
+        if ref and ":" in ref:
+            existing = mediathek_db.get_title_by_ref(ref)
+            if existing and (existing.get("meta") or {}).get("episodes"):
+                meta = {**existing, **(existing.get("meta") or {})}
+            else:
+                try:
+                    meta = mediathek_providers.full(ref, cfg.effective_tmdb_key())
+                except Exception:  # noqa: BLE001
+                    meta = existing
+        if not meta:
+            local_ref = ref or f"local:{mediathek_providers.norm(fallback_name)}:{year or ''}:{typ}"
+            meta = {
+                "ref": local_ref,
+                "provider": local_ref.partition(":")[0],
+                "type": typ,
+                "anime": False,
+                "name": fallback_name,
+                "year": year,
+                "poster": "",
+                "backdrop": "",
+                "summary": "",
+                "genres": [],
+                "watch": {},
+            }
+        titel_id = mediathek_db.upsert_title(meta)
+        rel_pfad, _ = mediathek.streaming_target_rel(meta, staffel, folge, folgentitel)
+        target_mp4 = mediathek.safe_pool_path(rel_pfad)
+        if target_mp4.exists() and not ersetzen:
+            raise Fehler(409, f"„{target_mp4.name}“ gibt es schon")
+        target_mp4.parent.mkdir(parents=True, exist_ok=True)
+        mediathek._chown_tree(target_mp4.parent, mediathek.pool_root())
+        raw_path = target_mp4.parent / f".{target_mp4.stem[:140]}.raw-{secrets.token_hex(4)}{ext}"
+        raw_rel = str(raw_path.relative_to(mediathek.pool_root()))
+        return titel_id, rel_pfad, target_mp4, raw_path, raw_rel
+
+    titel_id, rel_pfad, target_mp4, raw_path, raw_rel = await run_in_threadpool(_prepare)
+
+    try:
+        fh = await run_in_threadpool(open, raw_path, "wb")
+        try:
+            async for chunk in request.stream():
+                if chunk:
+                    await run_in_threadpool(fh.write, chunk)
+        finally:
+            await run_in_threadpool(fh.close)
+        _besitzer(raw_path)
+
+        def _register():
+            info = mediathek.probe_video(raw_path)
+            if not mediathek.needs_conversion(raw_path, info):
+                os.replace(raw_path, target_mp4)
+                fid = mediathek_db.register_file(
+                    titel_id,
+                    rel_pfad,
+                    staffel=staffel if typ != "movie" else None,
+                    folge=folge if typ != "movie" else None,
+                    folgentitel=folgentitel,
+                    roh_pfad="",
+                    status="bereit",
+                    groesse=target_mp4.stat().st_size,
+                    dauer=info.get("duration"),
+                    video_codec=info.get("video_codec") or "",
+                    audio_codec=info.get("audio_codec") or "",
+                )
+                return fid, "bereit"
+            fid = mediathek_db.register_file(
+                titel_id,
+                rel_pfad,
+                staffel=staffel if typ != "movie" else None,
+                folge=folge if typ != "movie" else None,
+                folgentitel=folgentitel,
+                roh_pfad=raw_rel,
+                status="umwandlung",
+                groesse=raw_path.stat().st_size,
+                dauer=info.get("duration"),
+                video_codec=info.get("video_codec") or "",
+                audio_codec=info.get("audio_codec") or "",
+            )
+            medien.scan_anstossen()
+            return fid, "umwandlung"
+
+        file_id, status = await run_in_threadpool(_register)
+    except OSError as exc:
+        raw_path.unlink(missing_ok=True)
+        raise Fehler(507 if exc.errno == 28 else 500, "Kein Platz mehr" if exc.errno == 28 else f"Ging nicht: {exc.strerror}") from exc
+    except BaseException:
+        raw_path.unlink(missing_ok=True)
+        raise
+
+    return {"ok": True, "file_id": file_id, "titel_id": titel_id, "rel_pfad": rel_pfad, "status": status}
+
+
+@app.get("/api/mediathek/stream/{file_id}")
+async def api_mediathek_stream(request: Request, file_id: int):
+    cfg = mediathek_db.Einstellungen.load()
+    await run_in_threadpool(_check_mediathek_access, request, cfg.streaming_ordner, require_pool=True)
+    item = await run_in_threadpool(mediathek_db.get_file, file_id)
+    if not item:
+        raise Fehler(404, "Datei nicht gefunden")
+    path = mediathek.safe_pool_path(item["rel_pfad"])
+    if not path.is_file():
+        raise Fehler(404, "Videodatei fehlt auf dem Speicher")
+    resp = FileResponse(path, media_type="video/mp4", filename=path.name, content_disposition_type="inline")
+    resp.headers["Cache-Control"] = "private, no-cache"
+    return resp
+
+
+@app.delete("/api/mediathek/datei/{file_id}")
+async def api_mediathek_delete_file(request: Request, file_id: int):
+    _csrf(request, request.headers.get("x-csrf", ""))
+    cfg = mediathek_db.Einstellungen.load()
+    await run_in_threadpool(_check_mediathek_access, request, cfg.streaming_ordner, write=True, require_pool=True)
+
+    def _delete():
+        item = mediathek_db.get_file(file_id)
+        if not item:
+            raise Fehler(404, "Eintrag nicht gefunden")
+        for tv in mediathek_db.list_tv_items():
+            if tv.get("datei_id") == file_id:
+                mediathek.remove_staged(tv["id"])
+        for rel in (item.get("rel_pfad"), item.get("roh_pfad")):
+            if rel:
+                try:
+                    p = mediathek.safe_pool_path(rel)
+                    p.unlink(missing_ok=True)
+                    # Leere Staffel-/Titelordner bis Streaming-Basis aufräumen
+                    base = mediathek.safe_pool_path(cfg.streaming_ordner).resolve()
+                    parent = p.parent.resolve()
+                    while parent != base and base in parent.parents:
+                        try:
+                            parent.rmdir()
+                        except OSError:
+                            break
+                        parent = parent.parent
+                except (ValueError, OSError):
+                    pass
+        mediathek_db.delete_file_record(file_id)
+
+    await run_in_threadpool(_delete)
+    return {"ok": True}
+
+
+# ---------- API: Schnell-TV („Jetzt schauen“) ----------
+
+@app.get("/api/tv/status")
+async def api_tv_status(request: Request):
+    cfg = mediathek_db.Einstellungen.load()
+    await run_in_threadpool(_check_mediathek_access, request, cfg.temp_ordner)
+    fe = freigaben.Einstellungen.load()
+    items = await run_in_threadpool(mediathek_db.list_tv_items)
+    return {
+        "items": items,
+        "temp_ordner": cfg.temp_ordner,
+        "temp_exists": mediathek.pool_mounted() and mediathek.temp_dir().is_dir(),
+        "dlna_an": fe.dlna_an,
+        "dlna_name": fe.dlna_name,
+        "video_ablauf_stunden": cfg.video_ablauf_stunden,
+        "bild_ablauf_tage": cfg.bild_ablauf_tage,
+    }
+
+
+@app.post("/api/tv/stage-streaming/{file_id}")
+async def api_tv_stage_streaming(request: Request, file_id: int):
+    _csrf(request, request.headers.get("x-csrf", ""))
+    cfg = mediathek_db.Einstellungen.load()
+    await run_in_threadpool(_check_mediathek_access, request, cfg.streaming_ordner, require_pool=True)
+
+    def _stage():
+        f = mediathek_db.get_file(file_id)
+        if not f:
+            raise Fehler(404, "Video nicht gefunden")
+        if f["status"] != "bereit":
+            raise Fehler(409, "Video wird noch umgewandelt")
+        title_info = f.get("titel") or {}
+        if title_info.get("type") == "show" and f.get("staffel") and f.get("folge"):
+            tname = f"{title_info.get('name', 'Serie')} - S{f['staffel']:02d}E{f['folge']:02d}"
+            if f.get("folgentitel"):
+                tname += f" - {f['folgentitel']}"
+        else:
+            tname = title_info.get("name") or Path(f["rel_pfad"]).stem
+            if title_info.get("year") and f"({title_info['year']})" not in tname:
+                tname += f" ({title_info['year']})"
+        return mediathek.stage_video(f["rel_pfad"], art="streaming", titel=tname, datei_id=file_id)
+
+    item = await run_in_threadpool(_stage)
+    return {"ok": True, "item": item}
+
+
+@app.post("/api/tv/stage-video")
+async def api_tv_stage_video(request: Request):
+    _csrf(request, request.headers.get("x-csrf", ""))
+    body = await request.json()
+    pool_rel = str(body.get("pool_rel") or "").strip()
+    if not pool_rel:
+        raise Fehler(400, "Pfad fehlt")
+    await run_in_threadpool(_ensure_pool_rel_allowed, request, pool_rel)
+    titel = str(body.get("titel") or "").strip()
+    stunden = body.get("ablauf_stunden")
+    stunden_val = int(stunden) if stunden is not None else None
+    item = await run_in_threadpool(mediathek.stage_video, pool_rel, art="video", titel=titel, ablauf_stunden=stunden_val)
+    return {"ok": True, "item": item}
+
+
+@app.post("/api/tv/stage-images")
+async def api_tv_stage_images(request: Request):
+    _csrf(request, request.headers.get("x-csrf", ""))
+    body = await request.json()
+    rels = body.get("pool_rels") or []
+    if not isinstance(rels, list) or not rels:
+        raise Fehler(400, "Keine Bilder ausgewählt")
+    rels = [str(r) for r in rels[:500]]
+
+    def _stage_all():
+        for r in rels:
+            _ensure_pool_rel_allowed(request, r)
+        tage = body.get("ablauf_tage")
+        tage_val = int(tage) if tage is not None else None
+        gruppe = str(body.get("gruppe") or "").strip()
+        return mediathek.stage_images(rels, gruppe=gruppe, ablauf_tage=tage_val)
+
+    items = await run_in_threadpool(_stage_all)
+    return {"ok": True, "count": len(items), "items": items}
+
+
+@app.delete("/api/tv/item/{item_id}")
+async def api_tv_delete_item(request: Request, item_id: int):
+    _csrf(request, request.headers.get("x-csrf", ""))
+    cfg = mediathek_db.Einstellungen.load()
+    await run_in_threadpool(_check_mediathek_access, request, cfg.temp_ordner, require_pool=True)
+    ok = await run_in_threadpool(mediathek.remove_staged, item_id)
+    if not ok:
+        raise Fehler(404, "Eintrag nicht gefunden")
+    return {"ok": True, "temp_exists": mediathek.temp_dir().is_dir()}
+
+
+@app.post("/api/tv/clear")
+async def api_tv_clear(request: Request):
+    _csrf(request, request.headers.get("x-csrf", ""))
+    cfg = mediathek_db.Einstellungen.load()
+    await run_in_threadpool(_check_mediathek_access, request, cfg.temp_ordner, require_pool=True)
+    art = None
+    try:
+        body = await request.json()
+        if isinstance(body, dict) and body.get("art") in ("streaming", "video", "bild"):
+            art = body["art"]
+    except Exception:  # noqa: BLE001
+        pass
+    removed = await run_in_threadpool(mediathek.clear_staged, art)
+    return {"ok": True, "removed": removed, "temp_exists": mediathek.temp_dir().is_dir()}
+
+
+# ---------- API: Persönliche Medien (/medien) ----------
+
+@app.get("/api/medien/liste")
+async def api_medien_liste(request: Request, kind: str = "all", share: str = ""):
+    cfg = mediathek_db.Einstellungen.load()
+    await run_in_threadpool(_check_mediathek_access, request, cfg.medien_ordner)
+
+    def _load():
+        shares = _allowed_shares(request)
+        items = mediathek.list_personal_media(shares, kind=kind, share_filter=share)
+        return {
+            "items": items,
+            "shares": [f.name for f, _ in shares],
+            "tv": mediathek_db.list_tv_items(),
+            "pool_da": mediathek.pool_mounted(),
+        }
+
+    return await run_in_threadpool(_load)
+
+
+@app.get("/api/medien/datei")
+async def api_medien_datei(request: Request, rel: str = ""):
+    if not rel:
+        raise Fehler(400, "Pfad fehlt")
+    path = await run_in_threadpool(lambda: _ensure_pool_rel_allowed(request, rel, allow_temp=True))
+    typ = _medientyp(path)
+    resp = FileResponse(path, media_type=typ, filename=path.name, content_disposition_type="inline")
+    resp.headers["Content-Security-Policy"] = "default-src 'none'; img-src 'self'; media-src 'self'; sandbox"
+    resp.headers["Cache-Control"] = "private, max-age=3600"
+    return resp
+
+
+@app.put("/api/medien/hochladen")
+async def api_medien_hochladen(request: Request):
+    """Lädt ein persönliches Video oder Foto hoch und stellt es auf Wunsch sofort in „Jetzt schauen“ bereit."""
+    _csrf(request, request.headers.get("x-csrf", ""))
+    cfg = mediathek_db.Einstellungen.load()
+    await run_in_threadpool(_check_mediathek_access, request, cfg.medien_ordner, write=True, require_pool=True)
+
+    qp = request.query_params
+    dateiname = check_name(str(qp.get("dateiname", "")).strip() or "datei")
+    ext = Path(dateiname).suffix.lower()
+    is_video = ext in mediathek.VIDEO_EXTS
+    is_image = ext in mediathek.IMAGE_EXTS
+    if not is_video and not is_image:
+        raise Fehler(400, f"Dateityp „{ext or 'ohne Endung'}“ wird nicht unterstützt")
+
+    ziel_tv = qp.get("ziel", "tv") == "tv"
+    tage = int(qp["ablauf_tage"]) if qp.get("ablauf_tage") and str(qp["ablauf_tage"]).isdigit() else None
+    gruppe = str(qp.get("gruppe") or "").strip()
+
+    def _prep():
+        if is_video:
+            rel_base = mediathek.personal_video_target_rel(dateiname)
+            dst = mediathek.unique_target_path(rel_base)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            mediathek._chown_tree(dst.parent, mediathek.pool_root())
+            raw = dst.parent / f".{dst.stem[:140]}.raw-{secrets.token_hex(4)}{ext}"
+            return dst, raw
+        rel_base = mediathek.personal_image_target_rel(dateiname)
+        dst = mediathek.unique_target_path(rel_base)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        mediathek._chown_tree(dst.parent, mediathek.pool_root())
+        raw = dst.parent / f".{dst.stem[:140]}.hochladen-{secrets.token_hex(4)}{ext}"
+        return dst, raw
+
+    dst, raw = await run_in_threadpool(_prep)
+    try:
+        fh = await run_in_threadpool(open, raw, "wb")
+        try:
+            async for chunk in request.stream():
+                if chunk:
+                    await run_in_threadpool(fh.write, chunk)
+        finally:
+            await run_in_threadpool(fh.close)
+        _besitzer(raw)
+
+        def _finish():
+            rel_dst = str(dst.relative_to(mediathek.pool_root()))
+            if is_image:
+                os.replace(raw, dst)
+                tv_items = mediathek.stage_images([rel_dst], gruppe=gruppe, ablauf_tage=tage) if ziel_tv else []
+                return {"ok": True, "kind": "image", "pool_rel": rel_dst, "tv_item": tv_items[0] if tv_items else None}
+
+            # Video: wenn bereits TV-taugliches MP4, direkt umbenennen + stagen; sonst im Hintergrund umwandeln & stagen
+            info = mediathek.probe_video(raw)
+            if not mediathek.needs_conversion(raw, info):
+                os.replace(raw, dst)
+                tv_item = mediathek.stage_video(rel_dst, art="video", titel=dst.stem) if ziel_tv else None
+                return {"ok": True, "kind": "video", "pool_rel": rel_dst, "status": "bereit", "tv_item": tv_item}
+
+            tv_id = None
+            if ziel_tv:
+                tdir = mediathek.ensure_temp_dir()
+                tv_dest = mediathek._unique_flat_tv_dest(tdir, dst.name)
+                tv_rel = str(tv_dest.relative_to(mediathek.pool_root()))
+                hours = cfg.video_ablauf_stunden
+                ablauf_am = time.time() + hours * 3600 if hours > 0 else None
+                tv_id = mediathek_db.upsert_tv_item(
+                    art="video",
+                    quelle_pfad=rel_dst,
+                    ziel_pfad=tv_rel,
+                    titel=dst.stem,
+                    gruppe=dst.stem,
+                    status="umwandlung",
+                    fortschritt=5,
+                    groesse=raw.stat().st_size,
+                    ablauf_am=ablauf_am,
+                )
+
+            def _bg():
+                ok, err, _ = mediathek.convert_to_mp4(raw, dst, delete_src=True)
+                if not ok:
+                    if tv_id is not None:
+                        mediathek_db.update_tv_item(tv_id, status="fehler", fehler=err)
+                        mediathek.cleanup_temp_dir_if_empty()
+                    jobs.log(None, f"Medien-Video Umwandlung fehlgeschlagen ({raw.name}): {err}")
+                    return
+                if tv_id is not None:
+                    tv_row = mediathek_db.get_tv_item(tv_id)
+                    if tv_row:
+                        tv_target = mediathek.safe_pool_path(tv_row["ziel_pfad"])
+                        mediathek_db.update_tv_item(tv_id, status="kopiere", fortschritt=50)
+                        mediathek._copy_chunked(dst, tv_target, tv_id)
+                        mediathek_db.update_tv_item(tv_id, status="bereit", fortschritt=100, groesse=tv_target.stat().st_size)
+
+            threading.Thread(target=_bg, name="medien-vid", daemon=True).start()
+            return {
+                "ok": True,
+                "kind": "video",
+                "pool_rel": rel_dst,
+                "status": "umwandlung",
+                "tv_item": mediathek_db.get_tv_item(tv_id) if tv_id is not None else None,
+            }
+
+        return await run_in_threadpool(_finish)
+    except OSError as exc:
+        raw.unlink(missing_ok=True)
+        raise Fehler(507 if exc.errno == 28 else 500, "Kein Platz mehr" if exc.errno == 28 else f"Ging nicht: {exc.strerror}") from exc
+    except BaseException:
+        raw.unlink(missing_ok=True)
+        raise
+

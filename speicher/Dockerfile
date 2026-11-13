@@ -9,7 +9,7 @@ ARG RCLONE_VERSION=1.68.2
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         mergerfs fuse3 util-linux e2fsprogs xfsprogs gdisk parted rsync smartmontools ca-certificates curl unzip \
-        samba samba-vfs-modules wsdd minidlna passwd \
+        samba samba-vfs-modules wsdd minidlna ffmpeg passwd \
     && arch="${TARGETARCH:-$(dpkg --print-architecture)}" \
     && curl -fsSL -o /tmp/rclone.zip "https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-${arch}.zip" \
     && unzip -j /tmp/rclone.zip "*/rclone" -d /usr/local/bin \

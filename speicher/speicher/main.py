@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, backup, config, disks, freigaben, jobs, pool
+from . import auth, backup, config, disks, freigaben, jobs, medien, pool
 from .config import Config
 
 BASE = Path(__file__).parent
@@ -103,9 +103,11 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # noqa: BLE001
             jobs.log(None, f"Freigaben beim Start: {exc}")
         threading.Thread(target=scheduler, name="planer", daemon=True).start()
+        medien.start()
     yield
     _stop.set()
     if "PYTEST_CURRENT_TEST" not in os.environ:
+        medien.stop()
         freigaben.dienste.stop_all()
         pool.unmount_pool()  # sonst bleibt auf dem Host ein toter FUSE-Eintrag zurück
 
@@ -505,7 +507,7 @@ def _freigaben_data() -> dict:
     return {
         "fe": e, "geraete": geraete, "cloudy_fehler": fehler, "server_ip": _server_ip(),
         "smb_laeuft": d.laeuft("smbd"), "dlna_laeuft": d.laeuft("minidlna"), "dienst_fehler": d.fehler,
-        "regel_text": freigaben.REGEL_TEXT, "pool_da": pool.status()["pool"].mounted,
+        "medien": medien.status(), "regel_text": freigaben.REGEL_TEXT, "pool_da": pool.status()["pool"].mounted,
     }
 
 
@@ -530,6 +532,7 @@ async def freigaben_einstellungen(request: Request):
         e = freigaben.Einstellungen.load()
         e.an = f.get("an") == "1"
         e.dlna_an = f.get("dlna_an") == "1"
+        e.videos_optimieren = f.get("videos_optimieren") == "1"
         name = re.sub(r"[^A-Za-z0-9-]", "", f.get("netzwerkname", e.netzwerkname)).upper()[:15]
         if not name:
             raise freigaben.FreigabeError("Netzwerkname: Buchstaben, Zahlen und -")
@@ -540,6 +543,8 @@ async def freigaben_einstellungen(request: Request):
         if alt != name:
             await run_in_threadpool(freigaben.dienste.neustart_wsdd)
         await _apply()
+        if e.videos_optimieren:
+            medien.scan_anstossen()
     except (freigaben.FreigabeError, PermissionError) as exc:
         return _back(fehler=str(exc), to="/freigaben")
     return _back("Gespeichert", to="/freigaben")

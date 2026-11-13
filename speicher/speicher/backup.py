@@ -116,12 +116,21 @@ def drive_testen_und_init(job) -> None:
 
 # ---------- Puffer (Sicherheitskopie auf der SSD) ----------
 
+def _temp_ordner_name() -> str:
+    try:
+        from . import mediathek_db
+        return mediathek_db.Einstellungen.load().temp_ordner or "Jetzt schauen"
+    except Exception:  # noqa: BLE001
+        return "Jetzt schauen"
+
+
 def changed_files(root: Path, since: float) -> list[str]:
     """Relative Pfade aller Dateien unter root, die seit 'since' neu oder geändert sind.
 
     ctime zählt mit: Kopiert man alte Fotos in den Pool, behalten sie ihr altes Änderungsdatum (mtime),
     bekommen aber eine neue ctime – sonst würden sie übersehen.
     """
+    temp_name = _temp_ordner_name()
     result: list[str] = []
     stack = [root]
     while stack:
@@ -131,7 +140,11 @@ def changed_files(root: Path, since: float) -> list[str]:
         except OSError:
             continue
         for entry in entries:
-            if entry.name == ".mergerfs" and current == root:
+            if current == root and entry.name in (".mergerfs", temp_name):
+                continue
+            if entry.name.startswith(".") and any(
+                tag in entry.name for tag in (".hochladen-", ".tvfix-", ".raw-", ".tvcopy-", ".conv-", ".mp4tmp-")
+            ):
                 continue
             try:
                 if entry.is_dir(follow_symlinks=False):
@@ -286,11 +299,16 @@ def backup(job) -> None:
 
     base = drive_base(cfg)
     alt = f"{base}/alt/{time.strftime(ALT_FORMAT, time.localtime(start))}"
+    temp_name = _temp_ordner_name()
     res = _run(job, [
         "rclone", "sync", f"{pool.paths()['pool']}/", f"{base}/aktuell",
         "--backup-dir", alt,  # Geänderte/gelöschte Dateien wandern hierhin statt verloren zu gehen
         "--create-empty-src-dirs",
         "--exclude", "/.mergerfs", "--exclude", "/wiederhergestellt/**",
+        "--exclude", f"/{temp_name}/**",
+        "--exclude", ".*.hochladen-*", "--exclude", ".*.tvfix-*",
+        "--exclude", ".*.raw-*", "--exclude", ".*.tvcopy-*",
+        "--exclude", ".*.conv-*", "--exclude", ".*.mp4tmp-*",
         *RCLONE_OPTS,
     ], cfg)
     if res.returncode != 0:

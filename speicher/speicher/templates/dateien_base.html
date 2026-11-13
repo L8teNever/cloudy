@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 {% block body %}
-<div class="files-app">
+<div class="files-app" data-csrf="{{ csrf }}">
   <header class="files-top">
     <a href="/" class="files-brand"><span class="shape round primary"><span class="ms">folder_open</span></span><span class="title-l">Dateien</span></a>
+    <nav class="files-nav" aria-label="Bereiche">
+      <a class="files-tab {{ 'active' if nav == 'ordner' }}" href="/"><span class="ms">folder</span>Ordner</a>
+      <a class="files-tab {{ 'active' if nav == 'streaming' }}" href="/streaming"><span class="ms">movie</span>Streaming</a>
+      <a class="files-tab {{ 'active' if nav == 'medien' }}" href="/medien"><span class="ms">perm_media</span>Medien &amp; TV</a>
+    </nav>
     <span style="flex:1"></span>
     {% if benutzer %}
     <span class="chip"><span class="ms">person</span>{{ benutzer }}</span>
@@ -15,5 +20,10 @@
   <main class="page files-page">
     {% block content %}{% endblock %}
   </main>
+  <nav class="bottom-bar files-bottom" aria-label="Bereiche">
+    <a class="nav-item {{ 'active' if nav == 'ordner' }}" href="/"><span class="ind"><span class="ms">folder</span></span>Ordner</a>
+    <a class="nav-item {{ 'active' if nav == 'streaming' }}" href="/streaming"><span class="ind"><span class="ms">movie</span></span>Streaming</a>
+    <a class="nav-item {{ 'active' if nav == 'medien' }}" href="/medien"><span class="ind"><span class="ms">perm_media</span></span>Medien &amp; TV</a>
+  </nav>
 </div>
 {% endblock %}

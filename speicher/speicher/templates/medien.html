@@ -1,0 +1,109 @@
+{% extends "dateien_base.html" %}
+{% block title %}Medien &amp; TV{% endblock %}
+{% block content %}
+<header class="appbar">
+  <div style="min-width:0">
+    <h1 class="display">Medien &amp; TV</h1>
+    <p class="variant">Eigene Videos &amp; Fotos blitzschnell über „{{ cfg.temp_ordner }}“ auf dem Fernseher zeigen.</p>
+  </div>
+</header>
+
+{% if not pool_da %}
+<div class="danger-box"><span class="ms">error</span><span class="body-m">Der Speicher ist gerade nicht eingehängt.</span></div>
+{% endif %}
+
+<section class="tv-banner" id="tv-banner" hidden>
+  <div class="card-head">
+    <div class="shape round primary"><span class="ms">tv</span></div>
+    <div style="flex:1;min-width:0">
+      <p class="title-m" style="margin:0">Jetzt auf dem Fernseher ({{ cfg.temp_ordner }})</p>
+      <p class="body-s" style="margin:0;opacity:.85">{% if dlna_an %}Auf dem TV unter „{{ dlna_name }}“ ganz oben sichtbar – Originale bleiben geschützt{% else %}Im Heimnetz-Ordner „{{ cfg.temp_ordner }}“ bereit{% endif %}</p>
+    </div>
+    <button type="button" class="btn tonal" id="tv-clear-btn"><span class="ms">delete_sweep</span>Alle weg</button>
+  </div>
+  <div id="tv-list"></div>
+</section>
+
+{% if can_write and pool_da %}
+<input type="file" id="up-video-in" accept="video/*,.mkv,.avi,.mov,.webm,.m4v,.mp4,.ts" hidden>
+<input type="file" id="up-bilder-in" accept="image/*" multiple hidden>
+
+<div class="grid" style="margin-bottom:16px">
+  <button type="button" class="card high" id="btn-up-video" style="border:0;text-align:left;cursor:pointer;font:inherit;color:inherit">
+    <div class="card-head" style="margin-bottom:8px">
+      <div class="shape round primary"><span class="ms">video_call</span></div>
+      <span class="title-m" style="flex:1">Video hochladen &amp; auf TV</span>
+      <span class="ms variant">upload</span>
+    </div>
+    <p class="body-m variant" style="margin:0">Wird dauerhaft in <code>{{ cfg.medien_ordner }}</code> gespeichert und sofort TV-tauglich in „{{ cfg.temp_ordner }}“ kopiert.</p>
+  </button>
+
+  <div class="card high">
+    <div class="card-head" style="margin-bottom:8px">
+      <div class="shape round tertiary"><span class="ms">add_photo_alternate</span></div>
+      <span class="title-m" style="flex:1">Mehrere Bilder hochladen &amp; auf TV</span>
+    </div>
+    <p class="body-m variant" style="margin:0 0 10px">Alle gewählten Fotos landen in <code>{{ cfg.medien_ordner }}</code> und bleiben länger im TV-Ordner.</p>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <select id="up-img-days" style="height:38px;padding:0 12px;border-radius:var(--r-full);border:1px solid var(--outline);background:var(--surface);color:var(--on-surface);font:600 13px var(--font)">
+        <option value="7">7 Tage auf TV</option>
+        <option value="30">30 Tage auf TV</option>
+        <option value="0">Bis ich sie lösche</option>
+      </select>
+      <button type="button" class="btn tonal" id="btn-up-bilder"><span class="ms">photo_library</span>Fotos wählen</button>
+    </div>
+  </div>
+</div>
+
+<div class="card high upload-box" id="med-upload-box" hidden>
+  <div class="card-head" style="margin-bottom:8px">
+    <div class="shape round primary"><span class="ms">upload</span></div>
+    <span class="title-m" id="med-up-title" style="flex:1">Hochladen …</span>
+    <button type="button" class="icon-btn" id="med-up-abort" title="Abbrechen"><span class="ms">close</span></button>
+  </div>
+  <div class="progress"><i id="med-up-bar" style="width:0"></i></div>
+  <p class="body-s variant" id="med-up-text" style="margin:8px 0 0"></p>
+</div>
+{% endif %}
+
+<div class="filter-row" id="med-filters">
+  <button type="button" class="pill active" data-kind="all">Alle</button>
+  <button type="button" class="pill" data-kind="image"><span class="ms">image</span>Fotos</button>
+  <button type="button" class="pill" data-kind="video"><span class="ms">movie</span>Videos</button>
+  <span style="flex:1"></span>
+  <select id="med-share-filter" hidden style="height:36px;padding:0 12px;border-radius:var(--r-full);border:1px solid var(--outline-variant);background:var(--surface);color:var(--on-surface);font:600 13px var(--font)"></select>
+</div>
+
+<div id="med-grid" class="gallery-grid"></div>
+
+<div id="med-empty" class="card empty" hidden>
+  <div class="shape cookie tertiary"><span class="ms">perm_media</span></div>
+  <p class="title-m">Noch keine persönlichen Fotos oder Videos sichtbar</p>
+  <p class="body-m">Lade oben ein Video oder mehrere Fotos hoch – oder leg sie in eine deiner Freigaben.</p>
+</div>
+
+{# Sticky Multi-Select Leiste für Bilder #}
+<div class="sel-bar" id="sel-bar" hidden>
+  <span class="title-m" id="sel-count" style="flex:1">0 Bilder</span>
+  <select id="sel-days" style="height:36px;padding:0 10px;border-radius:var(--r-full);border:1px solid rgba(255,255,255,.3);background:transparent;color:inherit;font:600 13px var(--font)">
+    <option value="7" style="color:#000">7 Tage</option>
+    <option value="30" style="color:#000">30 Tage</option>
+    <option value="0" style="color:#000">Bis gelöscht</option>
+  </select>
+  <button type="button" class="btn" id="sel-send-tv"><span class="ms">tv</span>Auf TV</button>
+  <button type="button" class="icon-btn" id="sel-clear" style="color:inherit" title="Auswahl aufheben"><span class="ms">close</span></button>
+</div>
+
+{# Vorschau-Lightbox / Player #}
+<dialog id="dlg-preview" class="player-dlg" aria-labelledby="pv-title">
+  <div class="player-bar">
+    <span class="title-m" id="pv-title">Vorschau</span>
+    <button type="button" class="btn tonal" id="pv-tv-btn" style="height:34px;padding:0 14px"><span class="ms">tv</span>Auf TV</button>
+    <button type="button" class="icon-btn" id="pv-close" style="color:#fff" aria-label="Schließen"><span class="ms">close</span></button>
+  </div>
+  <img id="pv-img" class="lb-img" alt="" hidden>
+  <video id="pv-vid" controls playsinline preload="metadata" hidden></video>
+</dialog>
+
+<script src="/static/medien.js" defer></script>
+{% endblock %}

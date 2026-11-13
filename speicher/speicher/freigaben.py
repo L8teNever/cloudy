@@ -60,6 +60,7 @@ class Einstellungen:
     arbeitsgruppe: str = "WORKGROUP"
     dlna_an: bool = True
     dlna_name: str = "cloudy Speicher"
+    videos_optimieren: bool = True
     freigaben: list[Freigabe] = field(default_factory=list)
     benutzer: list[str] = field(default_factory=list)
     # Windows-Anmeldenamen pro Benutzer: Windows meldet sich damit von selbst an (Microsoft-Konto = E-Mail).
@@ -561,9 +562,20 @@ def delete_user(name: str) -> None:
 
 # ---------- DLNA (Fernseher) ----------
 
+def _temp_ordner_name() -> str:
+    try:
+        from . import mediathek_db
+        return mediathek_db.Einstellungen.load().temp_ordner or "Jetzt schauen"
+    except Exception:  # noqa: BLE001
+        return "Jetzt schauen"
+
+
 def minidlna_conf(e: Einstellungen) -> str:
     root = pool.paths()["pool"]
     dirs = [root / f.ordner if f.ordner else root for f in e.freigaben if f.dlna]
+    temp_dir = root / _temp_ordner_name()
+    if temp_dir.is_dir() and root not in dirs and temp_dir not in dirs:
+        dirs.insert(0, temp_dir)
     cache = data_dir() / "minidlna"
     lines = [
         f"friendly_name={_esc(e.dlna_name)[:48]}",
@@ -643,7 +655,8 @@ class Dienste:
             elif not smb_soll:
                 self._stop("nmbd")
 
-            dlna_soll = e.dlna_an and pool_da and any(f.dlna for f in e.freigaben)
+            temp_da = pool_da and (pool.paths()["pool"] / _temp_ordner_name()).is_dir()
+            dlna_soll = e.dlna_an and pool_da and (any(f.dlna for f in e.freigaben) or temp_da)
             conf = minidlna_conf(e)
             if dlna_soll:
                 (data_dir() / "minidlna").mkdir(exist_ok=True)
