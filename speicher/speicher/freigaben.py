@@ -308,6 +308,10 @@ def global_section(e: Einstellungen, main: bool) -> str:
         # Windows darf Programme/Skripte (.bat, .exe) direkt vom Netzlaufwerk starten, obwohl die Dateien
         # unter Linux kein Ausführen-Recht haben (create mask 0664). Schreiben/Löschen regeln weiter die Rechte.
         "  acl allow execute always = yes",
+        # Tempo: große Dateien direkt vom Kernel senden und asynchron lesen/schreiben.
+        "  use sendfile = yes",
+        "  aio read size = 1",
+        "  aio write size = 1",
         "  idmap config * : backend = tdb",
         "  idmap config * : range = 3000-7999",
         "  usershare path =",

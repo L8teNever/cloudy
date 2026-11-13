@@ -106,7 +106,12 @@ def mergerfs_options(cfg: Config) -> str:
         f"category.create={policy}",
         "moveonenospc=true",
         f"minfreespace={max(1, int(cfg.minfree_gb))}G",
-        "cache.files=off", "dropcacheonclose=true",
+        # Seiten-Cache an: mit "off" geht jeder Lese-/Schreibblock einzeln und ohne Vorauslesen durch FUSE –
+        # übers Netzlaufwerk dann nur wenige MB/s statt Gigabit-Tempo.
+        "cache.files=partial", "dropcacheonclose=true",
+        # Viele kleine Dateien: keine security.capability-Abfrage bei jedem Schreiben,
+        # Ordnerlisten und freien Platz kurz zwischenspeichern.
+        "security_capability=false", "cache.readdir=true", "cache.statfs=10",
         "fsname=cloudy-pool",
     ])
 
