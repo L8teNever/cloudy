@@ -305,6 +305,9 @@ def global_section(e: Einstellungen, main: bool) -> str:
         "  fruit:model = MacSamba",
         "  fruit:nfs_aces = no",
         "  ea support = yes",
+        # Windows darf Programme/Skripte (.bat, .exe) direkt vom Netzlaufwerk starten, obwohl die Dateien
+        # unter Linux kein Ausführen-Recht haben (create mask 0664). Schreiben/Löschen regeln weiter die Rechte.
+        "  acl allow execute always = yes",
         "  idmap config * : backend = tdb",
         "  idmap config * : range = 3000-7999",
         "  usershare path =",
