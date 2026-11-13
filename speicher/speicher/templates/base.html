@@ -28,6 +28,7 @@
   <div class="content">
     <div class="top-mobile">
       <span class="title-l">{% block mtitle %}Speicher{% endblock %}</span>
+      <a class="icon-btn {{ 'active' if active == '/einstellungen' }}" href="/einstellungen" title="Einstellungen" aria-label="Einstellungen"><span class="ms">settings</span></a>
       <form method="post" action="/logout"><button class="icon-btn" title="Abmelden" aria-label="Abmelden"><span class="ms">logout</span></button></form>
     </div>
     <main class="page">
@@ -41,7 +42,7 @@
   </form>
 
   <nav class="bottom-bar" aria-label="Navigation">
-    {% for href, name, icon in nav %}
+    {% for href, name, icon in nav if href != "/einstellungen" %}
     <a class="nav-item {{ 'active' if active == href }}" href="{{ href }}"><span class="ind"><span class="ms">{{ icon }}</span></span>{{ name }}</a>
     {% endfor %}
   </nav>

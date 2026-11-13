@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}Freigaben{% endblock %}
+{% block mtitle %}Freigaben{% endblock %}
+{% block content %}
+<header class="appbar">
+  <div>
+    <h1 class="display">Freigaben</h1>
+    <p class="variant">Dein Pool als Netzlaufwerk auf PCs, Handys und Fernsehern im Heimnetz.</p>
+  </div>
+  <button type="button" class="btn large" data-open="dlg-neu" {{ "disabled" if not pool_da }}><span class="ms">create_new_folder</span>Neue Freigabe</button>
+</header>
+
+{% if not pool_da %}<div class="danger-box"><span class="ms">error</span><span class="body-m">Der Pool ist nicht eingehängt. Freigaben sind aus, bis er wieder da ist.</span></div>{% endif %}
+{% for name, msg in dienst_fehler.items() %}<div class="danger-box"><span class="ms">error</span><span class="body-m">{{ name }}: {{ msg }}</span></div>{% endfor %}
+{% if cloudy_fehler %}<div class="card" style="background:var(--warn-container);color:var(--on-warn-container);display:flex;gap:16px;align-items:center;border-radius:var(--r-l);padding:16px 20px">
+  <span class="ms">wifi_off</span><span class="body-m" style="flex:1">Geräteliste aus cloudy gerade nicht verfügbar. Regeln für einzelne Geräte gelten mit den zuletzt bekannten Adressen weiter.</span></div>{% endif %}
+
+<div class="grid">
+  <div class="card high">
+    <div class="card-head"><div class="shape round {{ 'primary' if smb_laeuft else 'muted' }}"><span class="ms">lan</span></div><span class="title-m" style="flex:1">Netzlaufwerk</span>
+      <span class="chip {{ 'ok' if smb_laeuft else '' }}">{{ "läuft" if smb_laeuft else "aus" }}</span></div>
+    <p class="body-m variant" style="margin:0">Für Windows, Mac, Linux, Android und Android-TV (z. B. mit VLC oder Kodi).</p>
+  </div>
+  <div class="card high">
+    <div class="card-head"><div class="shape round {{ 'primary' if dlna_laeuft else 'muted' }}"><span class="ms">tv</span></div><span class="title-m" style="flex:1">Fernseher (DLNA)</span>
+      <span class="chip {{ 'ok' if dlna_laeuft else '' }}">{{ "läuft" if dlna_laeuft else "aus" }}</span></div>
+    <p class="body-m variant" style="margin:0">Smart-TVs finden „{{ fe.dlna_name }}“ als Medienquelle. Nur ansehen, nichts ändern.</p>
+  </div>
+</div>
+
+<h2 class="title-m section-title">Freigaben</h2>
+{% if fe.freigaben %}
+<div class="list">
+  {% for f in fe.freigaben %}
+  {% set ausnahmen = f.geraete|length %}
+  <a class="li" href="/freigaben/{{ f.name|urlencode }}" style="cursor:pointer">
+    <div class="shape cookie {{ 'tertiary' if f.standard == 'offen' else ('muted' if f.standard == 'versteckt' else 'primary') }}">
+      <span class="ms">{{ "folder_open" if f.standard == "offen" else ("visibility_off" if f.standard == "versteckt" else "folder_shared") }}</span></div>
+    <div class="txt">
+      <p class="title-m">{{ f.name }}</p>
+      <p class="body-m variant" style="margin:0">pool/{{ f.ordner or "" }}{% if not f.ordner %} (ganzer Pool){% endif %}</p>
+    </div>
+    <div class="trail">
+      <span class="chip"><span class="ms">{{ "lock_open" if f.standard == "offen" else ("visibility_off" if f.standard == "versteckt" else "lock") }}</span>{{ regel_text[f.standard] }}</span>
+      {% if ausnahmen %}<span class="chip info"><span class="ms">devices</span>{{ ausnahmen }} {{ "Gerät" if ausnahmen == 1 else "Geräte" }} anders</span>{% endif %}
+      {% if f.nur_lesen %}<span class="chip"><span class="ms">visibility</span>nur lesen</span>{% endif %}
+      {% if f.dlna and fe.dlna_an %}<span class="chip"><span class="ms">tv</span>TV</span>{% endif %}
+      <span class="ms variant">chevron_right</span>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty">
+  <div class="shape cookie tertiary"><span class="ms">folder_shared</span></div>
+  <p class="title-m">Noch keine Freigabe</p>
+  <p class="body-m">Leg z. B. „Familie“ für den ganzen Pool oder „Filme“ für einen Ordner an.</p>
+</div>
+{% endif %}
+
+<h2 class="title-m section-title">Benutzer</h2>
+<p class="body-m variant" style="margin:-8px 4px 12px">Mit diesen Namen und Passwörtern melden sich Geräte an, die nach einem Passwort gefragt werden.</p>
+<div class="list">
+  {% for u in fe.benutzer %}
+  <div class="li">
+    <div class="shape round"><span class="ms">person</span></div>
+    <div class="txt"><p class="title-m">{{ u }}</p></div>
+    <div class="trail">
+      <button type="button" class="btn text" data-open="dlg-pw-{{ u }}"><span class="ms">password</span>Passwort ändern</button>
+      <button type="button" class="icon-btn danger" data-open="dlg-del-{{ u }}" aria-label="{{ u }} löschen"><span class="ms">delete</span></button>
+    </div>
+  </div>
+  {% endfor %}
+  <button type="button" class="li" data-open="dlg-user">
+    <div class="shape round tertiary"><span class="ms">person_add</span></div>
+    <div class="txt"><p class="title-m">Benutzer hinzufügen</p></div>
+  </button>
+</div>
+
+<h2 class="title-m section-title">So verbindest du dich</h2>
+<div class="card">
+  <div class="connect">
+    <div><span class="ms">desktop_windows</span><span class="txt body-m" style="flex:1"><b>Windows:</b> Explorer <span class="ms arrow">chevron_right</span> Netzwerk <span class="ms arrow">chevron_right</span> <b>{{ fe.netzwerkname }}</b>, oder in die Adresszeile <code>\\{{ server_ip }}</code></span></div>
+    <div><span class="ms">laptop_mac</span><span class="txt body-m" style="flex:1"><b>Mac:</b> Finder <span class="ms arrow">chevron_right</span> Gehe zu <span class="ms arrow">chevron_right</span> Mit Server verbinden <span class="ms arrow">chevron_right</span> <code>smb://{{ server_ip }}</code></span></div>
+    <div><span class="ms">smartphone</span><span class="txt body-m" style="flex:1"><b>Android / iPhone:</b> Dateien-App <span class="ms arrow">chevron_right</span> Netzwerk/SMB hinzufügen <span class="ms arrow">chevron_right</span> <code>{{ server_ip }}</code></span></div>
+    <div><span class="ms">tv</span><span class="txt body-m" style="flex:1"><b>Fernseher:</b> Medien/Quellen <span class="ms arrow">chevron_right</span> „{{ fe.dlna_name }}“. Android-TV: VLC oder Kodi <span class="ms arrow">chevron_right</span> SMB <span class="ms arrow">chevron_right</span> <code>{{ server_ip }}</code></span></div>
+  </div>
+  <p class="body-s variant" style="margin:12px 4px 0">Als Laufwerk verbinden (Windows): Rechtsklick auf die Freigabe <span class="ms arrow">chevron_right</span> „Netzlaufwerk verbinden“.</p>
+</div>
+
+<h2 class="title-m section-title">Dienst</h2>
+<form method="post" action="/freigaben/einstellungen" class="card">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label class="switch-row"><span class="txt"><span class="title-m" style="display:block">Netzlaufwerk</span><span class="body-m variant">Freigaben im Heimnetz anbieten</span></span>
+    <span class="switch"><input type="checkbox" name="an" value="1" {{ "checked" if fe.an }}><span class="tr"></span><span class="th"></span></span></label>
+  <label class="switch-row"><span class="txt"><span class="title-m" style="display:block">Fernseher (DLNA)</span><span class="body-m variant">Freigaben mit „Auf Fernsehern zeigen“ als Medienquelle anbieten</span></span>
+    <span class="switch"><input type="checkbox" name="dlna_an" value="1" {{ "checked" if fe.dlna_an }}><span class="tr"></span><span class="th"></span></span></label>
+  <div class="form-grid" style="margin-top:8px">
+    <div class="field"><input name="netzwerkname" id="nn" value="{{ fe.netzwerkname }}" maxlength="15" placeholder=" " required><label for="nn">Name im Netzwerk</label></div>
+    <div class="field"><input name="dlna_name" id="dn" value="{{ fe.dlna_name }}" maxlength="48" placeholder=" " required><label for="dn">Name auf dem Fernseher</label></div>
+  </div>
+  <div class="actions"><button class="btn tonal">Speichern</button></div>
+</form>
+
+{# ---------- Dialoge ---------- #}
+<dialog id="dlg-neu" aria-labelledby="t-neu">
+  <form method="post" action="/freigaben/neu">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="icon"><span class="ms" style="font-size:32px">create_new_folder</span></div>
+    <h2 class="headline" id="t-neu" style="font-size:24px;line-height:32px">Neue Freigabe</h2>
+    <div class="field"><input name="name" id="fn" placeholder=" " required maxlength="40" autocomplete="off"><label for="fn">Name, z. B. Familie</label></div>
+    <div class="field"><input name="ordner" id="fo" placeholder=" " autocomplete="off"><label for="fo">Ordner im Pool (leer = ganzer Pool)</label><span class="sup">Wird angelegt, falls es ihn noch nicht gibt, z. B. <code>Filme</code></span></div>
+    <p class="label-l variant" style="margin:0">Alle Geräte</p>
+    <div class="segmented">
+      <label><input type="radio" name="standard" value="offen"><span><span class="ms">lock_open</span>Offen</span></label>
+      <label><input type="radio" name="standard" value="passwort" checked><span><span class="ms">lock</span>Passwort</span></label>
+      <label><input type="radio" name="standard" value="versteckt"><span><span class="ms">visibility_off</span>Unsichtbar</span></label>
+    </div>
+    <p class="body-s variant" style="margin:-8px 4px 12px">Einzelne Geräte stellst du danach extra ein.</p>
+    <label class="switch-row"><span class="txt title-m">Auf Fernsehern zeigen</span>
+      <span class="switch"><input type="checkbox" name="dlna" value="1"><span class="tr"></span><span class="th"></span></span></label>
+    <div class="actions"><button type="button" class="btn text" data-close>Abbrechen</button><button class="btn">Anlegen</button></div>
+  </form>
+</dialog>
+
+<dialog id="dlg-user" aria-labelledby="t-user">
+  <form method="post" action="/benutzer/neu">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="icon"><span class="ms" style="font-size:32px">person_add</span></div>
+    <h2 class="headline" id="t-user" style="font-size:24px;line-height:32px">Benutzer hinzufügen</h2>
+    <div class="field"><input name="name" id="un" placeholder=" " required pattern="[a-z][a-z0-9_-]{0,31}" autocomplete="off" autocapitalize="none"><label for="un">Name, z. B. simon</label><span class="sup">Kleinbuchstaben, Zahlen, - und _</span></div>
+    <div class="field"><input type="password" name="passwort" id="up" placeholder=" " required minlength="6" autocomplete="new-password"><label for="up">Passwort</label></div>
+    <div class="actions"><button type="button" class="btn text" data-close>Abbrechen</button><button class="btn">Hinzufügen</button></div>
+  </form>
+</dialog>
+
+{% for u in fe.benutzer %}
+<dialog id="dlg-pw-{{ u }}">
+  <form method="post" action="/benutzer/{{ u }}/passwort">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="icon"><span class="ms" style="font-size:32px">password</span></div>
+    <h2 class="headline" style="font-size:24px;line-height:32px">Passwort von {{ u }}</h2>
+    <div class="field"><input type="password" name="passwort" id="pw-{{ u }}" placeholder=" " required minlength="6" autocomplete="new-password"><label for="pw-{{ u }}">Neues Passwort</label></div>
+    <div class="actions"><button type="button" class="btn text" data-close>Abbrechen</button><button class="btn">Ändern</button></div>
+  </form>
+</dialog>
+<dialog id="dlg-del-{{ u }}">
+  <form method="post" action="/benutzer/{{ u }}/loeschen">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="icon" style="color:var(--error)"><span class="ms" style="font-size:32px">person_remove</span></div>
+    <h2 class="headline" style="font-size:24px;line-height:32px">{{ u }} löschen?</h2>
+    <p class="body-m variant" style="text-align:center">Geräte, die sich als {{ u }} angemeldet haben, kommen nicht mehr an Freigaben mit Passwort. Dateien bleiben erhalten.</p>
+    <div class="actions"><button type="button" class="btn text" data-close>Abbrechen</button><button class="btn danger">Löschen</button></div>
+  </form>
+</dialog>
+{% endfor %}
+{% endblock %}

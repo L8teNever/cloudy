@@ -88,20 +88,26 @@ services:
       cloudy-tunnel:
         ipv4_address: 172.29.88.10
 
-  # Speicher: HDDs als ein Pool (mergerfs), SSD als Sicherheitskopie bis zum Backup, verschlüsseltes Backup nach
-  # Google Drive. Webseite: http://<server>:8091 (eigenes Passwort, beim ersten Aufruf festlegen).
-  # Pool für andere Container/Freigaben: /mnt/cloudy/pool (auf dem Host). Ohne zugeordnete Platten passiert nichts.
+  # Speicher: HDDs als ein Pool (mergerfs), SSD als Sicherheitskopie bis zum Backup, Backup nach Google Drive,
+  # Netzlaufwerk (Samba) für PCs/Handys und DLNA für Fernseher. Webseite: http://<server>:8091 (eigenes Passwort).
+  # Host-Netz: Windows (wsdd) und Fernseher (DLNA) finden den Server nur so; Ports 8091, 445, 3702/5357, 8200, 1900.
+  # Geräteliste für Regeln pro Gerät kommt aus cloudy (http://127.0.0.1:DASHBOARD_PORT/api/devices).
   speicher:
     image: ghcr.io/l8tenever/cloudy:speicher
     container_name: cloudy-speicher
     restart: unless-stopped
+    network_mode: host
     # Platten formatieren/einhängen und FUSE brauchen vollen Gerätezugriff.
     privileged: true
-    ports:
-      - "${SPEICHER_PORT:-8091}:8091"
     environment:
       TZ: Europe/Berlin
+      SPEICHER_PORT: ${SPEICHER_PORT:-8091}
       SPEICHER_PASSWORD: ${SPEICHER_PASSWORD:-}
+      # Dateien im Pool gehören diesem Benutzer auf dem Server (Standard: erster Benutzer, 1000).
+      SPEICHER_UID: ${SPEICHER_UID:-1000}
+      SPEICHER_GID: ${SPEICHER_GID:-1000}
+      CLOUDY_PORT: ${DASHBOARD_PORT:-80}
+      CLOUDY_PASSWORD: ${DASHBOARD_PASSWORD:-}
     volumes:
       - ./data/speicher:/data
       # Live-/dev: neue Partitionen nach dem Formatieren sind sofort sichtbar.

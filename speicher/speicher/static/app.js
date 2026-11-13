@@ -43,6 +43,15 @@
     $$("button", e.target).forEach((b) => { if (b.type !== "button") setTimeout(() => { b.disabled = true; }, 0); });
   });
 
+  // Liste filtern (Gerätesuche)
+  $$("[data-filter]").forEach((input) => {
+    const list = $(input.dataset.filter);
+    input.addEventListener("input", () => {
+      const q = input.value.trim().toLowerCase();
+      $$("[data-name]", list).forEach((row) => { row.hidden = Boolean(q) && !row.dataset.name.includes(q); });
+    });
+  });
+
   // Obere Leiste am Handy einfärben, sobald gescrollt wird
   const top = $(".top-mobile");
   if (top) addEventListener("scroll", () => top.classList.toggle("scrolled", scrollY > 4), { passive: true });

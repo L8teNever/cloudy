@@ -1,5 +1,6 @@
 """Webseite des Speicher-Dienstes: Platten zuordnen, Pool, Puffer-SSD und Backup nach Google Drive."""
 import os
+import re
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -13,7 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, backup, config, disks, jobs, pool
+from . import auth, backup, config, disks, freigaben, jobs, pool
 from .config import Config
 
 BASE = Path(__file__).parent
@@ -63,7 +64,14 @@ templates.env.globals["puffer_paths"] = lambda rollen: [p for p, r in rollen.ite
 # ---------- Planer ----------
 
 def scheduler() -> None:
+    letzter_abgleich = 0.0
     while not _stop.wait(30):
+        if time.time() - letzter_abgleich > 55:
+            letzter_abgleich = time.time()
+            try:
+                freigaben.dienste.abgleichen()  # neue Geräte-IPs aus cloudy, abgestürzte Dienste
+            except Exception as exc:  # noqa: BLE001
+                jobs.log(None, f"Freigaben: {exc}")
         try:
             cfg = Config.load()
             now = time.time()
@@ -89,10 +97,15 @@ async def lifespan(app: FastAPI):
             await run_in_threadpool(pool.mount_all)
         except Exception as exc:  # noqa: BLE001
             jobs.log(None, f"Einhängen beim Start: {exc}")
+        try:
+            await run_in_threadpool(freigaben.dienste.abgleichen)
+        except Exception as exc:  # noqa: BLE001
+            jobs.log(None, f"Freigaben beim Start: {exc}")
         threading.Thread(target=scheduler, name="planer", daemon=True).start()
     yield
     _stop.set()
     if "PYTEST_CURRENT_TEST" not in os.environ:
+        freigaben.dienste.stop_all()
         pool.unmount_pool()  # sonst bleibt auf dem Host ein toter FUSE-Eintrag zurück
 
 
@@ -106,6 +119,7 @@ PUBLIC = {"/login", "/einrichten", "/healthz"}
 NAV = [
     ("/", "Übersicht", "home_storage"),
     ("/platten", "Platten", "hard_drive"),
+    ("/freigaben", "Freigaben", "folder_shared"),
     ("/backup", "Backup", "cloud_upload"),
     ("/wiederherstellen", "Zurückholen", "history"),
     ("/einstellungen", "Einstellungen", "settings"),
@@ -147,11 +161,13 @@ async def _form(request: Request) -> dict:
     form = await request.form()
     if not auth.csrf_ok(request.state.session, str(form.get("csrf", ""))):
         raise PermissionError("Sitzung abgelaufen – bitte Seite neu laden")
+    request.state.form = form
     return {k: str(v) for k, v in form.items()}
 
 
 def _back(msg: str = "", fehler: str = "", to: str = "/") -> RedirectResponse:
-    to = to if to in NAV_PATHS else "/"
+    if not (to in NAV_PATHS or re.fullmatch(r"/freigaben/[A-Za-z0-9%._~-]+", to)):
+        to = "/"
     q = f"?ok={quote(msg)}" if msg else (f"?fehler={quote(fehler)}" if fehler else "")
     return RedirectResponse(to + q, 303)
 
@@ -465,3 +481,211 @@ async def wiederherstellen(request: Request):
     if not jobs.run("Wiederherstellen aus Google Drive", backup.restore, sid, f.get("pfad", "")):
         return _back(fehler="Es läuft schon ein Auftrag", to="/wiederherstellen")
     return _back("Wird zurückgeholt nach pool/wiederhergestellt/", to="/wiederherstellen")
+
+
+# ---------- Freigaben (Netzlaufwerk + Fernseher) ----------
+
+def _server_ip() -> str:
+    """Eigene IP im Heimnetz (für die Anleitung „so verbindest du dich“)."""
+    import socket
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))
+            return s.getsockname()[0]
+    except OSError:
+        return "<server-ip>"
+
+
+def _freigaben_data() -> dict:
+    e = freigaben.Einstellungen.load()
+    geraete, fehler = freigaben.geraete()
+    d = freigaben.dienste
+    return {
+        "fe": e, "geraete": geraete, "cloudy_fehler": fehler, "server_ip": _server_ip(),
+        "smb_laeuft": d.laeuft("smbd"), "dlna_laeuft": d.laeuft("minidlna"), "dienst_fehler": d.fehler,
+        "regel_text": freigaben.REGEL_TEXT, "pool_da": pool.status()["pool"].mounted,
+    }
+
+
+async def _apply() -> None:
+    await run_in_threadpool(freigaben.dienste.abgleichen)
+
+
+def _share_url(name: str) -> str:
+    return "/freigaben/" + quote(name, safe="")
+
+
+@app.get("/freigaben", response_class=HTMLResponse)
+async def freigaben_seite(request: Request):
+    data = await run_in_threadpool(lambda: {**_status(), **_freigaben_data()})
+    return _page(request, "freigaben.html", active="/freigaben", **data)
+
+
+@app.post("/freigaben/einstellungen")
+async def freigaben_einstellungen(request: Request):
+    try:
+        f = await _form(request)
+        e = freigaben.Einstellungen.load()
+        e.an = f.get("an") == "1"
+        e.dlna_an = f.get("dlna_an") == "1"
+        name = re.sub(r"[^A-Za-z0-9-]", "", f.get("netzwerkname", e.netzwerkname)).upper()[:15]
+        if not name:
+            raise freigaben.FreigabeError("Netzwerkname: Buchstaben, Zahlen und -")
+        alt = e.netzwerkname
+        e.netzwerkname = name
+        e.dlna_name = " ".join(f.get("dlna_name", e.dlna_name).split())[:48] or "cloudy Speicher"
+        e.save()
+        if alt != name:
+            await run_in_threadpool(freigaben.dienste.neustart_wsdd)
+        await _apply()
+    except (freigaben.FreigabeError, PermissionError) as exc:
+        return _back(fehler=str(exc), to="/freigaben")
+    return _back("Gespeichert", to="/freigaben")
+
+
+@app.post("/freigaben/neu")
+async def freigabe_neu(request: Request):
+    try:
+        f = await _form(request)
+        name = freigaben.check_name(f.get("name", ""))
+        ordner = freigaben.check_ordner(f.get("ordner", ""))
+        standard = f.get("standard", "passwort")
+        if standard not in freigaben.REGELN:
+            raise freigaben.FreigabeError("Unbekannte Regel")
+        with freigaben._lock:
+            e = freigaben.Einstellungen.load()
+            if any(x.name.lower() == name.lower() for x in e.freigaben):
+                raise freigaben.FreigabeError(f"„{name}“ gibt es schon")
+            e.freigaben.append(freigaben.Freigabe(name=name, ordner=ordner, standard=standard, dlna=f.get("dlna") == "1"))
+            e.save()
+        await _apply()
+    except (freigaben.FreigabeError, PermissionError) as exc:
+        return _back(fehler=str(exc), to="/freigaben")
+    return _back(f"Freigabe „{name}“ angelegt", to=_share_url(name))
+
+
+@app.get("/freigaben/{name}", response_class=HTMLResponse)
+async def freigabe_seite(request: Request, name: str):
+    data = await run_in_threadpool(lambda: {**_status(), **_freigaben_data()})
+    try:
+        share = data["fe"].get(name)
+    except freigaben.FreigabeError as exc:
+        return _back(fehler=str(exc), to="/freigaben")
+    return _page(request, "freigabe.html", active="/freigaben", share=share, share_url=_share_url(share.name), **data)
+
+
+@app.post("/freigaben/{name}")
+async def freigabe_speichern(request: Request, name: str):
+    try:
+        f = await _form(request)
+        with freigaben._lock:
+            e = freigaben.Einstellungen.load()
+            share = e.get(name)
+            neu_name = freigaben.check_name(f.get("name", share.name))
+            if neu_name.lower() != share.name.lower() and any(x.name.lower() == neu_name.lower() for x in e.freigaben):
+                raise freigaben.FreigabeError(f"„{neu_name}“ gibt es schon")
+            share.name = neu_name
+            share.ordner = freigaben.check_ordner(f.get("ordner", share.ordner))
+            share.nur_lesen = f.get("nur_lesen") == "1"
+            share.dlna = f.get("dlna") == "1"
+            if f.get("standard") in freigaben.REGELN:
+                share.standard = f["standard"]
+            gewaehlt = [u for u in request.state.form.getlist("benutzer") if u in e.benutzer]
+            if e.benutzer and f.get("alle_benutzer") != "1" and not gewaehlt:
+                raise freigaben.FreigabeError("Wähle mindestens einen Benutzer oder „Alle Benutzer“")
+            share.benutzer = [] if f.get("alle_benutzer") == "1" or set(gewaehlt) == set(e.benutzer) else gewaehlt
+            e.save()
+        await _apply()
+    except (freigaben.FreigabeError, PermissionError) as exc:
+        return _back(fehler=str(exc), to=_share_url(name))
+    return _back("Gespeichert", to=_share_url(neu_name))
+
+
+@app.post("/freigaben/{name}/geraete")
+async def freigabe_geraete(request: Request, name: str):
+    try:
+        f = await _form(request)
+        with freigaben._lock:
+            e = freigaben.Einstellungen.load()
+            share = e.get(name)
+            for key, value in f.items():
+                if not key.startswith("regel:"):
+                    continue
+                dev = key[6:]
+                if value in freigaben.REGELN:
+                    share.geraete[dev] = value
+                else:
+                    share.geraete.pop(dev, None)
+            e.save()
+        await _apply()
+    except (freigaben.FreigabeError, PermissionError) as exc:
+        return _back(fehler=str(exc), to=_share_url(name))
+    return _back("Geräte-Regeln gespeichert", to=_share_url(name))
+
+
+@app.post("/freigaben/{name}/loeschen")
+async def freigabe_loeschen(request: Request, name: str):
+    try:
+        await _form(request)
+        with freigaben._lock:
+            e = freigaben.Einstellungen.load()
+            share = e.get(name)
+            e.freigaben.remove(share)
+            e.save()
+        await _apply()
+    except (freigaben.FreigabeError, PermissionError) as exc:
+        return _back(fehler=str(exc), to="/freigaben")
+    return _back(f"Freigabe „{name}“ entfernt – die Dateien bleiben im Pool", to="/freigaben")
+
+
+@app.post("/benutzer/neu")
+async def benutzer_neu(request: Request):
+    try:
+        f = await _form(request)
+        await run_in_threadpool(freigaben.add_user, f.get("name", ""), f.get("passwort", ""))
+        await _apply()
+    except (freigaben.FreigabeError, PermissionError) as exc:
+        return _back(fehler=str(exc), to="/freigaben")
+    return _back("Benutzer angelegt", to="/freigaben")
+
+
+@app.post("/benutzer/{name}/passwort")
+async def benutzer_passwort(request: Request, name: str):
+    try:
+        f = await _form(request)
+        await run_in_threadpool(freigaben.change_password, name, f.get("passwort", ""))
+    except (freigaben.FreigabeError, PermissionError) as exc:
+        return _back(fehler=str(exc), to="/freigaben")
+    return _back(f"Passwort von {name} geändert", to="/freigaben")
+
+
+@app.post("/benutzer/{name}/loeschen")
+async def benutzer_loeschen(request: Request, name: str):
+    try:
+        await _form(request)
+        await run_in_threadpool(freigaben.delete_user, name)
+        await _apply()
+    except (freigaben.FreigabeError, PermissionError) as exc:
+        return _back(fehler=str(exc), to="/freigaben")
+    return _back(f"Benutzer {name} gelöscht", to="/freigaben")
+
+
+@app.post("/geraete/neu")
+async def geraet_neu(request: Request):
+    f: dict = {}
+    try:
+        f = await _form(request)
+        ip = f.get("ip", "").strip()
+        if not freigaben.IPV4_RE.fullmatch(ip):
+            raise freigaben.FreigabeError("Bitte eine IPv4-Adresse wie 192.168.178.50")
+        name = " ".join(f.get("name", "").split())[:60] or ip
+        with freigaben._lock:
+            e = freigaben.Einstellungen.load()
+            e.eigene_geraete[f"ip:{ip}"] = name
+            e.save()
+        freigaben._cache["t"] = 0
+        await _apply()
+    except (freigaben.FreigabeError, PermissionError) as exc:
+        return _back(fehler=str(exc), to=f.get("zurueck", "/freigaben"))
+    return _back(f"{name} hinzugefügt", to=f.get("zurueck", "/freigaben"))

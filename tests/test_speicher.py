@@ -17,6 +17,7 @@ from speicher import auth, backup, config, disks, pool  # noqa: E402
 def speicher_env(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("MOUNT_ROOT", str(tmp_path / "mnt"))
+    monkeypatch.setenv("SAMBA_CONF_DIR", str(tmp_path / "samba"))
     monkeypatch.delenv("SPEICHER_PASSWORD", raising=False)
     auth._fails.clear()
 
@@ -219,3 +220,131 @@ def test_einstellungen_aendern_nur_gesendete_felder(web):
 def test_web_api_ohne_login(web):
     auth.set_password("geheim123")
     assert web.get("/api/job").status_code == 401
+
+
+# ---------- Freigaben (Samba/DLNA) ----------
+
+from speicher import freigaben as fg  # noqa: E402
+
+
+@pytest.fixture
+def samba_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("SAMBA_CONF_DIR", str(tmp_path / "samba"))
+    fg._cache.update(t=0.0, geraete=[], fehler="")
+    return tmp_path / "samba"
+
+
+def test_parse_cloudy_nur_ipv4_und_eindeutig():
+    data = [
+        {"ip": "192.168.178.20", "mac": "AA:BB:CC:00:00:01", "hostname": "Simon-PC", "online": True},
+        {"ip": "192.168.178.21", "mac": "aa:bb:cc:00:00:01", "hostname": "doppelt"},
+        {"ip": "fd00::5", "mac": "aa:bb:cc:00:00:02", "hostname": "nur v6"},
+        {"ip": "../../etc/x", "hostname": "boese"},
+        {"ip": "192.168.178.30", "mac": None, "hostname": None, "lease_name": "tv"},
+    ]
+    result = fg.parse_cloudy(data)
+    assert [(g.key, g.name, g.ip) for g in result] == [
+        ("aa:bb:cc:00:00:01", "Simon-PC", "192.168.178.20"),
+        ("ip:192.168.178.30", "tv", "192.168.178.30"),
+    ]
+
+
+def test_render_pro_geraet():
+    e = fg.Einstellungen(benutzer=["simon", "mama"], freigaben=[
+        fg.Freigabe("Familie", "Familie", standard="passwort", geraete={"pc": "offen", "tv": "versteckt"}),
+        fg.Freigabe("Filme", "Filme", standard="offen", nur_lesen=True),
+        fg.Freigabe("Privat", "", standard="versteckt", geraete={"pc": "passwort"}, benutzer=["simon"]),
+    ])
+    main = fg.render(e, None)
+    assert "config file = " in main and "[Familie]" in main and "[Privat]" not in main
+    assert "valid users = simon mama" in main
+    pc = fg.render(e, "pc")
+    assert "config file" not in pc  # keine Schleife
+    familie = pc[pc.index("[Familie]"):pc.index("[Filme]")]
+    assert "guest only = yes" in familie
+    assert "[Privat]" in pc and "valid users = simon\n" in pc
+    filme = pc[pc.index("[Filme]"):pc.index("[Privat]")]
+    assert "read only = yes" in filme and "guest ok = yes" in filme
+    tv = fg.render(e, "tv")
+    assert "[Familie]" not in tv and "[Filme]" in tv
+
+
+def test_render_passwort_ohne_benutzer_sperrt():
+    e = fg.Einstellungen(freigaben=[fg.Freigabe("X", standard="passwort")])
+    assert "valid users = nobody-darf-rein" in fg.render(e, None)
+
+
+def test_write_configs_nur_fuer_geraete_mit_regel_und_raeumt_auf(samba_dir, monkeypatch):
+    devices = [fg.Geraet("pc", "PC", "192.168.178.20"), fg.Geraet("tv", "TV", "192.168.178.30")]
+    monkeypatch.setattr(fg, "geraete", lambda max_age=30: (devices, ""))
+    e = fg.Einstellungen(freigaben=[fg.Freigabe("A", geraete={"pc": "offen"})])
+    assert fg.write_configs(e)
+    assert sorted(p.name for p in (samba_dir / "hosts").iterdir()) == ["192.168.178.20.conf"]
+    assert not fg.write_configs(e)  # nichts geändert
+    devices[0] = fg.Geraet("pc", "PC", "192.168.178.25")  # neue IP aus cloudy
+    assert fg.write_configs(e)
+    assert sorted(p.name for p in (samba_dir / "hosts").iterdir()) == ["192.168.178.25.conf"]
+
+
+def test_pruefungen():
+    assert fg.check_name("  Meine  Filme ") == "Meine Filme"
+    for bad in ("", "global", "a/b", "x" * 41, "[x]"):
+        with pytest.raises(fg.FreigabeError):
+            fg.check_name(bad)
+    assert fg.check_ordner("/Fotos//2026/") == "Fotos/2026"
+    for bad in ("../etc", "a/../../b", "a%Ib"):
+        with pytest.raises(fg.FreigabeError):
+            fg.check_ordner(bad)
+    assert fg.check_user("Simon") == "simon"
+    for bad in ("root", "speicher", "1abc", "a b"):
+        with pytest.raises(fg.FreigabeError):
+            fg.check_user(bad)
+    with pytest.raises(fg.FreigabeError):
+        fg.check_password("123")
+
+
+def test_minidlna_nur_dlna_freigaben():
+    e = fg.Einstellungen(dlna_name="Wohnzimmer", freigaben=[fg.Freigabe("Filme", "Filme", dlna=True), fg.Freigabe("Privat", "P")])
+    conf = fg.minidlna_conf(e)
+    assert "friendly_name=Wohnzimmer" in conf and conf.count("media_dir=") == 1 and "/pool/Filme" in conf
+
+
+def _login(web):
+    web.post("/einrichten", data={"passwort": "geheim123", "passwort2": "geheim123"})
+    return auth.csrf_token(web.cookies.get(auth.COOKIE))
+
+
+def test_web_freigabe_anlegen_und_geraete_regeln(web, samba_dir, monkeypatch):
+    from speicher import main
+
+    monkeypatch.setattr(fg.dienste, "abgleichen", lambda: None)
+    monkeypatch.setattr(main, "_freigaben_data", lambda: {
+        "fe": fg.Einstellungen.load(), "geraete": [fg.Geraet("aa:bb", "Simon-PC", "192.168.178.20", "aa:bb", True)],
+        "cloudy_fehler": "", "server_ip": "192.168.178.2", "smb_laeuft": True, "dlna_laeuft": False, "dienst_fehler": {},
+        "regel_text": fg.REGEL_TEXT, "pool_da": True,
+    })
+    csrf = _login(web)
+    r = web.post("/freigaben/neu", data={"csrf": csrf, "name": "Familie", "ordner": "Familie", "standard": "passwort"}, follow_redirects=False)
+    assert r.headers["location"].startswith("/freigaben/Familie?ok=")
+    assert web.get("/freigaben").status_code == 200
+    page = web.get("/freigaben/Familie")
+    assert page.status_code == 200 and "Simon-PC" in page.text
+    r = web.post("/freigaben/Familie/geraete", data={"csrf": csrf, "regel:aa:bb": "offen", "regel:cc:dd": "standard"}, follow_redirects=False)
+    assert "ok=" in r.headers["location"]
+    share = fg.Einstellungen.load().get("Familie")
+    assert share.geraete == {"aa:bb": "offen"}
+    web.post("/freigaben/Familie/geraete", data={"csrf": csrf, "regel:aa:bb": "standard"})
+    assert fg.Einstellungen.load().get("Familie").geraete == {}
+    r = web.post("/freigaben/neu", data={"csrf": csrf, "name": "../x", "standard": "offen"}, follow_redirects=False)
+    assert "fehler=" in r.headers["location"]
+    r = web.post("/freigaben/Familie/loeschen", data={"csrf": csrf}, follow_redirects=False)
+    assert fg.Einstellungen.load().freigaben == []
+
+
+def test_web_eigenes_geraet_nur_ipv4(web, samba_dir, monkeypatch):
+    monkeypatch.setattr(fg.dienste, "abgleichen", lambda: None)
+    csrf = _login(web)
+    r = web.post("/geraete/neu", data={"csrf": csrf, "ip": "1.2.3", "zurueck": "/freigaben"}, follow_redirects=False)
+    assert "fehler=" in r.headers["location"]
+    web.post("/geraete/neu", data={"csrf": csrf, "ip": "192.168.178.50", "name": "Drucker"})
+    assert fg.Einstellungen.load().eigene_geraete == {"ip:192.168.178.50": "Drucker"}

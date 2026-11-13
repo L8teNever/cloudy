@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}{{ share.name }}{% endblock %}
+{% block mtitle %}{{ share.name }}{% endblock %}
+{% block content %}
+<header class="appbar">
+  <div>
+    <a class="btn text" href="/freigaben" style="margin-left:-12px"><span class="ms">arrow_back</span>Freigaben</a>
+    <h1 class="display">{{ share.name }}</h1>
+    <p class="variant">pool/{{ share.ordner }}{% if not share.ordner %} (ganzer Pool){% endif %} · <code>\\{{ server_ip }}\{{ share.name }}</code></p>
+  </div>
+</header>
+
+<form method="post" action="{{ share_url }}" class="card">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="card-head"><div class="shape round"><span class="ms">tune</span></div><h2 class="title-l">Einstellungen</h2></div>
+  <div class="form-grid">
+    <div class="field"><input name="name" id="n" value="{{ share.name }}" maxlength="40" placeholder=" " required><label for="n">Name</label></div>
+    <div class="field"><input name="ordner" id="o" value="{{ share.ordner }}" placeholder=" "><label for="o">Ordner im Pool (leer = ganzer Pool)</label></div>
+  </div>
+
+  <p class="label-l variant" style="margin:8px 0 0">Alle Geräte ohne eigene Regel</p>
+  <div class="segmented">
+    {% for value, icon, text in [("offen", "lock_open", "Ohne Passwort"), ("passwort", "lock", "Mit Passwort"), ("versteckt", "visibility_off", "Unsichtbar")] %}
+    <label><input type="radio" name="standard" value="{{ value }}" {{ "checked" if share.standard == value }}><span><span class="ms">{{ icon }}</span>{{ text }}</span></label>
+    {% endfor %}
+  </div>
+
+  <label class="switch-row"><span class="txt"><span class="title-m" style="display:block">Nur lesen</span><span class="body-m variant">Ansehen und kopieren, aber nichts ändern oder löschen</span></span>
+    <span class="switch"><input type="checkbox" name="nur_lesen" value="1" {{ "checked" if share.nur_lesen }}><span class="tr"></span><span class="th"></span></span></label>
+  <label class="switch-row"><span class="txt"><span class="title-m" style="display:block">Auf Fernsehern zeigen (DLNA)</span><span class="body-m variant">Fotos, Videos und Musik daraus erscheinen auf Smart-TVs – für alle im Heimnetz, nur ansehen</span></span>
+    <span class="switch"><input type="checkbox" name="dlna" value="1" {{ "checked" if share.dlna }}><span class="tr"></span><span class="th"></span></span></label>
+
+  <p class="label-l variant" style="margin:16px 0 4px">Wer darf sich mit Passwort anmelden?</p>
+  {% if fe.benutzer %}
+    <label class="check-row"><input type="checkbox" name="alle_benutzer" value="1" {{ "checked" if not share.benutzer }}><span class="body-m">Alle Benutzer</span></label>
+    {% for u in fe.benutzer %}
+    <label class="check-row" style="padding-left:30px"><input type="checkbox" name="benutzer" value="{{ u }}" {{ "checked" if u in share.benutzer }}><span class="body-m">{{ u }}</span></label>
+    {% endfor %}
+  {% else %}
+    <p class="body-m variant">Noch keine Benutzer. <a href="/freigaben">Unter Freigaben anlegen</a>, sonst kommt bei „Mit Passwort“ niemand rein.</p>
+  {% endif %}
+  <div class="actions"><button class="btn">Speichern</button></div>
+</form>
+
+<form method="post" action="{{ share_url }}/geraete">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="card" style="padding-bottom:16px">
+    <div class="card-head"><div class="shape round tertiary"><span class="ms">devices</span></div><h2 class="title-l">Geräte</h2>
+      <button type="button" class="btn text" data-open="dlg-ip"><span class="ms">add</span>Per IP</button></div>
+    <p class="body-m variant" style="margin-top:0">Aus cloudy. <b>Standard</b> = wie oben bei „Alle Geräte“. Erkannt wird ein Gerät an seiner IP – gib wichtigen Geräten in cloudy eine feste IP.</p>
+    <details class="exp" style="margin:-4px 0 8px"><summary><span class="ms">expand_more</span>Gut zu wissen</summary>
+      <p class="body-m variant" style="margin:4px 0 8px">Die Liste in der Netzwerkansicht (z. B. Windows-Explorer <span class="ms arrow">chevron_right</span> Netzwerk) zeigt jedem Gerät die Freigaben, die für „Alle Geräte“ sichtbar sind.
+      Ein Gerät mit „Unsichtbar“ sieht den Namen dort evtl. trotzdem, kommt aber nicht hinein. Ist eine Freigabe für alle unsichtbar, verbinden sich die erlaubten Geräte direkt über <code>\\{{ server_ip }}\{{ share.name }}</code>.</p>
+    </details>
+    <div class="search"><span class="ms">search</span><input type="search" placeholder="Gerät suchen" data-filter="#geraete-liste" aria-label="Gerät suchen"></div>
+
+    <div class="list" id="geraete-liste" style="margin:0">
+      {% set bekannt = geraete|map(attribute="key")|list %}
+      {% for g in geraete %}
+      {% set regel = share.geraete.get(g.key, "standard") %}
+      <div class="li" data-name="{{ (g.name ~ ' ' ~ g.ip ~ ' ' ~ g.mac)|lower }}" style="background:var(--sc)">
+        <span class="dot {{ 'on' if g.online }}" title="{{ 'online' if g.online else 'offline' }}"></span>
+        <div class="txt"><p class="title-m">{{ g.name }}</p><p class="body-s variant" style="margin:0">{{ g.ip }}{% if g.mac %} · {{ g.mac }}{% endif %}{% if g.eigen %} · selbst hinzugefügt{% endif %}</p></div>
+        <div class="trail">
+          <div class="segmented mini" role="radiogroup" aria-label="Regel für {{ g.name }}">
+            {% for value, icon, text in [("standard", "remove", "Standard"), ("offen", "lock_open", "Offen"), ("passwort", "lock", "Passwort"), ("versteckt", "visibility_off", "Unsichtbar")] %}
+            <label title="{{ text }}"><input type="radio" name="regel:{{ g.key }}" value="{{ value }}" {{ "checked" if regel == value }}><span><span class="ms">{{ icon }}</span><span class="lbl">{{ text }}</span></span></label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+      {% for key, regel in share.geraete.items() if key not in bekannt %}
+      <div class="li" data-name="{{ key }}" style="background:var(--sc)">
+        <span class="dot"></span>
+        <div class="txt"><p class="title-m">Unbekanntes Gerät</p><p class="body-s variant" style="margin:0">{{ key }} · gerade nicht in cloudy</p></div>
+        <div class="trail">
+          <div class="segmented mini">
+            {% for value, icon, text in [("standard", "remove", "Standard"), ("offen", "lock_open", "Offen"), ("passwort", "lock", "Passwort"), ("versteckt", "visibility_off", "Unsichtbar")] %}
+            <label title="{{ text }}"><input type="radio" name="regel:{{ key }}" value="{{ value }}" {{ "checked" if regel == value }}><span><span class="ms">{{ icon }}</span><span class="lbl">{{ text }}</span></span></label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+      {% if not geraete and not share.geraete %}<div class="li" style="background:var(--sc)"><span class="body-m variant">Keine Geräte bekannt. Läuft cloudy?</span></div>{% endif %}
+    </div>
+    <div class="actions" style="position:sticky;bottom:12px;margin-top:16px"><button class="btn" style="box-shadow:var(--shadow-3)"><span class="ms">save</span>Geräte speichern</button></div>
+  </div>
+</form>
+
+<div class="card outlined">
+  <div class="card-head"><div class="shape round error"><span class="ms">folder_delete</span></div><h2 class="title-l">Freigabe entfernen</h2></div>
+  <p class="body-m variant" style="margin-top:0">Die Freigabe verschwindet aus dem Netzwerk. Die Dateien im Pool bleiben unangetastet.</p>
+  <form method="post" action="{{ share_url }}/loeschen" data-confirm="Freigabe „{{ share.name }}“ entfernen? Die Dateien bleiben im Pool.">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn outlined" style="--fg:var(--error)"><span class="ms">delete</span>Entfernen</button>
+  </form>
+</div>
+
+<dialog id="dlg-ip" aria-labelledby="t-ip">
+  <form method="post" action="/geraete/neu">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="zurueck" value="{{ share_url }}">
+    <div class="icon"><span class="ms" style="font-size:32px">add_to_queue</span></div>
+    <h2 class="headline" id="t-ip" style="font-size:24px;line-height:32px">Gerät per IP</h2>
+    <p class="body-m variant" style="text-align:center;margin-top:-8px">Für Geräte, die cloudy nicht kennt (z. B. mit fester IP).</p>
+    <div class="field"><input name="ip" id="ip" placeholder=" " required inputmode="decimal" autocomplete="off"><label for="ip">IP-Adresse, z. B. 192.168.178.50</label></div>
+    <div class="field"><input name="name" id="ipn" placeholder=" " autocomplete="off"><label for="ipn">Name (optional)</label></div>
+    <div class="actions"><button type="button" class="btn text" data-close>Abbrechen</button><button class="btn">Hinzufügen</button></div>
+  </form>
+</dialog>
+{% endblock %}

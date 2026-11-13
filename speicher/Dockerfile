@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
-# cloudy Speicher: Platten-Pool (mergerfs), Puffer-SSD und Backup nach Google Drive (rclone, normale Dateien, unverschlüsselt).
+# cloudy Speicher: Platten-Pool (mergerfs), Puffer-SSD, Backup nach Google Drive (rclone, unverschlüsselt),
+# Netzlaufwerk (Samba + wsdd) und Medienserver für Fernseher (minidlna).
 FROM python:3.12-slim-bookworm
 
 ARG TARGETARCH
@@ -8,13 +9,14 @@ ARG RCLONE_VERSION=1.68.2
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         mergerfs fuse3 util-linux e2fsprogs xfsprogs gdisk parted rsync smartmontools ca-certificates curl unzip \
+        samba wsdd minidlna passwd \
     && arch="${TARGETARCH:-$(dpkg --print-architecture)}" \
     && curl -fsSL -o /tmp/rclone.zip "https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-${arch}.zip" \
     && unzip -j /tmp/rclone.zip "*/rclone" -d /usr/local/bin \
     && chmod +x /usr/local/bin/rclone \
     && rm -f /tmp/rclone.zip \
     && apt-get purge -y curl unzip && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /var/lib/apt/lists/* /etc/samba/smb.conf \
     && rclone version | head -n1
 
 ENV PYTHONUNBUFFERED=1 \
