@@ -93,3 +93,17 @@ def secret(name: str, create: bool = False) -> str:
     value = secrets.token_urlsafe(32)
     write_private(path, value)
     return value
+
+
+def static_version() -> str:
+    """Kurzer Hash über alle statischen Dateien – hängt als ?v= an CSS/JS, damit der Browser nach Updates neu lädt."""
+    import hashlib
+    from pathlib import Path
+
+    h = hashlib.sha1()
+    for p in sorted((Path(__file__).parent / "static").glob("*.*")):
+        try:
+            h.update(p.name.encode() + p.read_bytes())
+        except OSError:
+            pass
+    return h.hexdigest()[:10]

@@ -25,11 +25,12 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, freigaben, mediathek, mediathek_db, mediathek_providers, medien, pakete, pool
+from . import auth, config, freigaben, mediathek, mediathek_db, mediathek_providers, medien, pakete, pool
 from .freigaben import Freigabe
 
 BASE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE / "templates"))
+templates.env.globals["static_v"] = config.static_version()
 COOKIE = "speicher_dateien"
 MAX_AGE = 30 * 86400
 CHUNK = 1024 * 1024

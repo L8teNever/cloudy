@@ -58,6 +58,7 @@ templates.env.filters["bytes"] = fmt_bytes
 templates.env.filters["zeit"] = fmt_time
 templates.env.filters["wann"] = fmt_rel
 templates.env.globals["pct"] = pct
+templates.env.globals["static_v"] = config.static_version()
 templates.env.globals["dateien_port"] = int(os.environ.get("DATEIEN_PORT", "8092") or 0)
 templates.env.globals["puffer_paths"] = lambda rollen: [p for p, r in rollen.items() if r == "puffer"]
 

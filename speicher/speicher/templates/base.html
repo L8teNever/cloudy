@@ -6,9 +6,9 @@
 <meta name="theme-color" content="#f4fbf8" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0e1513" media="(prefers-color-scheme: dark)">
 <title>{% block title %}Speicher{% endblock %} · Speicher</title>
-<link rel="stylesheet" href="/static/m3.css">
+<link rel="stylesheet" href="/static/m3.css?v={{ static_v }}">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='16' fill='%23006a60'/%3E%3Crect x='12' y='14' width='24' height='8' rx='4' fill='%239ef2e3'/%3E%3Crect x='12' y='26' width='24' height='8' rx='4' fill='%239ef2e3'/%3E%3C/svg%3E">
-<script src="/static/app.js" defer></script>
+<script src="/static/app.js?v={{ static_v }}" defer></script>
 </head>
 <body>
 {% block body %}

@@ -109,7 +109,14 @@
   };
   async function laden() {
     let d;
-    try { d = await (await fetch("/api/auslastung", { cache: "no-store" })).json(); } catch (_) { return; }
+    try {
+      const r = await fetch("/api/auslastung", { cache: "no-store", headers: { accept: "application/json" } });
+      if (!r.ok) throw new Error("Fehler " + r.status);
+      d = await r.json();
+    } catch (err) {
+      q("[data-hintergrund]").replaceChildren(zeile("error", "Auslastung nicht abrufbar", String(err.message || err), "", ""));
+      return;
+    }
     q('[data-wert="cpu"]').textContent = `${zahl(d.cpu)} %`;
     q('[data-balken="cpu"]').style.width = Math.min(100, d.cpu) + "%";
     const ramPct = d.ram_total ? (d.ram_benutzt / d.ram_total) * 100 : 0;
