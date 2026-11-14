@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, config, freigaben, mediathek, mediathek_db, mediathek_providers, medien, pakete, pool
+from . import anime_meta, auth, config, freigaben, jobs, mediathek, mediathek_db, mediathek_providers, medien, pakete, pool
 from .freigaben import Freigabe
 
 BASE = Path(__file__).parent
@@ -1174,6 +1174,7 @@ async def api_mediathek_delete_file(request: Request, file_id: int):
                 try:
                     p = mediathek.safe_pool_path(rel)
                     p.unlink(missing_ok=True)
+                    anime_meta.nach_loeschen(p)  # .nfo/Cover der Anime-Folge mit weg
                     # Leere Staffel-/Titelordner bis Streaming-Basis aufräumen
                     base = mediathek.safe_pool_path(cfg.streaming_ordner).resolve()
                     parent = p.parent.resolve()

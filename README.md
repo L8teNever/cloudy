@@ -271,6 +271,18 @@ ein paar Sekunden, und sie gehen nur, solange AniWorld/der Hoster sie hat. Wird 
 ersetzt die MP4 die `.strm`. Ändert sich die IP des Pi, passt der Speicher die Adressen beim nächsten Öffnen der Seite
 an. Liste und Entfernen: Reiter *Geladen → Live in Jellyfin*.
 
+**Infos und Cover für Jellyfin:** Neben jede Anime-Folge (live wie heruntergeladen) legt der Speicher eine `.nfo` mit
+Folgentitel, Staffel und Folge, pro Staffel eine `season.nfo` und pro Serie `tvshow.nfo` (Titel, Jahr, Beschreibung,
+Genres), `poster.jpg` (Cover) und `backdrop.jpg` (Hintergrund) von AniWorld. Ohne diese Dateien kennt Jellyfin bei
+`.strm` nur den Ordnernamen. Was fehlt (z. B. Vorschaubilder der Folgen), ergänzt Jellyfin wie gewohnt aus dem Internet.
+Live-Serien von vorher bekommen die Dateien beim nächsten Öffnen der Anime-Seite nachgetragen. Beim Löschen der letzten
+Folge verschwinden sie wieder.
+
+**Umrechnen in Jellyfin:** Der Speicher schaltet bei Intel/AMD das Umrechnen über die Grafikeinheit (VA-API) ein und
+testet es danach einmal mit einem echten Video (H.264 klein, ohne Kopieren). Klappt das nicht, stellt er Jellyfin auf
+den Prozessor um – sonst bricht jede Wiedergabe, die umgerechnet werden muss (typisch in Fernseh-Browsern), mit
+„Dieser Client ist nicht mit dem Medium kompatibel …“ ab. Ergebnis steht auf der Freigaben-Seite unter Jellyfin.
+
 ## FRITZ!Box-Steuerung & Topologie
 
 Unter dem Menüpunkt **FRITZ!Box** im Dashboard:

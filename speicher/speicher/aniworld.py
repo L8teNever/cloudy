@@ -235,6 +235,7 @@ def _serie(slug: str) -> dict:
     jahr = re.search(r'itemprop="startDate"[^>]*>.*?\b((?:19|20)\d{2})\b', doc, re.S)
     cover = re.search(r'<div class="seriesCoverBox">\s*<img[^>]*?(?:data-src|src)="(/public/img/cover/[^"]+)"', doc)
     besch = re.search(r'data-full-description="([^"]*)"', doc)
+    hinten = re.search(r'class="backdrop"[^>]*background-image:\s*url\(([^)"\']+)\)', doc)
     genres = [_text(g) for g in re.findall(r'<a[^>]*class="genreButton[^"]*"[^>]*>(.*?)</a>', doc, re.S)]
     staffeln = []
     for href, nr, film in re.findall(rf'href="(/anime/stream/{re.escape(slug)}/(?:staffel-(\d+)|(filme)))"', doc):
@@ -249,6 +250,7 @@ def _serie(slug: str) -> dict:
         "slug": slug, "titel": titel, "jahr": int(jahr.group(1)) if jahr else None,
         "cover": BASE + cover.group(1).replace("_150x225", "_220x330") if cover else "",
         "beschreibung": html.unescape(besch.group(1)).strip() if besch else "",
+        "hintergrund": urllib.parse.urljoin(BASE, hinten.group(1).strip()) if hinten else "",
         "genres": [g for g in dict.fromkeys(genres) if g and g.lower() not in ("ger", "gersub", "eng", "engsub")][:8], "staffeln": staffeln,
     }
 
@@ -428,7 +430,7 @@ def hinzufuegen(info: dict, folgen: list[dict], sprache: str) -> int:
                 continue
             _jobs.append({
                 "id": uuid.uuid4().hex[:12], "slug": info["slug"], "titel": info["titel"], "jahr": info.get("jahr"),
-                "cover": info.get("cover", ""), "beschreibung": (info.get("beschreibung") or "")[:1500],
+                "cover": info.get("cover", ""), "hintergrund": info.get("hintergrund", ""), "beschreibung": (info.get("beschreibung") or "")[:1500],
                 "genres": info.get("genres") or [], "staffel": int(f.get("staffel") or 0), "folge": int(f.get("nr") or 0),
                 "folgentitel": str(f.get("titel") or "")[:150], "pfad": pfad, "sprache": sprache,
                 "status": "wartet", "fortschritt": 0, "bytes": 0, "meldung": "", "erstellt": time.time(),
@@ -526,6 +528,7 @@ def _laden_job(j: dict) -> bool:
     dst = mediathek.safe_pool_path(rel)
     if dst.is_file() and dst.stat().st_size > 1024 * 1024:
         dst.with_suffix(".strm").unlink(missing_ok=True)  # Live-Version nicht doppelt in Jellyfin
+        _meta(j, dst)
         _eintragen(j, rel, dst)
         return False
     stream = folge_stream(j["pfad"], j["sprache"])
@@ -549,6 +552,7 @@ def _laden_job(j: dict) -> bool:
     os.replace(tmp, dst)
     mediathek._besitzer(dst)
     dst.with_suffix(".strm").unlink(missing_ok=True)  # war vorher live in Jellyfin → jetzt die Datei
+    _meta(j, dst)
     _eintragen(j, rel, dst)
     _set(j, meldung=f"Fertig · {dst.stat().st_size / 1e6:,.0f} MB".replace(",", "."))
     jobs.log(None, f"Anime geladen: {dst.name}")
@@ -599,6 +603,15 @@ def _ffmpeg(j: dict, url: str, referer: str, tmp: Path) -> str:
         return ""
     fehler = next((z for z in reversed(log) if z and not z.startswith(("Press", "frame="))), "")
     return f"Download fehlgeschlagen: {fehler[:200] or 'ffmpeg Code ' + str(p.returncode)}"
+
+
+def _meta(j: dict, dst: Path) -> None:
+    """Infos + Cover für Jellyfin neben die Folge legen (siehe anime_meta.py)."""
+    from . import anime_meta
+    info = {"slug": j["slug"], "titel": j["titel"], "jahr": j.get("jahr"), "cover": j.get("cover", ""),
+            "hintergrund": j.get("hintergrund", ""),
+            "beschreibung": j.get("beschreibung", ""), "genres": j.get("genres") or []}
+    anime_meta.fuer_folge(dst, info, int(j["staffel"]), int(j["folge"]), j.get("folgentitel", ""))
 
 
 def _eintragen(j: dict, rel: str, dst: Path) -> None:

@@ -206,6 +206,92 @@ def hardware_einrichten(token: str) -> str:
     return zugang()["hardware"]
 
 
+TEST_GERAET = "cloudy-umrechnen-test"
+
+
+def _testvideo(token: str):
+    """(Item-Id, MediaSource-Id) eines echten Videos auf der Platte – keine .strm (die hängen am Internet)."""
+    q = urllib.parse.urlencode({"Recursive": "true", "IncludeItemTypes": "Movie,Episode,Video", "Fields": "Path,MediaSources",
+                                "Limit": "100", "IsMissing": "false"})
+    for it in (_req("GET", f"/Items?{q}", token=token, timeout=30) or {}).get("Items") or []:
+        if (it.get("Path") or "").lower().endswith(".strm"):
+            continue
+        for ms in it.get("MediaSources") or []:
+            if ms.get("IsRemote") or (ms.get("Protocol") or "File") != "File":
+                continue
+            if any(st.get("Type") == "Video" for st in ms.get("MediaStreams") or []):
+                return it["Id"], ms["Id"]
+    return None
+
+
+def umrechnen_testen(token: str, video=None):
+    """Lässt Jellyfin ein Stück Video wirklich umrechnen (H.264 klein, kein Kopieren) – genau das, was Fernseher und
+    Browser brauchen, wenn sie die Datei nicht direkt abspielen können. True/False, None = kein Video zum Testen."""
+    video = video or _testvideo(token)
+    if not video:
+        return None
+    item, quelle = video
+    sitzung = secrets.token_hex(8)
+    q = urllib.parse.urlencode({
+        "MediaSourceId": quelle, "Static": "false", "VideoCodec": "h264", "AudioCodec": "aac", "MaxWidth": "640",
+        "MaxHeight": "360", "VideoBitrate": "500000", "AudioBitrate": "64000", "AudioChannels": "2",
+        "AllowVideoStreamCopy": "false", "AllowAudioStreamCopy": "false", "DeviceId": TEST_GERAET, "PlaySessionId": sitzung,
+    })
+    req = urllib.request.Request(f"{url()}/Videos/{item}/stream.ts?{q}")
+    auth = CLIENT + f', Token="{token}"'
+    req.add_header("Authorization", auth)
+    req.add_header("X-Emby-Authorization", auth)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    menge = 0
+    try:
+        with opener.open(req, timeout=90) as resp:
+            ende = time.time() + 90
+            while menge < 256 * 1024 and time.time() < ende:
+                stueck = resp.read(16384)
+                if not stueck:
+                    break
+                menge += len(stueck)
+    except (urllib.error.URLError, OSError):
+        pass
+    finally:
+        try:
+            _req("DELETE", "/Videos/ActiveEncodings?" + urllib.parse.urlencode({"deviceId": TEST_GERAET, "playSessionId": sitzung}),
+                 token=token)
+        except JellyfinFehler:
+            pass
+    return menge >= 32 * 1024
+
+
+def hardware_pruefen(token: str) -> None:
+    """Einmalig nach dem Einschalten: Klappt das Umrechnen über die Grafikeinheit wirklich? Wenn nicht, bricht in
+    Jellyfin jede Wiedergabe ab, die umgerechnet werden muss („Dieser Client ist nicht mit dem Medium kompatibel …“) –
+    besonders in Fernseh-Browsern, die vieles nicht direkt abspielen. Dann auf den Prozessor zurückschalten."""
+    z = zugang()
+    if z.get("hardware_geprueft") or not str(z.get("hardware", "")).endswith("(VA-API)"):
+        return
+    video = _testvideo(token)
+    if not video:
+        return  # noch kein Video da – beim nächsten Abgleich wieder
+    if umrechnen_testen(token, video):
+        _zugang_speichern(hardware_geprueft=True)
+        jobs.log(None, "Jellyfin: Umrechnen über die Grafikeinheit getestet – klappt")
+        return
+    enc = _req("GET", "/System/Configuration/encoding", token=token) or {}
+    vorher = dict(enc)
+    enc.update({"HardwareAccelerationType": "none", "EnableHardwareEncoding": False, "HardwareDecodingCodecs": []})
+    _req("POST", "/System/Configuration/encoding", enc, token=token)
+    if umrechnen_testen(token, video):
+        _zugang_speichern(hardware="keine", hardware_geprueft=True,
+                          hardware_hinweis=f"Die Grafikeinheit ({z['hardware'].split()[0]}) konnte nicht umrechnen – jetzt rechnet der Prozessor.")
+        jobs.log(None, "Jellyfin: Umrechnen über die Grafikeinheit klappte nicht – auf den Prozessor umgestellt")
+        return
+    # Auch der Prozessor schafft es nicht: Grafik-Einstellung lassen, Fehler zeigen.
+    _req("POST", "/System/Configuration/encoding", vorher, token=token)
+    _zugang_speichern(hardware_geprueft=True,
+                      hardware_hinweis="Umrechnen klappt in Jellyfin gerade gar nicht – Protokolle unter Dashboard → Protokolle (FFmpeg.Transcode).")
+    jobs.log(None, "Jellyfin: Umrechnen klappt weder über die Grafikeinheit noch über den Prozessor")
+
+
 def benutzer_setzen(name: str, passwort: str) -> None:
     """Jellyfin-Konto für einen Speicher-Benutzer anlegen bzw. sein Passwort setzen (still, wenn Jellyfin fehlt)."""
     if not zugang().get("passwort"):
@@ -267,7 +353,9 @@ def _abgleichen() -> None:
             from . import mediathek
             mediathek.filme_serien_trennen()
             mediatheken_abgleichen(_token())
-        hardware_einrichten(_token())
+        token = _token()
+        hardware_einrichten(token)
+        hardware_pruefen(token)
         if not zugang().get("umpacken_aus"):
             # Einmalig: Ab jetzt wandelt Jellyfin beim Abspielen um – nicht mehr alle Videos vorab umpacken.
             # (Wer es danach wieder einschaltet, behält es eingeschaltet.)
@@ -287,5 +375,5 @@ def status() -> dict:
         s = dict(_state)
     z = zugang()
     s.update(admin=z.get("admin", ADMIN) if z.get("passwort") else "", passwort=z.get("passwort", ""), port=port(),
-             hardware=z.get("hardware", ""))
+             hardware=z.get("hardware", ""), hardware_hinweis=z.get("hardware_hinweis", ""))
     return s

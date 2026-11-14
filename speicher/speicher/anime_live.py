@@ -28,7 +28,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import aniworld, config, freigaben, mediathek, mediathek_db
+from . import anime_meta, aniworld, config, freigaben, mediathek, mediathek_db
 
 CACHE_TTL = 20 * 60  # so lange gilt eine gefundene Stream-Adresse
 SEG_EXT = {"ts", "m4s", "mp4", "m4v", "aac", "m4a", "mp3", "vtt", "m3u8", "mkv", "mpegts"}
@@ -208,18 +208,17 @@ def anlegen(info: dict, folgen: list[dict], sprache: str) -> dict:
         j = {"titel": info["titel"], "jahr": info.get("jahr"), "staffel": int(f["staffel"]), "folge": int(f["nr"]),
              "folgentitel": str(f.get("titel") or "")[:150]}
         mp4 = mediathek.safe_pool_path(aniworld.ziel_rel(j))
-        if mp4.is_file():
-            vorhanden += 1
-            continue
         strm = mp4.with_suffix(".strm")
         inhalt = folge_url(info["slug"], j["staffel"], j["folge"], str(sprache)) + "\n"
-        if strm.is_file() and strm.read_text(errors="replace") == inhalt:
+        if mp4.is_file() or (strm.is_file() and strm.read_text(errors="replace") == inhalt):
+            anime_meta.fuer_folge(mp4 if mp4.is_file() else strm, info, j["staffel"], j["folge"], j["folgentitel"])
             vorhanden += 1
             continue
         strm.parent.mkdir(parents=True, exist_ok=True)
         mediathek._chown_tree(strm.parent, mediathek.pool_root())
         strm.write_text(inhalt)
         mediathek._besitzer(strm)
+        anime_meta.fuer_folge(strm, info, j["staffel"], j["folge"], j["folgentitel"])
         neu += 1
     if neu:
         aniworld.jellyfin_spaeter()
@@ -267,6 +266,7 @@ def entfernen(ordner: str) -> int:
     for _, p in list(_live_dateien()):
         if ziel in p.resolve().parents:
             p.unlink(missing_ok=True)
+            anime_meta.nach_loeschen(p)
             n += 1
     for d in sorted([d for d in ziel.rglob("*") if d.is_dir()], key=lambda d: len(d.parts), reverse=True) + [ziel]:
         try:
@@ -288,13 +288,26 @@ def reparieren() -> None:
         return
     _repariert = True
     jetzt = basis()
+    ohne_infos: dict[Path, str] = {}  # Serienordner → slug
     try:
-        for _, p in _live_dateien():
+        for root, p in _live_dateien():
             alt = p.read_text(errors="replace").strip()
-            if ZEILE_RE.match(alt) and not alt.startswith(jetzt + "/"):
+            m = ZEILE_RE.match(alt)
+            if m and not alt.startswith(jetzt + "/"):
                 p.write_text(jetzt + alt[alt.index("/live/"):] + "\n")
+            if m and not p.with_suffix(".nfo").exists():
+                ohne_infos.setdefault(root / p.relative_to(root).parts[0], m.group(1))
     except OSError:
         pass
+    # Live-Serien von vor den Infodateien: Cover/Beschreibung von AniWorld holen und .nfo nachtragen
+    n = 0
+    for ordner, slug in ohne_infos.items():
+        try:
+            n += anime_meta.nachtragen(ordner, aniworld.serie(slug))
+        except Exception:  # noqa: BLE001 – beim nächsten Start wieder
+            continue
+    if n:
+        aniworld.jellyfin_spaeter()
 
 
 def reparieren_im_hintergrund() -> None:
