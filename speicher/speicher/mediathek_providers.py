@@ -23,6 +23,7 @@ from .config import data_dir
 
 TIMEOUT = 10
 IMAGE_HOSTS = {
+    "aniworld.to",
     "image.tmdb.org",
     "media.themoviedb.org",
     "static.tvmaze.com",

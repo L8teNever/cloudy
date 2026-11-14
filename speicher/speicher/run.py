@@ -1,4 +1,4 @@
-"""Startet beide Webseiten im selben Prozess: Verwaltung (SPEICHER_PORT) und Dateien (DATEIEN_PORT, 0 = aus)."""
+"""Startet die Webseiten im selben Prozess: Verwaltung (SPEICHER_PORT), Dateien (DATEIEN_PORT) und Anime (ANIME_PORT; 0 = aus)."""
 import asyncio
 import os
 
@@ -13,6 +13,12 @@ async def main() -> None:
         # Die Regeln pro Gerät hängen an der echten IP. X-Forwarded-For zählt nur von 127.0.0.1 (cloudy leitet
         # eigene Domains so weiter, Standard von uvicorn: forwarded_allow_ips=127.0.0.1) – Geräte können nichts vortäuschen.
         servers.append(uvicorn.Server(uvicorn.Config("speicher.dateien:app", port=dateien_port, host="0.0.0.0",
+                                                     server_header=False, proxy_headers=True, forwarded_allow_ips="127.0.0.1",
+                                                     lifespan="off")))
+    anime_port = int(os.environ.get("ANIME_PORT", "8093") or 0)
+    if anime_port:
+        # Anime-Seite als eigene Webseite; X-Forwarded-For wie bei den Dateien nur von cloudy (127.0.0.1).
+        servers.append(uvicorn.Server(uvicorn.Config("speicher.anime_web:app", port=anime_port, host="0.0.0.0",
                                                      server_header=False, proxy_headers=True, forwarded_allow_ips="127.0.0.1",
                                                      lifespan="off")))
     tasks = [asyncio.create_task(s.serve()) for s in servers]

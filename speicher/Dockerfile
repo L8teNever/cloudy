@@ -25,7 +25,8 @@ ENV PYTHONUNBUFFERED=1 \
     MOUNT_ROOT=/mnt/cloudy \
     HOST_PROC=/host/proc \
     SPEICHER_PORT=8091 \
-    DATEIEN_PORT=8092
+    DATEIEN_PORT=8092 \
+    ANIME_PORT=8093
 
 WORKDIR /srv
 COPY requirements.txt .

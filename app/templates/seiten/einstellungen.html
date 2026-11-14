@@ -160,6 +160,30 @@
       </div>
 
       <div class="field-group">
+        <div class="fg-title">Anime</div>
+        <div class="fg-hint">Anime auf AniWorld suchen, für Jellyfin laden und die geladenen Folgen ansehen (Container <code>cloudy-speicher</code>, sonst Port 8093). Nur im Heimnetz, es gelten die Regeln der Freigaben pro Gerät.</div>
+        <div id="anime-domains" style="display:grid;gap:.35rem">
+          {% for d in ld.anime or [''] %}
+          <div class="field-row"><input name="anime" data-keep autocomplete="off" value="{{ d }}" placeholder="anime.kulbarts.com"></div>
+          {% endfor %}
+        </div>
+        <button type="button" class="secondary add-btn" onclick="document.getElementById('anime-domains').append(document.getElementById('tpl-anime').content.cloneNode(true))">+ weitere</button>
+        <template id="tpl-anime"><div class="field-row"><input name="anime" data-keep autocomplete="off" placeholder="anime.kulbarts.com"></div></template>
+      </div>
+
+      <div class="field-group">
+        <div class="fg-title">Jellyfin</div>
+        <div class="fg-hint">Filme und Serien im Browser (Container <code>cloudy-jellyfin</code>, sonst Port 8096). Nur im Heimnetz, mit Jellyfin-Anmeldung.</div>
+        <div id="jellyfin-domains" style="display:grid;gap:.35rem">
+          {% for d in ld.jellyfin or [''] %}
+          <div class="field-row"><input name="jellyfin" data-keep autocomplete="off" value="{{ d }}" placeholder="jellyfin.kulbarts.com"></div>
+          {% endfor %}
+        </div>
+        <button type="button" class="secondary add-btn" onclick="document.getElementById('jellyfin-domains').append(document.getElementById('tpl-jellyfin').content.cloneNode(true))">+ weitere</button>
+        <template id="tpl-jellyfin"><div class="field-row"><input name="jellyfin" data-keep autocomplete="off" placeholder="jellyfin.kulbarts.com"></div></template>
+      </div>
+
+      <div class="field-group">
         <div class="fg-title">Ganzes Dashboard</div>
         <div class="fg-hint">Wie <code>{{ local }}</code> – mit Passwort, alle Seiten.</div>
         <div id="dash-domains" style="display:grid;gap:.35rem">

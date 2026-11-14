@@ -4,7 +4,7 @@
 <main class="login">
   <div class="card">
     <div class="shape cookie primary"><span class="ms">lock</span></div>
-    <h1 class="headline">Dateien</h1>
+    <h1 class="headline">{{ app_name|default("Dateien") }}</h1>
     <p class="variant body-m" style="margin:8px 0 28px">Melde dich mit deinem Benutzer vom Netzlaufwerk an. Dein Windows-Name oder deine Microsoft-E-Mail geht auch.</p>
     <form method="post" action="/login">
       <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="weiter" value="{{ weiter }}">

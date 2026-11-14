@@ -1,4 +1,4 @@
-{% extends "dateien_base.html" %}
+{% extends basis|default("dateien_base.html") %}
 {% block title %}Hinweis{% endblock %}
 {% block content %}
 <div class="card empty" style="margin-top:48px">

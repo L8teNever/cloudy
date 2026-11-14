@@ -214,7 +214,8 @@ async def static_cache_middleware(request: Request, call_next):
 async def redirect_middleware(request: Request, call_next):
     raw_host = request.headers.get("host", "").split(":")[0].strip().lower()
     settings = getattr(request.app.state, "settings", None)
-    mein_hosts, dash_hosts, hub_hosts, block_hosts, switch_hosts, karte_hosts, speicher_hosts, dateien_hosts = await run_in_threadpool(
+    (mein_hosts, dash_hosts, hub_hosts, block_hosts, switch_hosts, karte_hosts, speicher_hosts, dateien_hosts,
+     anime_hosts, jellyfin_hosts) = await run_in_threadpool(
         lambda: (
             localdomain.mein_domains(),
             localdomain.dashboard_domains(),
@@ -224,9 +225,13 @@ async def redirect_middleware(request: Request, call_next):
             localdomain.karte_domains(),
             localdomain.speicher_domains(),
             localdomain.dateien_domains(),
+            localdomain.anime_domains(),
+            localdomain.jellyfin_domains(),
         )
     )
-    if raw_host in speicher_hosts or raw_host in dateien_hosts:
+    weiter_art = ("speicher" if raw_host in speicher_hosts else "dateien" if raw_host in dateien_hosts
+                  else "anime" if raw_host in anime_hosts else "jellyfin" if raw_host in jellyfin_hosts else "")
+    if weiter_art:
         # Speicher-Container unter eigener Domain: cloudy reicht alles durch (eigene Anmeldung im Speicher).
         if request.url.scheme == "http" and settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
             port = "" if settings.https_port == 443 else f":{settings.https_port}"
@@ -234,7 +239,7 @@ async def redirect_middleware(request: Request, call_next):
                 f"https://{raw_host}{port}{request.url.path}" + (f"?{request.url.query}" if request.url.query else ""),
                 status_code=307,  # 307: Hochladen (PUT/POST) bleibt beim Umleiten erhalten
             )
-        return await speicherproxy.forward(request, "dateien" if raw_host in dateien_hosts else "speicher")
+        return await speicherproxy.forward(request, weiter_art)
     if raw_host in dash_hosts and request.url.scheme == "http":
         # Dashboard unter der eigenen Domain: Passwort und Daten nur verschlüsselt, sobald das Zertifikat da ist.
         if settings and settings.https_port and await run_in_threadpool(localdomain.sni_pair, settings, raw_host):
@@ -344,6 +349,8 @@ async def redirect_middleware(request: Request, call_next):
     own_hosts.update(karte_hosts)
     own_hosts.update(speicher_hosts)
     own_hosts.update(dateien_hosts)
+    own_hosts.update(anime_hosts)
+    own_hosts.update(jellyfin_hosts)
     if settings:
         own_hosts.add(settings.pi_ip.lower())
         if settings.local_name:
@@ -1349,6 +1356,8 @@ async def lokale_domain_set(
     karte: list[str] = Form(default=[]),
     speicher: list[str] = Form(default=[]),
     dateien: list[str] = Form(default=[]),
+    anime: list[str] = Form(default=[]),
+    jellyfin: list[str] = Form(default=[]),
     ha_url: str = Form(""),
     cf_token: str = Form(""),
     email: str = Form(""),
@@ -1363,6 +1372,8 @@ async def lokale_domain_set(
         karten = [localdomain.normalize_domain(n) for n in karte if n.strip()]
         speicher_d = [localdomain.normalize_domain(n) for n in speicher if n.strip()]
         dateien_d = [localdomain.normalize_domain(n) for n in dateien if n.strip()]
+        anime_d = [localdomain.normalize_domain(n) for n in anime if n.strip()]
+        jellyfin_d = [localdomain.normalize_domain(n) for n in jellyfin if n.strip()]
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     mein = list(dict.fromkeys(mein))
@@ -1373,12 +1384,15 @@ async def lokale_domain_set(
     karten = list(dict.fromkeys(karten))
     speicher_d = list(dict.fromkeys(speicher_d))
     dateien_d = list(dict.fromkeys(dateien_d))
-    groups = [set(mein), set(dash), set(hubs), set(blocks), set(switches), set(karten), set(speicher_d), set(dateien_d)]
+    anime_d = list(dict.fromkeys(anime_d))
+    jellyfin_d = list(dict.fromkeys(jellyfin_d))
+    groups = [set(mein), set(dash), set(hubs), set(blocks), set(switches), set(karten), set(speicher_d), set(dateien_d),
+              set(anime_d), set(jellyfin_d)]
     overlap = {n for i, a in enumerate(groups) for b in groups[i + 1:] for n in a & b}
     if overlap:
         raise HTTPException(
             status_code=400,
-            detail=f"Dashboard, Hub, Sperrseite, Wechselseite, 3D-Karte, Speicher, Dateien und „Mein Gerät“ brauchen verschiedene Namen ({', '.join(sorted(overlap))})",
+            detail=f"Dashboard, Hub, Sperrseite, Wechselseite, 3D-Karte, Speicher, Dateien, Anime, Jellyfin und „Mein Gerät“ brauchen verschiedene Namen ({', '.join(sorted(overlap))})",
         )
     cf_token = cf_token.strip()
     if cf_token and (len(cf_token) > 512 or any(ch.isspace() for ch in cf_token)):
@@ -1397,6 +1411,8 @@ async def lokale_domain_set(
     await run_in_threadpool(localdomain.set_karte_domains, karten)
     await run_in_threadpool(localdomain.set_speicher_domains, speicher_d)
     await run_in_threadpool(localdomain.set_dateien_domains, dateien_d)
+    await run_in_threadpool(localdomain.set_anime_domains, anime_d)
+    await run_in_threadpool(localdomain.set_jellyfin_domains, jellyfin_d)
     await run_in_threadpool(fernzugriff.sync_local)  # von außen erreichbare Namen bleiben bei ihrer Seite
     await run_in_threadpool(db.set_setting, localdomain.HA_URL_KEY, ha)
     await run_in_threadpool(db.set_setting, localdomain.EMAIL_KEY, email)

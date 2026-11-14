@@ -1,0 +1,131 @@
+{% extends "anime_base.html" %}
+
+{% block content %}
+<header class="appbar">
+  <div style="min-width:0">
+    <h1 class="display">Anime</h1>
+    <p class="variant">Auf AniWorld suchen und direkt in die Mediathek laden – Jellyfin zeigt sie dann unter „Serien“.</p>
+  </div>
+  <div class="files-actions">
+    <span class="chip" id="browser-chip" title="Womit die Seiten geholt werden"><span class="ms">public</span>…</span>
+  </div>
+</header>
+
+{% if not pool_da %}
+<div class="danger-box"><span class="ms">error</span><span class="body-m">Der Speicher ist gerade nicht eingehängt. Suchen geht, Downloads warten solange.</span></div>
+{% endif %}
+
+<div class="segmented" id="ani-tabs" role="tablist">
+  <label><input type="radio" name="ani-tab" value="suche" checked><span><span class="ms">search</span>Suchen</span></label>
+  <label><input type="radio" name="ani-tab" value="downloads"><span><span class="ms">download</span>Downloads <b id="dl-count"></b></span></label>
+  <label><input type="radio" name="ani-tab" value="geladen"><span><span class="ms">video_library</span>Geladen</span></label>
+</div>
+
+<div data-tab="downloads" hidden>
+<div class="card empty" id="dl-empty">
+  <div class="shape cookie tertiary"><span class="ms">download_done</span></div>
+  <p class="title-m">Gerade lädt nichts</p>
+  <p class="body-m">Such einen Anime und tippe auf „Laden“. Die Liste läuft auf dem Server weiter, auch wenn du die Seite zumachst.</p>
+</div>
+<section class="card high" id="dl-box" hidden>
+  <div class="card-head">
+    <div class="shape round primary"><span class="ms">download</span></div>
+    <span class="title-m" style="flex:1" id="dl-head">Downloads</span>
+    <button type="button" class="btn text" id="dl-retry" hidden><span class="ms">refresh</span>Fehler wiederholen</button>
+    <button type="button" class="btn text" id="dl-clear"><span class="ms">clear_all</span>Fertige ausblenden</button>
+  </div>
+  <div id="dl-list"></div>
+</section>
+</div>
+
+<div data-tab="geladen" hidden>
+  <div id="lib-status" class="body-m variant" style="margin:0 0 12px"></div>
+  <div id="lib-list" style="display:grid;gap:12px"></div>
+  <div id="live-box" hidden>
+    <h2 class="title-l" style="margin:24px 0 4px">Live in Jellyfin</h2>
+    <p class="body-m variant" style="margin:0 0 12px">Ohne Datei – Jellyfin holt die Folgen beim Abspielen von AniWorld.</p>
+    <div id="live-list" style="display:grid;gap:8px"></div>
+  </div>
+</div>
+
+<div data-tab="suche">
+
+<div class="media-search-bar">
+  <div class="search">
+    <span class="ms">search</span>
+    <input type="search" id="ani-search" placeholder="Anime suchen, z. B. One Piece …" autocomplete="off">
+  </div>
+</div>
+
+<div id="ani-status" class="body-m variant" style="margin:0 0 12px" hidden></div>
+<div id="ani-grid" class="poster-grid"></div>
+
+<div id="ani-empty" class="card empty">
+  <div class="shape cookie tertiary"><span class="ms">animation</span></div>
+  <p class="title-m">Such oben nach einem Anime</p>
+  <p class="body-m">Dann Sprache und Staffeln wählen und auf „Laden“ tippen. Die Folgen landen fertig benannt in
+    <b>{{ cfg.streaming_ordner }}/Serien</b>.</p>
+</div>
+
+</div>
+
+<dialog id="dlg-play" class="sheet-dlg" aria-labelledby="play-title">
+  <div class="sheet-body">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <h2 class="title-l" id="play-title" style="flex:1;margin:0"></h2>
+      <button type="button" class="icon-btn" data-close aria-label="Schließen"><span class="ms">close</span></button>
+    </div>
+    <video id="play-video" controls playsinline preload="metadata" style="width:100%;max-height:70vh;border-radius:12px;background:#000"></video>
+  </div>
+</dialog>
+
+<dialog id="dlg-anime" class="sheet-dlg" aria-labelledby="ani-title">
+  <div class="sheet-hero">
+    <img class="sheet-bg" id="ani-bg" alt="" hidden>
+    <button type="button" class="icon-btn sheet-close" data-close aria-label="Schließen"><span class="ms">close</span></button>
+    <div class="sheet-head">
+      <div class="sheet-poster" id="ani-poster"><span class="ms ph">animation</span></div>
+      <div style="flex:1;min-width:0">
+        <div id="ani-badges" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>
+        <h2 class="headline" id="ani-title" style="text-align:left;margin:0 0 6px;font-size:26px;line-height:32px"></h2>
+        <p class="body-m variant" id="ani-sub" style="margin:0"></p>
+      </div>
+    </div>
+  </div>
+  <div class="sheet-body">
+    <p class="body-m" id="ani-desc" style="margin:0 0 16px;max-height:9em;overflow:auto"></p>
+
+    <h3 class="title-m" style="margin:0 0 8px">Sprache</h3>
+    <div class="filter-row" id="ani-langs">
+      <button type="button" class="pill active" data-lang="1">Deutsch</button>
+      <button type="button" class="pill" data-lang="3">Ger-Sub</button>
+      <button type="button" class="pill" data-lang="2">Eng-Sub</button>
+    </div>
+
+    {% if can_write %}
+    <h3 class="title-m" style="margin:0 0 8px">Wie?</h3>
+    <div class="filter-row" id="ani-modus">
+      <button type="button" class="pill active" data-modus="laden" title="Datei kommt auf den Speicher – geht auch, wenn AniWorld weg ist"><span class="ms">download</span>Herunterladen</button>
+      <button type="button" class="pill" data-modus="live" title="Nur ein Verweis – Jellyfin holt die Folge beim Abspielen live von AniWorld, braucht keinen Platz"><span class="ms">live_tv</span>Live in Jellyfin</button>
+    </div>
+    <p class="body-s variant" id="ani-modus-hint" style="margin:-4px 0 12px" hidden>Live: Die Folgen stehen gleich in Jellyfin, belegen keinen Platz und werden erst beim Abspielen von AniWorld geholt (Start dauert ein paar Sekunden).</p>
+    {% endif %}
+
+    <h3 class="title-m" style="margin:0 0 8px">Staffel</h3>
+    <div class="filter-row" id="ani-seasons"></div>
+
+    <div class="actions start" style="margin:0 0 12px">
+      {% if can_write %}
+      <button type="button" class="btn" id="ani-load-season" disabled><span class="ms">download</span>Ganze Staffel laden</button>
+      <button type="button" class="btn tonal" id="ani-load-picked" disabled><span class="ms">playlist_add_check</span>Ausgewählte laden</button>
+      <button type="button" class="btn outlined" id="ani-load-all" disabled><span class="ms">download_for_offline</span>Alles laden</button>
+      {% else %}
+      <span class="body-m variant">Nur zum Ansehen freigegeben – Laden geht nicht.</span>
+      {% endif %}
+    </div>
+    <div id="ani-episodes"></div>
+  </div>
+</dialog>
+
+<script src="/static/anime.js?v={{ static_v }}" defer></script>
+{% endblock %}

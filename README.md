@@ -246,6 +246,31 @@ volumes:
 Leere Einhängepunkte sind schreibgeschützt (`chattr +i`): Ist der Pool nicht da, landet nichts aus Versehen auf der
 Systemplatte. Docker-Daten und Datenbanken gehören nicht in den Pool.
 
+### Anime-Seite (AniWorld → Jellyfin)
+
+Eigene Webseite auf Port 8093 (`ANIME_PORT`, 0 = aus). Unter *Einstellungen → Lokale Domain* kann man ihr – wie
+Jellyfin – eine eigene Domain geben (z. B. `anime.cloudy.lan`); beide sind **nur im Heimnetz** erreichbar, nicht über
+den Cloudflare-Fernzugriff. Reiter **Suchen**: Anime auf AniWorld suchen, Sprache (Deutsch, Ger-Sub, Eng-Sub) und
+Staffel wählen, dann *Ganze Staffel laden*, *Ausgewählte laden* oder *Alles laden*. Reiter **Downloads**: Warteschlange
+live mit Fortschritt, Abbrechen und Wiederholen (läuft auf dem Server weiter, auch nach Neuladen). Reiter **Geladen**:
+fertige Anime mit Staffeln und Folgen, im Browser abspielen oder löschen. Der Speicher holt die
+Stream-Adresse wie das Addon NINA-AniWorld (Hoster-Link → VOE entschlüsseln) und lädt die Folge mit ffmpeg ohne
+Umwandeln als MP4 nach `Streaming/Serien/<Titel (Jahr)>/Staffel N/<Titel> - S01E01 - <Folgentitel>.mp4` (Filme als
+`Staffel 0`/`S00Exx`). Danach steht sie in der Mediathek und Jellyfin liest neu ein.
+
+Die Seiten holt ein **digitaler Browser** (Container `cloudy-browser`, Chromium ohne Bildschirm, nur auf
+`127.0.0.1:9222`), so wie bei Redswipe. Ist er nicht da, lädt der Speicher die Seiten direkt. Oben rechts zeigt die Seite,
+was gerade benutzt wird. Gleichzeitige Downloads: `ANIME_PARALLEL` in `.env` (Standard 2). Die Warteschlange übersteht
+Neustarts (`data/speicher/anime_downloads.json`).
+
+**Live in Jellyfin (ohne Download):** Im Anime-Fenster bei *Wie?* „Live in Jellyfin“ wählen. Statt einer MP4 legt der
+Speicher pro Folge eine `.strm`-Datei mit gleichem Namen an. Darin steht nur eine signierte Adresse zur Anime-Seite
+(`http://<Pi>:8093/live/…m3u8`). Erst beim Abspielen sucht die Anime-Seite den Stream bei AniWorld/VOE und reicht die
+HLS-Playlist samt Teilen (mit Referer/User-Agent) an Jellyfin durch. Die Folgen belegen keinen Platz, der Start dauert
+ein paar Sekunden, und sie gehen nur, solange AniWorld/der Hoster sie hat. Wird eine Folge später heruntergeladen,
+ersetzt die MP4 die `.strm`. Ändert sich die IP des Pi, passt der Speicher die Adressen beim nächsten Öffnen der Seite
+an. Liste und Entfernen: Reiter *Geladen → Live in Jellyfin*.
+
 ## FRITZ!Box-Steuerung & Topologie
 
 Unter dem Menüpunkt **FRITZ!Box** im Dashboard:
