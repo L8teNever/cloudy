@@ -94,8 +94,8 @@ def test_episode_filename_parser():
 def test_target_paths_und_sanitization(env):
     movie = {"type": "movie", "name": "Spider-Man: No Way Home?", "year": 2021}
     rel, folder = mediathek.streaming_target_rel(movie)
-    assert rel == "Streaming/Spider-Man No Way Home (2021)/Spider-Man No Way Home (2021).mp4"
-    assert folder == "Streaming/Spider-Man No Way Home (2021)"
+    assert rel == "Streaming/Filme/Spider-Man No Way Home (2021)/Spider-Man No Way Home (2021).mp4"
+    assert folder == "Streaming/Filme/Spider-Man No Way Home (2021)"
 
     show = {
         "type": "show",
@@ -104,8 +104,8 @@ def test_target_paths_und_sanitization(env):
         "episodes": [{"season": 1, "number": 2, "title": "Lügen"}],
     }
     srel, sfolder = mediathek.streaming_target_rel(show, season=1, episode=2)
-    assert srel == "Streaming/Dark (2017)/Staffel 1/Dark - S01E02 - Lügen.mp4"
-    assert sfolder == "Streaming/Dark (2017)/Staffel 1"
+    assert srel == "Streaming/Serien/Dark (2017)/Staffel 1/Dark - S01E02 - Lügen.mp4"
+    assert sfolder == "Streaming/Serien/Dark (2017)/Staffel 1"
 
 
 def test_providers_suche_und_details_de(monkeypatch):
@@ -158,7 +158,7 @@ def test_streaming_upload_konvertierung_und_rohdatei_loeschung(web, env, monkeyp
     assert r.status_code == 200
     d = r.json()
     assert d["status"] == "bereit"
-    target = env / "Streaming" / "Mein Film (2024)" / "Mein Film (2024).mp4"
+    target = env / "Streaming" / "Filme" / "Mein Film (2024)" / "Mein Film (2024).mp4"
     assert target.is_file()
     assert not list(target.parent.glob("*.raw-*"))
 
@@ -184,7 +184,7 @@ def test_streaming_upload_konvertierung_und_rohdatei_loeschung(web, env, monkeyp
     assert r2.status_code == 200
     d2 = r2.json()
     assert d2["status"] == "umwandlung"
-    ep_target = env / "Streaming" / "Meine Serie" / "Staffel 1" / "Meine Serie - S01E02 - Pilot.mp4"
+    ep_target = env / "Streaming" / "Serien" / "Meine Serie" / "Staffel 1" / "Meine Serie - S01E02 - Pilot.mp4"
     assert not ep_target.exists()
     assert len(list(ep_target.parent.glob("*.raw-*.mkv"))) == 1
 
@@ -342,3 +342,17 @@ def test_medien_upload_einstellungen_und_loeschen(web, env, monkeypatch):
     assert not (env / up["rel_pfad"]).exists()
     assert mediathek_db.get_file(up["file_id"]) is None
 
+
+
+def test_filme_serien_trennen_zieht_alte_titel_um(env):
+    from speicher import mediathek_db
+
+    alt = env / "Streaming" / "Alter Film (2020)"
+    alt.mkdir(parents=True)
+    (alt / "Alter Film (2020).mp4").write_bytes(b"x")
+    tid = mediathek_db.upsert_title({"ref": "tmdb:movie:1", "provider": "tmdb", "type": "movie", "name": "Alter Film", "year": 2020})
+    fid = mediathek_db.register_file(tid, "Streaming/Alter Film (2020)/Alter Film (2020).mp4")
+    assert mediathek.filme_serien_trennen() == 1
+    assert (env / "Streaming" / "Filme" / "Alter Film (2020)" / "Alter Film (2020).mp4").is_file()
+    assert mediathek_db.get_file(fid)["rel_pfad"] == "Streaming/Filme/Alter Film (2020)/Alter Film (2020).mp4"
+    assert mediathek.filme_serien_trennen() == 0  # schon erledigt

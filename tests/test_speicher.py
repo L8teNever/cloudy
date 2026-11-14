@@ -407,3 +407,44 @@ def test_hintergrund_regel_und_messen(tmp_path, monkeypatch):
     last.messen()
     w = last.messen()
     assert 0 <= w["cpu"] <= 100 and w["ram_total"] > 0
+
+
+def test_jellyfin_einrichtung_ablauf(tmp_path, monkeypatch):
+    from speicher import jellyfin, pool as pl
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MOUNT_ROOT", str(tmp_path / "mnt"))
+    (tmp_path / "data").mkdir()
+    root = pl.paths()["pool"]
+    root.mkdir(parents=True)
+    monkeypatch.setattr(pl, "mounts", lambda: {str(root): "fuse.mergerfs"})
+    fg.Einstellungen(benutzer=["simon"], freigaben=[fg.Freigabe("Familie", "Familie", dlna=True)]).save()
+    aufrufe = []
+    libs = []
+    fertig = []
+
+    def fake(method, path, body=None, token="", timeout=15):
+        aufrufe.append((method, path.split("?")[0]))
+        if path == "/Startup/Complete":
+            fertig.append(True)
+        if path == "/System/Info/Public":
+            return {"Version": "10.10", "StartupWizardCompleted": bool(fertig)}
+        if path == "/Users/AuthenticateByName":
+            return {"AccessToken": "tok"}
+        if path == "/Library/VirtualFolders" and method == "GET":
+            return [{"Name": n} for n in libs]
+        if path.startswith("/Library/VirtualFolders?"):
+            libs.append(path.split("name=")[1].split("&")[0])
+        return None
+
+    monkeypatch.setattr(jellyfin, "_req", fake)
+    jellyfin.abgleichen()
+    s = jellyfin.status()
+    assert s["eingerichtet"] and s["passwort"] and s["admin"] == "admin"
+    assert ("POST", "/Startup/Complete") in aufrufe
+    assert libs == ["Filme", "Serien", "Familie"]
+    assert (root / "Streaming" / "Filme").is_dir()
+    assert not fg.Einstellungen.load().videos_optimieren  # einmalig aus, Jellyfin wandelt beim Abspielen um
+    aufrufe.clear()
+    jellyfin.abgleichen()  # zweites Mal: nichts neu
+    assert ("POST", "/Startup/Complete") not in aufrufe and libs == ["Filme", "Serien", "Familie"]

@@ -62,6 +62,10 @@ def safe_pool_path(rel_pfad: str) -> Path:
     return target
 
 
+FILME = "Filme"
+SERIEN = "Serien"
+
+
 def streaming_target_rel(
     meta: dict,
     season: int | None = None,
@@ -75,7 +79,7 @@ def streaming_target_rel(
     year = meta.get("year")
     folder_title = f"{title_clean} ({year})" if year else title_clean
     if meta.get("type") == "movie":
-        folder_rel = f"{base}/{folder_title}"
+        folder_rel = f"{base}/{FILME}/{folder_title}"
         return f"{folder_rel}/{folder_title}.mp4", folder_rel
 
     s = max(1, int(season or 1))
@@ -91,8 +95,46 @@ def streaming_target_rel(
         fname = f"{title_clean} - S{s:02d}E{ep:02d} - {ep_clean}.mp4"
     else:
         fname = f"{title_clean} - S{s:02d}E{ep:02d}.mp4"
-    folder_rel = f"{base}/{folder_title}/Staffel {s}"
+    folder_rel = f"{base}/{SERIEN}/{folder_title}/Staffel {s}"
     return f"{folder_rel}/{fname}", folder_rel
+
+
+def filme_serien_trennen() -> int:
+    """Alte Ablage Streaming/<Titel> in Streaming/Filme/<Titel> bzw. Streaming/Serien/<Titel> umziehen
+    (Jellyfin braucht Filme und Serien in getrennten Ordnern). Gibt die Zahl umgezogener Titel zurück."""
+    if not pool_mounted():
+        return 0
+    base = (Einstellungen.load().streaming_ordner or "Streaming").strip("/")
+    root = pool_root()
+    umgezogen = 0
+    with mediathek_db.db() as conn:
+        rows = conn.execute(
+            "SELECT d.id, d.rel_pfad, d.roh_pfad, d.status, t.typ FROM dateien d JOIN titel t ON t.id = d.titel_id").fetchall()
+        ordner: dict[str, str] = {}  # alter Titelordner -> Unterordner
+        beschaeftigt: set[str] = set()
+        for r in rows:
+            teile = r["rel_pfad"].split("/")
+            if len(teile) < 3 or teile[0] != base or teile[1] in (FILME, SERIEN):
+                continue
+            ordner[teile[1]] = FILME if r["typ"] == "movie" else SERIEN
+            if r["status"] == "umwandlung":
+                beschaeftigt.add(teile[1])
+        for titel, unter in ordner.items():
+            if titel in beschaeftigt:
+                continue  # nach der Umwandlung beim nächsten Mal
+            alt, neu = root / base / titel, root / base / unter / titel
+            if not alt.is_dir() or neu.exists():
+                continue
+            neu.parent.mkdir(parents=True, exist_ok=True)
+            _besitzer(neu.parent)
+            os.rename(alt, neu)
+            alt_pre, neu_pre = f"{base}/{titel}/", f"{base}/{unter}/{titel}/"
+            for spalte in ("rel_pfad", "roh_pfad"):
+                conn.execute(
+                    f"UPDATE dateien SET {spalte} = ? || substr({spalte}, ?) WHERE {spalte} LIKE ? ESCAPE '\\'",
+                    (neu_pre, len(alt_pre) + 1, alt_pre.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"))
+            umgezogen += 1
+    return umgezogen
 
 
 def personal_video_target_rel(filename: str) -> str:

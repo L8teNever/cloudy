@@ -133,6 +133,33 @@ services:
           propagation: rshared
           create_host_path: true
 
+  # Medienserver: Filme, Serien und Videos auf Fernseher, Handy und Browser. Wandelt nur beim Abspielen um.
+  # Richtet sich über den Speicher von selbst ein (Freigaben-Seite zeigt Adresse und Zugang).
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: cloudy-jellyfin
+    restart: unless-stopped
+    # Host-Netz: Apps und Fernseher finden den Server im Heimnetz (Port 8096, Suche per UDP 7359).
+    network_mode: host
+    # Nachrang wie der Speicher: cloudy und Home Assistant bleiben flüssig.
+    cpu_shares: 512
+    blkio_config:
+      weight: 200
+    oom_score_adj: 400
+    environment:
+      TZ: Europe/Berlin
+    volumes:
+      - ./data/jellyfin/config:/config
+      - ./data/jellyfin/cache:/cache
+      # Pool nur lesend; rslave, damit Jellyfin den Pool sieht, auch wenn der Speicher ihn erst später einhängt.
+      - type: bind
+        source: /mnt/cloudy
+        target: /mnt/cloudy
+        read_only: true
+        bind:
+          propagation: rslave
+          create_host_path: true
+
 networks:
   cloudy-warp:
     name: cloudy-warp

@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, backup, config, disks, freigaben, jobs, last, medien, pool
+from . import auth, backup, config, disks, freigaben, jellyfin, jobs, last, medien, pool
 from .config import Config
 
 BASE = Path(__file__).parent
@@ -67,7 +67,14 @@ templates.env.globals["puffer_paths"] = lambda rollen: [p for p, r in rollen.ite
 
 def scheduler() -> None:
     letzter_abgleich = 0.0
+    letzter_jellyfin = 0.0
     while not _stop.wait(30):
+        if time.time() - letzter_jellyfin > 300 or (not jellyfin.status()["eingerichtet"] and time.time() - letzter_jellyfin > 60):
+            letzter_jellyfin = time.time()
+            try:
+                jellyfin.abgleichen()
+            except Exception as exc:  # noqa: BLE001
+                jobs.log(None, f"Jellyfin: {exc}")
         if time.time() - letzter_abgleich > 55:
             letzter_abgleich = time.time()
             try:
@@ -541,7 +548,7 @@ def _freigaben_data() -> dict:
         "fe": e, "geraete": geraete, "cloudy_fehler": fehler, "server_ip": _server_ip(),
         "smb_laeuft": d.laeuft("smbd"), "dlna_laeuft": d.laeuft("minidlna"), "dienst_fehler": d.fehler,
         "medien": medien.status(), "regel_text": freigaben.REGEL_TEXT, "pool_da": pool.status()["pool"].mounted,
-        "recht_text": freigaben.RECHTE_TEXT, "anmelde_url": freigaben.anmelde_url(e),
+        "recht_text": freigaben.RECHTE_TEXT, "anmelde_url": freigaben.anmelde_url(e), "jellyfin": jellyfin.status(),
         "anmelde_freigabe": freigaben.ANMELDE_FREIGABE, "anmelde_datei": freigaben.ANMELDE_DATEI,
     }
 

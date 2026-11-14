@@ -41,6 +41,21 @@
     </div>
   </div>
   {% endif %}
+  {% set jf = jellyfin|default({}) %}
+  {% if jf %}{% set jf_url = "http://" ~ request.url.hostname ~ ":" ~ jf.port %}
+  <div class="card high">
+    <div class="card-head"><div class="shape round {{ 'primary' if jf.erreichbar else 'muted' }}"><span class="ms">live_tv</span></div><span class="title-m" style="flex:1">Jellyfin</span>
+      {% if jf.erreichbar %}<a class="icon-btn" href="{{ jf_url }}" target="_blank" rel="noopener" title="Öffnen" aria-label="Jellyfin öffnen"><span class="ms">open_in_new</span></a>{% endif %}
+      <span class="chip {{ 'ok' if jf.eingerichtet else '' }}">{{ "läuft" if jf.eingerichtet else ("startet" if jf.erreichbar else "aus") }}</span></div>
+    {% if jf.erreichbar %}
+    <p class="body-m variant" style="margin:0 0 6px">Filme, Serien und Videos auf Fernseher, Handy und im Browser – wandelt nur beim Abspielen um. App „Jellyfin“ installieren, Server <code>{{ jf_url }}</code>.</p>
+    <p class="body-s variant" style="margin:0">Anmelden mit deinem Speicher-Benutzer (gleiches Passwort, nachdem du es einmal neu gesetzt hast){% if jf.passwort %} oder als <code>{{ jf.admin }}</code> / <code>{{ jf.passwort }}</code>{% endif %}.</p>
+    {% else %}
+    <p class="body-m variant" style="margin:0">Noch nicht gestartet. Auf dem Server <code>cloudy update</code> ausführen – danach richtet sich Jellyfin von selbst ein.</p>
+    {% endif %}
+    {% if jf.fehler %}<p class="body-s" style="margin:8px 0 0;color:var(--error)">{{ jf.fehler }}</p>{% endif %}
+  </div>
+  {% endif %}
 </div>
 
 <h2 class="title-m section-title">Auslastung</h2>

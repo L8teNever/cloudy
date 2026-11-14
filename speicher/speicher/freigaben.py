@@ -581,6 +581,8 @@ def set_user_password(name: str, password: str, neu: bool) -> None:
         raise FreigabeError(f"Passwort setzen fehlgeschlagen: {(res.stderr or res.stdout).strip()[-200:]}")
     _run(["smbpasswd", "-c", conf, "-e", name])
     set_web_password(name, password)
+    from . import jellyfin  # gleiches Passwort auch für Jellyfin (im Hintergrund, Jellyfin darf fehlen)
+    threading.Thread(target=jellyfin.benutzer_setzen, args=(name, password), daemon=True).start()
 
 
 # ---------- Anmeldung im Browser (Dateien-Seite) ----------
@@ -783,6 +785,8 @@ def delete_user(name: str) -> None:
         _run(["smbpasswd", "-c", str(samba_dir() / "smb.conf"), "-x", name])
         _run(["userdel", name])
         set_web_password(name, None)
+        from . import jellyfin
+        threading.Thread(target=jellyfin.benutzer_loeschen, args=(name,), daemon=True).start()
 
 
 # ---------- DLNA (Fernseher) ----------
