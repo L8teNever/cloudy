@@ -229,7 +229,15 @@ async def api_live_liste(request: Request):
 async def api_live_neu(request: Request):
     """Jetzt bei allen Live-Serien nach neuen Folgen schauen (sonst alle 6 Stunden von selbst)."""
     dateien._csrf(request, request.headers.get("x-csrf", ""))
-    return await _anime(request, lambda: {"neu": anime_live.neue_folgen()}, write=True)
+    def los():
+        n = anime_live.neue_folgen()
+        try:
+            k = anime_katalog.aktualisieren() if anime_katalog.bereit() else {}
+        except aniworld.AniFehler:
+            k = {}
+        return {"neu": n, "katalog_neu": k.get("neu", 0)}
+
+    return await _anime(request, los, write=True)
 
 
 @app.post("/api/anime/live/entfernen")

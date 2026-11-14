@@ -288,7 +288,7 @@ def entfernen(ordner: str) -> int:
 
 # ---------- Neue Folgen automatisch ----------
 
-NEU_ALLE = 6 * 3600  # so oft bei AniWorld nach neuen Folgen der Live-Serien schauen
+NEU_ALLE = 3600  # so oft bei AniWorld nach neuen Folgen der Live-Serien schauen
 _neu_lock = threading.Lock()
 _neu_gestartet = False
 

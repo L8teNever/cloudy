@@ -24,7 +24,7 @@ from . import anime_live, anime_meta, aniworld, config, jobs, mediathek, mediath
 
 KATALOG = "Katalog"
 NAME = "Anime-Katalog"
-ALLE = 24 * 3600  # neue Anime auf AniWorld einmal am Tag aufnehmen
+ALLE = 3600  # neue Anime auf AniWorld stündlich aufnehmen (eine Seite, billig)
 PAUSE = 2.0  # zwischen zwei Anime beim Info-Holen (AniWorld nicht überfahren)
 LINK_RE = re.compile(r'<a\b[^>]*?href="/anime/stream/([a-z0-9-]+)"[^>]*>(.*?)</a>', re.S)
 UNSICHTBAR = re.compile("[​-‏⁠﻿]")
@@ -253,25 +253,43 @@ def _jellyfin_einlesen() -> None:
         pass
 
 
+def aktualisieren() -> dict:
+    """Katalog mit AniWorld abgleichen (neue Anime als Platzhalter, schon hinzugefügte weg); Jellyfin nur bei Änderung neu einlesen."""
+    erg = aufbauen()
+    if erg["neu"] or erg["weg"]:
+        _jellyfin_einlesen()
+    return erg
+
+
 def start() -> None:
-    """Hintergrund: kurz nach dem Start und dann täglich den Katalog aufbauen, danach Infos und Cover nachtragen."""
+    """Hintergrund: Katalog stündlich mit AniWorld abgleichen (neue Anime sind so nach spätestens einer Stunde in der
+    Jellyfin-Suche); getrennt davon Infos und Cover nachtragen, sobald es Anime ohne gibt."""
     global _gestartet
     if _gestartet:
         return
     _gestartet = True
 
-    def schleife() -> None:
+    def abgleich() -> None:
         time.sleep(3 * 60)
         while True:
             try:
-                aufbauen()
-                _jellyfin_einlesen()
-                infos_nachtragen()
+                aktualisieren()
             except Exception as exc:  # noqa: BLE001
                 jobs.log(None, f"Anime-Katalog: {exc}"[:300])
-            time.sleep(ALLE if bereit() else 30 * 60)
+            time.sleep(ALLE if bereit() else 15 * 60)
 
-    threading.Thread(target=schleife, name="anime-katalog", daemon=True).start()
+    def infos() -> None:
+        time.sleep(5 * 60)
+        while True:
+            try:
+                if bereit():
+                    infos_nachtragen()
+            except Exception as exc:  # noqa: BLE001
+                jobs.log(None, f"Anime-Katalog: Infos: {exc}"[:300])
+            time.sleep(10 * 60)
+
+    threading.Thread(target=abgleich, name="anime-katalog", daemon=True).start()
+    threading.Thread(target=infos, name="anime-katalog-infos", daemon=True).start()
 
 
 # ---------- Hinzufügen per Klick in Jellyfin ----------
