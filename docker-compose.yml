@@ -123,7 +123,7 @@ services:
       ANIME_PORT: ${ANIME_PORT:-8093}
       # Live-Ansicht des digitalen Browsers (zugucken, klicken, tippen): eigene Seite auf diesem Port (0 = aus)
       ANIME_BROWSER_PORT: ${ANIME_BROWSER_PORT:-8095}
-      BROWSER_CDP: http://127.0.0.1:9222
+      BROWSER_CDP: ${BROWSER_CDP:-http://127.0.0.1:9222}
       # Optional: AniWorld/Hoster (Seiten, Streams, Cover, Downloads) NUR durch einen VPN-Proxy (siehe anime-vpn unten).
       # Leer = ganz normal direkt ins Internet. Einschalten in .env: ANIME_PROXY=http://127.0.0.1:8094
       ANIME_PROXY: ${ANIME_PROXY:-}
@@ -160,6 +160,31 @@ services:
     user: root
     volumes:
       - ./data/browser:/profil
+
+  # Sichtbarer Browser: ein echter Chromium mit Oberfläche, Ton und Erweiterungen (Selkies), bedienbar im Browser-Tab:
+  # http://<server>:8098 (oder https://<server>:8099). Hier Erweiterungen aus dem Chrome Web Store installieren (z. B. ein
+  # VPN-Add-on), einloggen, Schutzseiten lösen. Fernsteuerung für cloudy auf 127.0.0.1:9223 (CDP).
+  # Die Anime-Seite nutzt ihn, sobald in .env steht: BROWSER_CDP=http://127.0.0.1:9223 (Standard bleibt der unsichtbare Browser).
+  browser-gui:
+    image: lscr.io/linuxserver/chromium:latest
+    container_name: cloudy-browser-gui
+    restart: unless-stopped
+    network_mode: host
+    security_opt:
+      - seccomp:unconfined
+    shm_size: 1gb
+    cpu_shares: 256
+    oom_score_adj: 600
+    mem_limit: 3g
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Europe/Berlin
+      CUSTOM_PORT: "8098"
+      CUSTOM_HTTPS_PORT: "8099"
+      CHROME_CLI: "--remote-debugging-port=9223 --remote-allow-origins=* --user-data-dir=/config/profil --lang=de-DE"
+    volumes:
+      - ./data/browser-gui:/config
 
   # OPTIONAL (startet nur mit COMPOSE_PROFILES=vpn): VPN-Proxy für die Anime-Seite. Dann ANIME_PROXY=http://127.0.0.1:8094 setzen:
   # Browser, Streams, Cover und Downloads von AniWorld gehen immer hierüber und damit durch den VPN-Tunnel (Standard: vpn1).
