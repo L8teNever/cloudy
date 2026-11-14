@@ -155,12 +155,14 @@ services:
     environment:
       TZ: Europe/Berlin
       ANIME_PROXY: http://127.0.0.1:8094
+    # Startet als root, damit der Profilordner dem Browser-Benutzer gegeben werden kann (start.sh), und läuft dann ohne Rechte.
+    user: root
     volumes:
       - ./data/browser:/profil
 
   # VPN-Proxy für die Anime-Seite: Browser, Streams, Cover und Downloads von AniWorld gehen immer hierüber und
   # damit durch den VPN-Tunnel (Standard: vpn1). Ohne Tunnel kommt keine Verbindung zustande (Kill-Switch im VPN-Container).
-  # Anderes Profil: VPN_GATEWAY in .env (z. B. 172.29.86.22 für vpn2). Nur auf 127.0.0.1:8094 erreichbar.
+  # Anderes Profil: VPN_GATEWAY und VPN_SLOT in .env (z. B. 172.29.86.22 und vpn2). Nur auf 127.0.0.1:8094 erreichbar.
   anime-vpn:
     image: ghcr.io/l8tenever/cloudy:browser
     container_name: cloudy-anime-vpn
@@ -171,12 +173,15 @@ services:
       - NET_ADMIN
     environment:
       VPN_GATEWAY: ${VPN_GATEWAY:-172.29.86.21}
+      VPN_SLOT: ${VPN_SLOT:-vpn1}
+    volumes:
+      - ./data/warp:/vpnconf:ro
     ports:
       - "127.0.0.1:8094:8888"
     depends_on:
       - vpn1
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8888"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8888"]
       interval: 30s
       timeout: 5s
     networks:

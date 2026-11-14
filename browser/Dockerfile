@@ -12,9 +12,8 @@ RUN apt-get update \
 COPY start.sh proxy.sh /
 RUN chmod +x /start.sh /proxy.sh
 
-USER browser
 VOLUME /profil
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
-    CMD ["sh", "-c", "exec 3<>/dev/tcp/127.0.0.1/${CDP_PORT:-9222}"]
+    CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/${CDP_PORT:-9222}"]
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/start.sh"]

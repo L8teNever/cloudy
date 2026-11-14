@@ -1,5 +1,11 @@
 #!/bin/sh
 # Chromium headless mit festem Profil (Cookies von Schutzseiten bleiben erhalten).
+# Als root gestartet (Compose): Profilordner dem Benutzer "browser" geben (er gehört sonst root → "Permission denied"
+# bei SingletonLock) und dann ohne Rechte weiterlaufen.
+if [ "$(id -u)" = 0 ]; then
+  chown -R 10001:10001 /profil 2>/dev/null
+  exec setpriv --reuid=10001 --regid=10001 --init-groups env HOME=/home/browser "$0" "$@"
+fi
 rm -f /profil/Singleton*
 # ANIME_PROXY gesetzt: der Browser geht NUR über den VPN-Proxy (kein Fallback auf direkt).
 PROXY=""
