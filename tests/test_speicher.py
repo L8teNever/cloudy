@@ -450,3 +450,32 @@ def test_jellyfin_einrichtung_ablauf(tmp_path, monkeypatch):
     aufrufe.clear()
     jellyfin.abgleichen()  # zweites Mal: nichts neu
     assert ("POST", "/Startup/Complete") not in aufrufe and libs == ["Filme", "Serien", "Familie"]
+
+
+def test_jellyfin_streaming_freigabe_nicht_doppelt(tmp_path, monkeypatch):
+    """Freigabe „Streaming“ mit „Auf Fernsehern zeigen“ wird keine Heimvideo-Mediathek (nur Ordner, kein Cover);
+    eine schon angelegte wird entfernt, andere bleiben."""
+    from speicher import jellyfin, pool as pl
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MOUNT_ROOT", str(tmp_path / "mnt"))
+    (tmp_path / "data").mkdir()
+    root = pl.paths()["pool"]
+    root.mkdir(parents=True)
+    fg.Einstellungen(benutzer=["simon"], freigaben=[
+        fg.Freigabe("Familie", "Familie", dlna=True), fg.Freigabe("Streaming", "Streaming", dlna=True)]).save()
+    assert [m["name"] for m in jellyfin.gewuenschte_mediatheken()] == ["Filme", "Serien", "Familie"]
+    geloescht = []
+
+    def fake(method, path, body=None, token="", timeout=15):
+        if method == "DELETE":
+            geloescht.append(path.split("name=")[1].split("&")[0])
+        return None
+
+    monkeypatch.setattr(jellyfin, "_req", fake)
+    weg = jellyfin._doppelte_streaming_mediatheken("tok", [
+        {"Name": "Streaming", "CollectionType": "homevideos", "Locations": [f"{root}/Streaming"]},
+        {"Name": "Serien", "CollectionType": "tvshows", "Locations": [f"{root}/Streaming/Serien"]},
+        {"Name": "Familie", "CollectionType": "homevideos", "Locations": [f"{root}/Familie"]},
+    ])
+    assert weg == ["streaming"] and geloescht == ["Streaming"]

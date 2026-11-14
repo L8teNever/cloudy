@@ -4,7 +4,8 @@ Jellyfin spielt Videos auf Fernsehern, Handys und im Browser ab und wandelt nur 
 um – die Dateien selbst bleiben unverändert. Der Speicher erledigt die Einrichtung von selbst:
   - Ersteinrichtung auf Deutsch, Administrator „admin“ mit zufälligem Passwort (steht auf der Freigaben-Seite)
   - Mediatheken: Filme und Serien aus der Mediathek, dazu jede Freigabe mit „Auf Fernsehern zeigen“ als Heimvideos
-  - Benutzer: jeder Speicher-Benutzer bekommt ein Jellyfin-Konto mit demselben Passwort, sobald es gesetzt/geändert wird
+  - Benutzer: jeder Speicher-Benutzer bekommt ein Jellyfin-Konto mit demselben Passwort, sobald es gesetzt/geändert wird,
+    und erscheint als Kachel auf der Anmeldeseite (Profil antippen statt Namen tippen; admin bleibt versteckt)
 Jellyfin sieht den Pool nur lesend (/mnt/cloudy, siehe docker-compose.yml).
 """
 import json
@@ -134,16 +135,46 @@ def gewuenschte_mediatheken() -> list[dict]:
     e = freigaben.Einstellungen.load()
     namen = {"filme", "serien"}
     for f in e.freigaben:
-        if not f.dlna or f.name.lower() in namen:
-            continue
+        if not f.dlna or f.name.lower() in namen or _im_streaming(f.ordner, base):
+            continue  # Streaming-Ordner kommt schon als Filme/Serien mit Cover und Beschreibung
         namen.add(f.name.lower())
         out.append({"name": f.name, "typ": "homevideos", "pfad": f"{root}/{f.ordner}" if f.ordner else root})
     return out
 
 
+def _im_streaming(ordner: str, base: str) -> bool:
+    """Liegt der Ordner (relativ zum Pool) im Streaming-Ordner oder ist es dieser selbst?"""
+    o, b = (ordner or "").strip("/").lower(), base.strip("/").lower()
+    return bool(o) and (o == b or o.startswith(b + "/"))
+
+
+def _doppelte_streaming_mediatheken(token: str, ordner: list[dict]) -> list[str]:
+    """Heimvideo-Mediatheken, die in den Streaming-Ordner zeigen, entfernen: Dort zeigt Jellyfin nur Ordner ohne
+    Cover und Beschreibung, und dieselben Serien/Filme stehen schon richtig unter „Serien“/„Filme“.
+    Nur die Mediathek in Jellyfin wird entfernt, die Dateien bleiben."""
+    from . import mediathek_db
+
+    root = medien_pfad().rstrip("/")
+    base = (mediathek_db.Einstellungen.load().streaming_ordner or "Streaming").strip("/")
+    weg = []
+    for v in ordner:
+        orte = v.get("Locations") or []
+        if (v.get("CollectionType") or "").lower() != "homevideos" or not orte:
+            continue
+        rel = [o.rstrip("/")[len(root) + 1:] if o.rstrip("/").startswith(root + "/") else None for o in orte]
+        if all(r is not None and _im_streaming(r, base) for r in rel):
+            q = urllib.parse.urlencode({"name": v.get("Name") or "", "refreshLibrary": "false"})
+            _req("DELETE", f"/Library/VirtualFolders?{q}", token=token, timeout=60)
+            jobs.log(None, f"Jellyfin: doppelte Mediathek „{v.get('Name')}“ entfernt (steht schon unter Filme/Serien)")
+            weg.append((v.get("Name") or "").lower())
+    return weg
+
+
 def mediatheken_abgleichen(token: str) -> int:
     """Fehlende Mediatheken anlegen (vorhandene bleiben, auch selbst angelegte). Gibt die Zahl neuer zurück."""
-    vorhanden = {(v.get("Name") or "").lower() for v in (_req("GET", "/Library/VirtualFolders", token=token) or [])}
+    ordner = _req("GET", "/Library/VirtualFolders", token=token) or []
+    weg = set(_doppelte_streaming_mediatheken(token, ordner))
+    vorhanden = {(v.get("Name") or "").lower() for v in ordner} - weg
     neu = 0
     for m in gewuenschte_mediatheken():
         if m["name"].lower() in vorhanden:
@@ -305,8 +336,22 @@ def benutzer_setzen(name: str, passwort: str) -> None:
             jobs.log(None, f"Jellyfin: Benutzer {name} angelegt")
         else:
             _req("POST", f"/Users/{u['Id']}/Password", {"CurrentPw": "", "NewPw": passwort, "ResetPassword": False}, token=token)
+        anmeldeseite_abgleichen(token)
     except JellyfinFehler as exc:
         jobs.log(None, f"Jellyfin-Benutzer {name}: {exc}")
+
+
+def anmeldeseite_abgleichen(token: str) -> None:
+    """Benutzer als Kacheln auf der Jellyfin-Anmeldeseite zeigen (wie Profile bei Netflix), admin bleibt versteckt.
+
+    Jellyfin legt neue Benutzer versteckt an – dann muss man den Namen jedes Mal eintippen. So wählt man am Fernseher
+    nur noch sein Profil aus (und gibt höchstens das Passwort ein)."""
+    for u in _req("GET", "/Users", token=token) or []:
+        policy = u.get("Policy") or {}
+        versteckt = (u.get("Name") or "").lower() == ADMIN
+        if policy and bool(policy.get("IsHidden")) != versteckt:
+            policy["IsHidden"] = versteckt
+            _req("POST", f"/Users/{u['Id']}/Policy", policy, token=token)
 
 
 def benutzer_loeschen(name: str) -> None:
@@ -356,6 +401,7 @@ def _abgleichen() -> None:
         token = _token()
         hardware_einrichten(token)
         hardware_pruefen(token)
+        anmeldeseite_abgleichen(token)
         if not zugang().get("umpacken_aus"):
             # Einmalig: Ab jetzt wandelt Jellyfin beim Abspielen um – nicht mehr alle Videos vorab umpacken.
             # (Wer es danach wieder einschaltet, behält es eingeschaltet.)
