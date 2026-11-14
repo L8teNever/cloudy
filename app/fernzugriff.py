@@ -19,6 +19,7 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 import urllib.request
 
 from cryptography.exceptions import InvalidSignature
@@ -324,9 +325,9 @@ def _apply(settings: Settings, cfg: dict, cf) -> str:
             _api(cf, "DELETE", f"/accounts/{acc}/access/apps/{app['id']}/policies/{extra['id']}")
     else:
         _api(cf, "POST", f"/accounts/{acc}/access/apps/{app['id']}/policies", policy)
-    if not cfg.get("team"):
-        _step.name = "Zero-Trust-Team"
-        cfg["team"] = _api(cf, "GET", f"/accounts/{acc}/access/organizations").get("auth_domain", "")
+    # Immer neu abfragen: der Team-Name lässt sich in Cloudflare umbenennen (z. B. l8tenever -> kulbarts).
+    _step.name = "Zero-Trust-Team"
+    cfg["team"] = _api(cf, "GET", f"/accounts/{acc}/access/organizations").get("auth_domain", "") or cfg.get("team", "")
     return f"Eingerichtet: {', '.join(names)}.{note}"
 
 
@@ -431,6 +432,31 @@ def verify(token: str, team: str, aud: str, now: float | None = None) -> str | N
     return str(claims.get("email") or "angemeldet")
 
 
+TEAM_RE = re.compile(r"^[a-z0-9-]{1,63}\.cloudflareaccess\.com$")
+
+
+def _neues_team(token: str, cfg: dict) -> str | None:
+    """Team in Cloudflare umbenannt? Dann steht der neue Name im Token (iss). Er wird nur übernommen, wenn
+    das Token mit den Schlüsseln dieses Cloudflare-Teams signiert ist UND für genau unsere Anmeldung (aud) gilt –
+    die aud vergibt Cloudflare pro App, ein fremdes Team kann dafür kein gültiges Token ausstellen."""
+    try:
+        claims = json.loads(_b64(token.split(".")[1]))
+        team = urllib.parse.urlparse(str(claims.get("iss", ""))).hostname or ""
+    except (ValueError, IndexError, TypeError):
+        return None
+    if not TEAM_RE.fullmatch(team) or team == cfg.get("team"):
+        return None
+    email = verify(token, team, cfg["aud"])
+    if email:
+        with _lock:
+            fresh = load()
+            if fresh.get("aud") == cfg["aud"]:
+                fresh["team"] = team
+                save(fresh)
+        print(f"cloudy: Zero-Trust-Team ist jetzt {team}", flush=True)
+    return email
+
+
 def check_request(host: str, token: str) -> tuple[bool, str]:
     """Darf eine Tunnel-Anfrage für host durch? (ok, E-Mail oder Grund)"""
     cfg = load()
@@ -439,6 +465,8 @@ def check_request(host: str, token: str) -> tuple[bool, str]:
     if not (cfg.get("team") and cfg.get("aud")):
         return False, "Die Zero-Trust-Anmeldung ist noch nicht fertig eingerichtet."
     email = verify(token, cfg["team"], cfg["aud"]) if token else None
+    if not email and token:
+        email = _neues_team(token, cfg)
     if not email:
         return False, "Bitte über die Cloudflare-Anmeldung aufrufen (Seite neu laden)."
     if cfg["emails"] and email.lower() not in cfg["emails"]:

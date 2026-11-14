@@ -162,3 +162,24 @@ def test_tunnel_nur_mit_anmeldung(monkeypatch):
         assert remote.get("/mein", headers={**h, "cf-access-jwt-assertion": good}).status_code == 403
     with TestClient(app) as local:  # zu Hause: ohne Anmeldung
         assert local.get("/", headers={"host": "karte.kulbarts.com"}).status_code == 200
+
+
+def test_team_umbenannt_wird_uebernommen(monkeypatch):
+    """Cloudflare-Team umbenannt (l8tenever -> kulbarts): gültiges Token fürs neue Team wird erkannt und gemerkt."""
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    fremd = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    keys = {"alt.cloudflareaccess.com": {}, "neu.cloudflareaccess.com": {"k1": key.public_key()},
+            "boese.cloudflareaccess.com": {"k1": fremd.public_key()}}
+    monkeypatch.setattr(fz, "fetch_keys", lambda team: keys.get(team, {}))
+    fz._keys.clear()
+    fz.set_config([("karte.kulbarts.com", "karte")], ["a@x.de"], 330, [])
+    cfg = fz.load()
+    cfg.update(team="alt.cloudflareaccess.com", aud="aud123")
+    fz.save(cfg)
+    now = time.time()
+    falsche_aud = _jwt(fremd, {"aud": ["andere"], "iss": "https://boese.cloudflareaccess.com", "email": "a@x.de", "exp": now + 600})
+    assert not fz.check_request("karte.kulbarts.com", falsche_aud)[0]
+    assert fz.load()["team"] == "alt.cloudflareaccess.com"
+    good = _jwt(key, {"aud": ["aud123"], "iss": "https://neu.cloudflareaccess.com", "email": "a@x.de", "exp": now + 600})
+    assert fz.check_request("karte.kulbarts.com", good) == (True, "a@x.de")
+    assert fz.load()["team"] == "neu.cloudflareaccess.com"

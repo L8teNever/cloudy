@@ -165,6 +165,47 @@ def mediatheken_abgleichen(token: str) -> int:
     return neu
 
 
+GPU_HERSTELLER = {"0x8086": "intel", "0x1002": "amd", "0x10de": "nvidia"}
+
+
+def gpu() -> str:
+    """Hersteller der Grafikeinheit für Jellyfin ("intel", "amd", "nvidia" oder "")."""
+    if not os.path.exists("/dev/dri/renderD128"):
+        return ""
+    try:
+        with open("/sys/class/drm/renderD128/device/vendor") as fh:
+            return GPU_HERSTELLER.get(fh.read().strip().lower(), "")
+    except OSError:
+        return ""
+
+
+def hardware_einrichten(token: str) -> str:
+    """Einmalig: Umrechnen über die Grafikeinheit (VA-API) einschalten, wenn Intel/AMD da ist und in Jellyfin
+    noch nichts eingestellt wurde. Vorsichtig nur H.264/MPEG-2 per Grafik entschlüsseln (kann jede solche Grafik);
+    HEVC/AV1 kann man in Jellyfin selbst dazuschalten, wenn die Grafik neu genug ist."""
+    if zugang().get("hardware"):
+        return zugang()["hardware"]
+    hersteller = gpu()
+    if hersteller not in ("intel", "amd"):
+        _zugang_speichern(hardware="keine" if not hersteller else f"{hersteller} (nicht automatisch)")
+        return zugang()["hardware"]
+    enc = _req("GET", "/System/Configuration/encoding", token=token) or {}
+    if enc.get("HardwareAccelerationType") not in (None, "", "none"):
+        _zugang_speichern(hardware=f"schon eingestellt ({enc.get('HardwareAccelerationType')})")
+        return zugang()["hardware"]
+    enc.update({
+        "HardwareAccelerationType": "vaapi",
+        "VaapiDevice": "/dev/dri/renderD128",
+        "EnableHardwareEncoding": True,
+        "HardwareDecodingCodecs": ["h264", "mpeg2video"],
+        "EnableThrottling": True,  # nicht weiter vorausrechnen als nötig – spart Leistung
+    })
+    _req("POST", "/System/Configuration/encoding", enc, token=token)
+    jobs.log(None, f"Jellyfin: Umrechnen über die Grafikeinheit ({hersteller}, VA-API) eingeschaltet")
+    _zugang_speichern(hardware=f"{hersteller} (VA-API)")
+    return zugang()["hardware"]
+
+
 def benutzer_setzen(name: str, passwort: str) -> None:
     """Jellyfin-Konto für einen Speicher-Benutzer anlegen bzw. sein Passwort setzen (still, wenn Jellyfin fehlt)."""
     if not zugang().get("passwort"):
@@ -226,6 +267,7 @@ def _abgleichen() -> None:
             from . import mediathek
             mediathek.filme_serien_trennen()
             mediatheken_abgleichen(_token())
+        hardware_einrichten(_token())
         if not zugang().get("umpacken_aus"):
             # Einmalig: Ab jetzt wandelt Jellyfin beim Abspielen um – nicht mehr alle Videos vorab umpacken.
             # (Wer es danach wieder einschaltet, behält es eingeschaltet.)
@@ -244,5 +286,6 @@ def status() -> dict:
     with _lock:
         s = dict(_state)
     z = zugang()
-    s.update(admin=z.get("admin", ADMIN) if z.get("passwort") else "", passwort=z.get("passwort", ""), port=port())
+    s.update(admin=z.get("admin", ADMIN) if z.get("passwort") else "", passwort=z.get("passwort", ""), port=port(),
+             hardware=z.get("hardware", ""))
     return s

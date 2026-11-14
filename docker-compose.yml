@@ -146,11 +146,20 @@ services:
     blkio_config:
       weight: 200
     oom_score_adj: 400
+    # Grafikeinheit (Intel/AMD) zum schnellen Umrechnen – der Speicher schaltet sie in Jellyfin von selbst ein.
+    # Gibt es keine, startet Jellyfin trotzdem (dann ist /dev/dri nur ein leerer Ordner).
+    device_cgroup_rules:
+      - "c 226:* rmw"
     environment:
       TZ: Europe/Berlin
     volumes:
       - ./data/jellyfin/config:/config
       - ./data/jellyfin/cache:/cache
+      - type: bind
+        source: /dev/dri
+        target: /dev/dri
+        bind:
+          create_host_path: true
       # Pool nur lesend; rslave, damit Jellyfin den Pool sieht, auch wenn der Speicher ihn erst später einhängt.
       - type: bind
         source: /mnt/cloudy

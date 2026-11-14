@@ -438,7 +438,9 @@ def test_jellyfin_einrichtung_ablauf(tmp_path, monkeypatch):
         return None
 
     monkeypatch.setattr(jellyfin, "_req", fake)
+    monkeypatch.setattr(jellyfin, "gpu", lambda: "intel")
     jellyfin.abgleichen()
+    assert ("POST", "/System/Configuration/encoding") in aufrufe and jellyfin.status()["hardware"] == "intel (VA-API)"
     s = jellyfin.status()
     assert s["eingerichtet"] and s["passwort"] and s["admin"] == "admin"
     assert ("POST", "/Startup/Complete") in aufrufe
