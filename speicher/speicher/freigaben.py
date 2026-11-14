@@ -74,6 +74,10 @@ class Einstellungen:
     dlna_an: bool = True
     dlna_name: str = "cloudy Speicher"
     videos_optimieren: bool = True
+    # Wann Hintergrundarbeit (Videos umpacken, Kopie auf Puffer) laufen darf: immer, leerlauf, zeitfenster
+    hintergrund: str = "immer"
+    fenster_von: str = "01:00"
+    fenster_bis: str = "07:00"
     freigaben: list[Freigabe] = field(default_factory=list)
     benutzer: list[str] = field(default_factory=list)
     # Windows-Anmeldenamen pro Benutzer: Windows meldet sich damit von selbst an (Microsoft-Konto = E-Mail).
@@ -884,8 +888,14 @@ class Dienste:
                 path = data_dir() / "minidlna" / "minidlna.conf"
                 if conf != self._dlna_conf or not self.laeuft("minidlna"):
                     self._stop("minidlna")
+                    try:
+                        neu_aufbauen = path.read_text() != conf  # Ordner geändert -> Datenbank neu
+                    except OSError:
+                        neu_aufbauen = True
                     path.write_text(conf)
-                    self._start("minidlna", ["minidlnad", "-S", "-f", str(path), "-P", "/run/minidlna.pid", "-r"])
+                    from .last import niedrig
+                    self._start("minidlna", niedrig(["minidlnad", "-S", "-f", str(path), "-P", "/run/minidlna.pid",
+                                                     *(["-r"] if neu_aufbauen else [])]))
                     self._dlna_conf = conf
             else:
                 self._stop("minidlna")

@@ -384,3 +384,26 @@ def test_benutzer_mit_windows_anmeldung(samba_dir, monkeypatch):
     fg.set_windows_names("l8tenever", "neu@outlook.de")
     fg.delete_user("l8tenever")
     assert fg.Einstellungen.load().windows == {} and (samba_dir / "benutzer.map").read_text() == ""
+
+
+def test_hintergrund_regel_und_messen(tmp_path, monkeypatch):
+    from datetime import datetime
+
+    from speicher import last
+
+    assert last.im_fenster("01:00", "07:00", datetime(2026, 1, 1, 3, 0))
+    assert not last.im_fenster("01:00", "07:00", datetime(2026, 1, 1, 12, 0))
+    assert last.im_fenster("22:00", "06:00", datetime(2026, 1, 1, 23, 30))  # über Mitternacht
+    e = fg.Einstellungen(hintergrund="zeitfenster", fenster_von="01:00", fenster_bis="07:00")
+    ok, grund = last.erlaubt(e, datetime(2026, 1, 1, 12, 0))
+    assert not ok and "Zeitfenster" in grund
+    e.hintergrund = "leerlauf"
+    last._uebertrag.clear()
+    last._uebertrag.append((0, 50.0))  # gerade wird kopiert
+    assert not last.erlaubt(e)[0]
+    last._uebertrag.clear()
+    assert last.erlaubt(e)[0]
+    assert last.niedrig(["rsync"])[-1] == "rsync"
+    last.messen()
+    w = last.messen()
+    assert 0 <= w["cpu"] <= 100 and w["ram_total"] > 0

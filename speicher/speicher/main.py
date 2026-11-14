@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, backup, config, disks, freigaben, jobs, medien, pool
+from . import auth, backup, config, disks, freigaben, jobs, last, medien, pool
 from .config import Config
 
 BASE = Path(__file__).parent
@@ -80,7 +80,8 @@ def scheduler() -> None:
                 continue
             if cfg.backup_an and backup.drive_eingerichtet() and backup.backup_due(now, cfg.backup_zeit, cfg.letztes_backup_start, cfg.letzter_versuch):
                 jobs.run("Backup nach Google Drive", backup.backup)
-            elif cfg.puffer and now - cfg.letzte_kopie >= max(1, cfg.puffer_minuten) * 60:
+            elif (cfg.puffer and now - cfg.letzte_kopie >= max(1, cfg.puffer_minuten) * 60
+                  and last.puffer_erlaubt(freigaben.Einstellungen.load(), cfg.letzte_kopie)):
                 jobs.run("Kopie auf Puffer-SSD", backup.puffer_kopie)
             elif int(now) % 300 < 30:
                 # Platte wieder da (z. B. nach USB-Wackler)? Dann einhängen.
@@ -103,10 +104,12 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # noqa: BLE001
             jobs.log(None, f"Freigaben beim Start: {exc}")
         threading.Thread(target=scheduler, name="planer", daemon=True).start()
+        last.start()
         medien.start()
     yield
     _stop.set()
     if "PYTEST_CURRENT_TEST" not in os.environ:
+        last.stop()
         medien.stop()
         freigaben.dienste.stop_all()
         pool.unmount_pool()  # sonst bleibt auf dem Host ein toter FUSE-Eintrag zurück
@@ -310,6 +313,35 @@ async def backup_seite(request: Request):
 @app.get("/einstellungen", response_class=HTMLResponse)
 async def einstellungen_seite(request: Request):
     return _page(request, "einstellungen.html", active="/einstellungen", port=os.environ.get("SPEICHER_PORT", "8091"), **await run_in_threadpool(_status))
+
+
+def auslastung() -> dict:
+    """Live-Werte für die Anzeige: Auslastung und was gerade im Hintergrund läuft."""
+    e = freigaben.Einstellungen.load()
+    w = last.werte()
+    m = medien.status()
+    erlaubt, grund = last.erlaubt(e)
+    job = jobs.current()
+    hintergrund = []
+    if m["aktuell"]:
+        hintergrund.append({"was": "Video umpacken", "detail": m["aktuell"],
+                            "zustand": "pausiert" if m["pausiert"] else "läuft", "grund": m["pausiert"]})
+    elif e.videos_optimieren and (m["wartet"] or not erlaubt):
+        hintergrund.append({"was": "Video umpacken", "detail": "", "zustand": "wartet", "grund": m["wartet"] or grund})
+    if job:
+        hintergrund.append({"was": job.name, "detail": "", "zustand": "läuft", "grund": ""})
+    return {
+        "cpu": w.get("cpu", 0), "kerne": w.get("kerne", 1), "load": round(w.get("load", 0), 2),
+        "ram_benutzt": w.get("ram_benutzt", 0), "ram_total": w.get("ram_total", 0),
+        "netz_mb_s": w.get("netz_mb_s", 0), "dienst_mb_s": w.get("dienst_mb_s", 0),
+        "platten": w.get("platten", []), "hintergrund": hintergrund,
+        "regel": e.hintergrund, "ruhig": last.ruhig(),
+    }
+
+
+@app.get("/api/auslastung")
+async def api_auslastung():
+    return await run_in_threadpool(auslastung)
 
 
 @app.get("/api/job")
@@ -536,6 +568,13 @@ async def freigaben_einstellungen(request: Request):
         e.dlna_an = f.get("dlna_an") == "1"
         e.videos_optimieren = f.get("videos_optimieren") == "1"
         e.anmelde_ordner = f.get("anmelde_ordner") == "1"
+        if f.get("hintergrund") in ("immer", "leerlauf", "zeitfenster"):
+            e.hintergrund = f["hintergrund"]
+        for feld in ("fenster_von", "fenster_bis"):
+            wert = f.get(feld, getattr(e, feld)).strip()
+            if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", wert):
+                raise freigaben.FreigabeError("Zeitfenster: Uhrzeit wie 01:00")
+            setattr(e, feld, wert)
         adresse = f.get("anmelde_adresse", e.anmelde_adresse).strip().rstrip("/")
         if adresse and not re.fullmatch(r"https?://[A-Za-z0-9.-]+(:\d{1,5})?", adresse):
             raise freigaben.FreigabeError("Adresse der Dateien-Seite: z. B. http://192.168.178.2:8092 oder https://dateien.example.com")

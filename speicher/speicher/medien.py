@@ -19,7 +19,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import freigaben, jobs, pool
+from . import freigaben, jobs, last, pool
 
 ENDUNGEN = {".mp4", ".m4v"}
 RUHEZEIT = 15.0  # Sekunden nach letzter Änderung warten (Samba-Upload sicher fertig)
@@ -36,7 +36,7 @@ _sofort: collections.deque[Path] = collections.deque()
 _scan_jetzt = True
 _geprueft: dict[str, tuple[int, int, str]] = {}
 _ffmpeg_fehlt_gemeldet = False
-_state: dict = {"aktuell": "", "optimiert": 0, "fehler": ""}
+_state: dict = {"aktuell": "", "optimiert": 0, "fehler": "", "art": "", "pausiert": "", "wartet": ""}
 
 
 def _read_box(fh, offset: int, limit: int) -> tuple[int, bytes, int] | None:
@@ -199,14 +199,27 @@ def _run_ffmpeg(ffmpeg: str, src: Path, dst: Path) -> tuple[bool, str]:
         ]
         try:
             with _lock:
-                _proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+                _proc = subprocess.Popen(last.niedrig(cmd), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                         start_new_session=True)
                 proc = _proc
-            _, stderr = proc.communicate(timeout=3600)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate()
-            dst.unlink(missing_ok=True)
-            return False, "ffmpeg hat zu lange gebraucht"
+            # Warten; Zeit, in der das Umpacken pausiert ist (SIGSTOP), zählt nicht mit.
+            gelaufen = 0.0
+            while True:
+                try:
+                    proc.wait(timeout=5)
+                    break
+                except subprocess.TimeoutExpired:
+                    if not _state["pausiert"]:
+                        gelaufen += 5
+                    if gelaufen > 3600:
+                        try:
+                            os.killpg(proc.pid, signal.SIGKILL)
+                        except OSError:
+                            proc.kill()
+                        proc.wait()
+                        dst.unlink(missing_ok=True)
+                        return False, "ffmpeg hat zu lange gebraucht"
+            stderr = proc.stderr.read() if proc.stderr else ""
         except OSError as exc:
             dst.unlink(missing_ok=True)
             return False, str(exc)
@@ -281,6 +294,7 @@ def optimieren(path: Path, sofort: bool = False, now: float | None = None) -> bo
     tmp = path.parent / f".{path.stem[:180]}.tvfix-{secrets.token_hex(4)}.mp4"
     with _lock:
         _state["aktuell"] = path.name
+        _state["art"] = "sofort" if sofort else "scan"
     try:
         ok, err = _run_ffmpeg(ffmpeg, path, tmp)
         if not ok:
@@ -332,6 +346,8 @@ def optimieren(path: Path, sofort: bool = False, now: float | None = None) -> bo
         tmp.unlink(missing_ok=True)
         with _lock:
             _state["aktuell"] = ""
+            _state["art"] = ""
+            _state["pausiert"] = ""
 
 
 def ziel_ordner() -> list[Path]:
@@ -391,6 +407,11 @@ def scan() -> int:
                     if entry.is_dir(follow_symlinks=False):
                         stack.append(Path(entry.path))
                     elif entry.is_file(follow_symlinks=False) and Path(entry.name).suffix.lower() in ENDUNGEN:
+                        ok, grund = last.erlaubt()
+                        if not ok:
+                            with _lock:
+                                _state["wartet"] = grund
+                            return count  # später weiter (Scan läuft regelmäßig)
                         if optimieren(Path(entry.path), sofort=False):
                             count += 1
                 except OSError:
@@ -444,6 +465,8 @@ def _worker() -> None:
             _scan_jetzt = False
         if faellig and not _stop.is_set():
             letzter_scan = time.time()
+            with _lock:
+                _state["wartet"] = ""
             try:
                 scan()
             except Exception as exc:  # noqa: BLE001
@@ -474,6 +497,7 @@ def stop() -> None:
     if proc and proc.poll() is None:
         try:
             os.killpg(proc.pid, signal.SIGTERM)
+            os.killpg(proc.pid, signal.SIGCONT)  # falls gerade pausiert
             proc.wait(timeout=5)
         except (OSError, subprocess.TimeoutExpired):
             proc.kill()
@@ -483,9 +507,26 @@ def stop() -> None:
     _thread = None
 
 
+def laufend() -> tuple[int | None, str]:
+    """(PID des laufenden ffmpeg, "scan"/"sofort") oder (None, "")."""
+    with _lock:
+        proc = _proc
+        art = _state["art"]
+    if proc and proc.poll() is None:
+        return proc.pid, art
+    return None, ""
+
+
+def set_pausiert(grund: str) -> None:
+    with _lock:
+        _state["pausiert"] = grund
+
+
 def status() -> dict:
     with _lock:
         return {
+            "pausiert": _state["pausiert"],
+            "wartet": _state["wartet"],
             "aktuell": _state["aktuell"],
             "optimiert": _state["optimiert"],
             "fehler": _state["fehler"],

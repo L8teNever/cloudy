@@ -43,6 +43,21 @@
   {% endif %}
 </div>
 
+<h2 class="title-m section-title">Auslastung</h2>
+<div class="card" data-auslastung>
+  <div class="grid" style="margin:0">
+    <div><p class="label-l variant" style="margin:0">Prozessor</p><p class="title-l" style="margin:2px 0" data-wert="cpu">–</p>
+      <div class="progress"><i data-balken="cpu" style="width:0"></i></div></div>
+    <div><p class="label-l variant" style="margin:0">Arbeitsspeicher</p><p class="title-l" style="margin:2px 0" data-wert="ram">–</p>
+      <div class="progress"><i data-balken="ram" style="width:0"></i></div></div>
+    <div><p class="label-l variant" style="margin:0">Netzwerk</p><p class="title-l" style="margin:2px 0" data-wert="netz">–</p>
+      <p class="body-s variant" style="margin:0" data-wert="dienst"></p></div>
+  </div>
+  <div class="list" style="margin:16px 0 0" data-platten></div>
+  <p class="label-l variant" style="margin:16px 0 6px">Im Hintergrund</p>
+  <div class="list" style="margin:0" data-hintergrund><div class="li"><span class="body-m variant">Lade …</span></div></div>
+</div>
+
 <h2 class="title-m section-title">Freigaben</h2>
 {% if fe.freigaben %}
 <div class="list">
@@ -138,6 +153,17 @@
     <span class="switch"><input type="checkbox" name="videos_optimieren" value="1" {{ "checked" if fe.videos_optimieren }}><span class="tr"></span><span class="th"></span></span></label>
   <label class="switch-row"><span class="txt"><span class="title-m" style="display:block">Ordner „{{ anmelde_freigabe }}“</span><span class="body-m variant">Jedes Gerät sieht eine Seite zum Anmelden und bekommt danach die Rechte seines Benutzers</span></span>
     <span class="switch"><input type="checkbox" name="anmelde_ordner" value="1" {{ "checked" if fe.anmelde_ordner }}><span class="tr"></span><span class="th"></span></span></label>
+  <p class="label-l variant" style="margin:12px 0 0">Hintergrundarbeit (Videos umpacken, Kopie auf Puffer-SSD)</p>
+  <div class="segmented">
+    {% for value, icon, text in [("immer", "bolt", "Immer"), ("leerlauf", "bedtime", "Wenn nichts los ist"), ("zeitfenster", "schedule", "Nur im Zeitfenster")] %}
+    <label><input type="radio" name="hintergrund" value="{{ value }}" {{ "checked" if fe.hintergrund == value }}><span><span class="ms">{{ icon }}</span>{{ text }}</span></label>
+    {% endfor %}
+  </div>
+  <p class="body-s variant" style="margin:-4px 4px 8px">Läuft immer mit niedrigster Priorität. <b>Wenn nichts los ist:</b> pausiert, sobald jemand Dateien kopiert oder auf dem Fernseher schaut, und macht nach 1 Minute Ruhe weiter. <b>Zeitfenster:</b> Videos nur in dieser Zeit; die Sicherheitskopie wartet nur auf Ruhe (höchstens 2 Stunden).</p>
+  <div class="form-grid">
+    <div class="field"><input type="time" name="fenster_von" id="fv" value="{{ fe.fenster_von }}" placeholder=" " required><label for="fv">Zeitfenster von</label></div>
+    <div class="field"><input type="time" name="fenster_bis" id="fb" value="{{ fe.fenster_bis }}" placeholder=" " required><label for="fb">bis</label></div>
+  </div>
   <div class="form-grid" style="margin-top:8px">
     <div class="field"><input name="anmelde_adresse" id="aa" value="{{ fe.anmelde_adresse }}" maxlength="200" placeholder=" " autocomplete="off"><label for="aa">Adresse der Dateien-Seite (optional)</label><span class="sup">Leer = automatisch, gerade <code>{{ anmelde_url }}</code></span></div>
     <div class="field"><input name="netzwerkname" id="nn" value="{{ fe.netzwerkname }}" maxlength="15" placeholder=" " required><label for="nn">Name im Netzwerk</label></div>

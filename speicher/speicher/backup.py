@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import config, jobs, pool
+from .last import niedrig
 from .config import Config, data_dir
 
 REMOTE = "cloudy-drive"
@@ -181,7 +182,7 @@ def puffer_kopie(job) -> None:
     fehler = ""
     if files:
         res = subprocess.run(
-            ["rsync", "-a", "--from0", "--files-from=-", "--partial", "--inplace", f"{src}/", f"{dst}/"],
+            niedrig(["rsync", "-a", "--from0", "--files-from=-", "--partial", "--inplace", f"{src}/", f"{dst}/"]),
             input="\0".join(files) + "\0", capture_output=True, text=True,
         )
         if res.returncode not in (0, 24):  # 24 = Datei verschwand während der Kopie

@@ -3,6 +3,9 @@ services:
     image: ghcr.io/l8tenever/cloudy:latest
     container_name: cloudy
     restart: unless-stopped
+    # Vorrang: DNS, DHCP und Gateway müssen auch laufen, wenn der Speicher gerade voll arbeitet.
+    cpu_shares: 4096
+    oom_score_adj: -500
     # Host-Netz: DNS (53) und DHCP (67) müssen direkt im Heimnetz erreichbar sein.
     network_mode: host
     # Für den Gateway-Modus: Weiterleitung einschalten (sysctl), NAT-Regeln (iptables/ip6tables), Verkehr messen (conntrack).
@@ -96,6 +99,12 @@ services:
     image: ghcr.io/l8tenever/cloudy:speicher
     container_name: cloudy-speicher
     restart: unless-stopped
+    # Nachrang: Bei Engpass bekommen cloudy und andere Container (z. B. Home Assistant) zuerst CPU und Platte.
+    # Ist der Server frei, nutzt der Speicher trotzdem die volle Leistung. Bei Speichermangel wird er zuerst beendet.
+    cpu_shares: 256
+    blkio_config:
+      weight: 100
+    oom_score_adj: 500
     network_mode: host
     # Platten formatieren/einhängen und FUSE brauchen vollen Gerätezugriff.
     privileged: true
