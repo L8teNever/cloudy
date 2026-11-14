@@ -43,7 +43,7 @@ def _cover(url: str, groesser: bool = True) -> bytes:
     for u in dict.fromkeys(([re.sub(r"_\d+x\d+(?=\.\w+$)", "", url)] if groesser else []) + [url]):
         try:
             req = urllib.request.Request(u, headers={"User-Agent": aniworld.UA, "Referer": aniworld.BASE})
-            with aniworld._opener().open(req, timeout=aniworld.TIMEOUT) as r:
+            with aniworld._opener(True).open(req, timeout=aniworld.TIMEOUT) as r:
                 data = r.read(5 * 1024 * 1024)
             if data[:3] == b"\xff\xd8\xff" or data[:8] == b"\x89PNG\r\n\x1a\n" or data[8:12] == b"WEBP":
                 return data

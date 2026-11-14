@@ -55,8 +55,16 @@ def browser_status() -> dict:
         return {"an": False, "text": "Browser nicht erreichbar – direkt"}
 
 
-def _opener():
-    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+def vpn_proxy() -> str:
+    """Adresse des VPN-Proxys (ANIME_PROXY, z. B. http://127.0.0.1:8094). Gesetzt: AniWorld und Hoster werden NUR
+    darüber geholt – ist der Tunnel weg, gibt es keine Verbindung (nie am VPN vorbei)."""
+    return os.environ.get("ANIME_PROXY", "").strip()
+
+
+def _opener(extern: bool = False):
+    """extern=True für alles im Internet (AniWorld, Hoster, Cover) → durch den VPN-Proxy. Ohne: lokal (Browser-CDP)."""
+    p = vpn_proxy() if extern else ""
+    return urllib.request.build_opener(urllib.request.ProxyHandler({"http": p, "https": p} if p else {}))
 
 
 class _Browser:
@@ -144,7 +152,7 @@ def _direkt(url: str, data: bytes | None = None, headers: dict | None = None) ->
     h.update(headers or {})
     req = urllib.request.Request(url, data=data, headers=h)
     try:
-        with _opener().open(req, timeout=TIMEOUT) as r:
+        with _opener(True).open(req, timeout=TIMEOUT) as r:
             return r.read(8 * 1024 * 1024).decode("utf-8", "replace"), r.geturl()
     except urllib.error.HTTPError as exc:
         raise AniFehler(f"{urllib.parse.urlparse(url).hostname} antwortet mit {exc.code}") from exc
@@ -610,6 +618,7 @@ def _ffmpeg(j: dict, url: str, referer: str, tmp: Path) -> str:
     tmp.unlink(missing_ok=True)
     cmd = [
         "ffmpeg", "-nostdin", "-hide_banner", "-y", "-loglevel", "info",
+        *(["-http_proxy", vpn_proxy()] if vpn_proxy() else []),
         "-user_agent", UA, "-headers", f"Referer: {referer}\r\n",
         "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "10",
         "-i", url, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-movflags", "+faststart",

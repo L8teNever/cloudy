@@ -122,6 +122,8 @@ services:
       # Anime-Seite (eigene Webseite, Port 8093; 0 = aus): Seiten über den digitalen Browser holen, gleichzeitige Downloads
       ANIME_PORT: ${ANIME_PORT:-8093}
       BROWSER_CDP: http://127.0.0.1:9222
+      # Alles von AniWorld/Hostern (Seiten, Streams, Cover, Downloads) geht NUR durch den VPN-Proxy (anime-vpn).
+      ANIME_PROXY: http://127.0.0.1:8094
       ANIME_PARALLEL: ${ANIME_PARALLEL:-2}
     volumes:
       - ./data/speicher:/data
@@ -150,8 +152,34 @@ services:
     shm_size: 256m
     environment:
       TZ: Europe/Berlin
+      ANIME_PROXY: http://127.0.0.1:8094
     volumes:
       - ./data/browser:/profil
+
+  # VPN-Proxy für die Anime-Seite: Browser, Streams, Cover und Downloads von AniWorld gehen immer hierüber und
+  # damit durch den VPN-Tunnel (Standard: vpn1). Ohne Tunnel kommt keine Verbindung zustande (Kill-Switch im VPN-Container).
+  # Anderes Profil: VPN_GATEWAY in .env (z. B. 172.29.86.22 für vpn2). Nur auf 127.0.0.1:8094 erreichbar.
+  anime-vpn:
+    image: ghcr.io/l8tenever/cloudy:browser
+    container_name: cloudy-anime-vpn
+    restart: unless-stopped
+    user: root
+    entrypoint: ["/proxy.sh"]
+    cap_add:
+      - NET_ADMIN
+    environment:
+      VPN_GATEWAY: ${VPN_GATEWAY:-172.29.86.21}
+    ports:
+      - "127.0.0.1:8094:8888"
+    depends_on:
+      - vpn1
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8888"]
+      interval: 30s
+      timeout: 5s
+    networks:
+      cloudy-warp:
+        ipv4_address: 172.29.86.30
 
   # Medienserver: Filme, Serien und Videos auf Fernseher, Handy und Browser. Wandelt nur beim Abspielen um.
   # Richtet sich über den Speicher von selbst ein (Freigaben-Seite zeigt Adresse und Zugang).

@@ -132,8 +132,11 @@ def gewuenschte_mediatheken() -> list[dict]:
         {"name": "Filme", "typ": "movies", "pfad": f"{root}/{base}/{mediathek.FILME}"},
         {"name": "Serien", "typ": "tvshows", "pfad": f"{root}/{base}/{mediathek.SERIEN}"},
     ]
+    from . import anime_katalog
+    if anime_katalog.bereit():
+        out.append({"name": anime_katalog.NAME, "typ": "tvshows", "pfad": f"{root}/{base}/{anime_katalog.KATALOG}", "katalog": True})
     e = freigaben.Einstellungen.load()
-    namen = {"filme", "serien"}
+    namen = {"filme", "serien", anime_katalog.NAME.lower()}
     for f in e.freigaben:
         if not f.dlna or f.name.lower() in namen or _im_streaming(f.ordner, base):
             continue  # Streaming-Ordner kommt schon als Filme/Serien mit Cover und Beschreibung
@@ -213,6 +216,14 @@ def scan_laeuft(token: str) -> bool:
     return False
 
 
+def _katalog_optionen() -> dict:
+    """Anime-Katalog: nichts aus dem Internet holen (nur unsere .nfo und Cover), keine Dateiüberwachung für
+    2500 Ordner (wir lesen die Mediathek selbst neu ein)."""
+    aus = {"MetadataFetchers": [], "MetadataFetcherOrder": [], "ImageFetchers": [], "ImageFetcherOrder": []}
+    return {"EnableRealtimeMonitor": False, "EnableInternetProviders": False,
+            "TypeOptions": [{"Type": t, **aus} for t in ("Series", "Season", "Episode")]}
+
+
 def mediatheken_abgleichen(token: str) -> int:
     """Fehlende Mediatheken anlegen (vorhandene bleiben, auch selbst angelegte). Gibt die Zahl neuer zurück."""
     ordner = _req("GET", "/Library/VirtualFolders", token=token) or []
@@ -237,6 +248,7 @@ def mediatheken_abgleichen(token: str) -> int:
             "EnableChapterImageExtraction": False, "ExtractChapterImagesDuringLibraryScan": False,
             "SaveLocalMetadata": False,  # nichts in die Ordner schreiben (Pool ist für Jellyfin ohnehin nur lesbar)
             "MetadataSavers": [],  # auch keine .nfo – sonst bricht Jellyfin beim Speichern ab (nur lesbar)
+            **(_katalog_optionen() if m.get("katalog") else {}),
         }}, token=token, timeout=60)
         jobs.log(None, f"Jellyfin: Mediathek „{m['name']}“ angelegt")
         neu += 1

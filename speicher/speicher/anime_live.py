@@ -144,7 +144,7 @@ def oeffnen(url: str, referer: str, bereich: str = ""):
          "Accept": "*/*"}
     if bereich:
         h["Range"] = bereich
-    return aniworld._opener().open(urllib.request.Request(url, headers=h), timeout=aniworld.TIMEOUT)
+    return aniworld._opener(True).open(urllib.request.Request(url, headers=h), timeout=aniworld.TIMEOUT)
 
 
 def ist_playlist(url: str, ctype: str, anfang: bytes = b"") -> bool:

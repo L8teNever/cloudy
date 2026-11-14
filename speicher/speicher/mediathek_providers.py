@@ -694,6 +694,9 @@ def fetch_cached_image(url: str) -> tuple[bytes, str] | None:
         except OSError:
             pass
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    if (urllib.parse.urlparse(url).hostname or "").endswith("aniworld.to"):
+        from . import aniworld
+        opener = aniworld._opener(True)  # AniWorld nur durch den VPN-Tunnel
     req = urllib.request.Request(url, headers={"User-Agent": "cloudy-speicher/1.0"})
     try:
         with opener.open(req, timeout=TIMEOUT) as resp:

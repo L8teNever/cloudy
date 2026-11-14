@@ -13,11 +13,11 @@ from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import anime_live, aniworld, auth, config, dateien, freigaben, mediathek, mediathek_db
+from . import anime_katalog, anime_live, aniworld, auth, config, dateien, freigaben, mediathek, mediathek_db
 from .dateien import Fehler
 
 BASE = Path(__file__).parent
@@ -366,3 +366,25 @@ def live_stueck(request: Request, sig: str, token: str, ext: str):
 
     typ = ctype if ctype and "html" not in ctype and "image" not in ctype else ("video/mp4" if ext == "mp4" else "video/mp2t")
     return StreamingResponse(stuecke(), status_code=r.status, media_type=typ, headers=headers)
+
+
+# ---------- Anime-Katalog (Platzhalter in Jellyfin → hier hinzufügen) ----------
+
+@app.api_route("/katalog/{slug}/{sig}.mp4", methods=["GET", "HEAD"])
+def katalog_hinzufuegen(slug: str, sig: str):
+    """Jellyfin spielt „▶ Zu Jellyfin hinzufügen“ ab: Anime live anlegen (im Hintergrund) und kurzen Hinweis-Clip senden."""
+    try:
+        anime_katalog.pruefen(slug, sig)
+        clip = anime_katalog.hinweis_clip()
+    except anime_live.LiveFehler as exc:
+        return _live_fehler(exc)
+    except aniworld.AniFehler as exc:
+        return PlainTextResponse(str(exc), 500)
+    anime_katalog.hinzufuegen(slug)
+    return FileResponse(clip, media_type="video/mp4")
+
+
+@app.get("/api/anime/katalog")
+async def api_katalog(request: Request):
+    await run_in_threadpool(_zugriff, request)
+    return anime_katalog.status()

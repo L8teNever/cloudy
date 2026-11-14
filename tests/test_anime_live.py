@@ -94,3 +94,52 @@ def test_film_ziel_und_umzug(tmp_path, monkeypatch):
     assert "<movie>" in neu.with_suffix(".nfo").read_text() and "<year>2016</year>" in neu.with_suffix(".nfo").read_text()
     assert not alt_ordner.exists()
     assert [g["film"] for g in anime_live.liste()] == [True]
+
+
+def test_vpn_proxy_nur_extern(monkeypatch):
+    """Mit ANIME_PROXY geht alles im Internet durch den Proxy, der Browser (lokal, CDP) nie."""
+    monkeypatch.setenv("ANIME_PROXY", "http://127.0.0.1:8094")
+    extern = {type(h).__name__: h for h in aniworld._opener(True).handlers}["ProxyHandler"]
+    assert extern.proxies == {"http": "http://127.0.0.1:8094", "https": "http://127.0.0.1:8094"}
+    # lokal / ohne Proxy: gar kein Proxy-Handler (auch keiner aus der Umgebung)
+    assert "ProxyHandler" not in {type(h).__name__ for h in aniworld._opener().handlers}
+    monkeypatch.delenv("ANIME_PROXY")
+    assert "ProxyHandler" not in {type(h).__name__ for h in aniworld._opener(True).handlers}
+
+
+def test_katalog_aufbauen_und_hinzufuegen(tmp_path, monkeypatch):
+    from speicher import anime_katalog, anime_meta, mediathek
+
+    wurzel = tmp_path / "Katalog"
+    monkeypatch.setattr(anime_katalog, "ordner", lambda: wurzel)
+    monkeypatch.setattr(anime_katalog, "_zustand_datei", lambda: tmp_path / "z.json")
+    monkeypatch.setattr(anime_katalog, "_vorhanden", lambda: {"schon-da"})
+    monkeypatch.setattr(anime_katalog, "_jellyfin_einlesen", lambda: None)
+    monkeypatch.setattr(anime_katalog, "alle_anime", lambda: [(f"a-{i}", f"Anime {i}") for i in range(150)] + [("schon-da", "Da")])
+    monkeypatch.setattr(mediathek, "pool_mounted", lambda: True)
+    monkeypatch.setattr(mediathek, "pool_root", lambda: tmp_path)
+    monkeypatch.setattr(mediathek, "_chown_tree", lambda *a: None)
+    monkeypatch.setattr(mediathek, "_besitzer", lambda *a: None)
+    monkeypatch.setattr(anime_live, "basis", lambda: "http://h:8093")
+
+    assert not anime_katalog.bereit()
+    assert anime_katalog.aufbauen() == {"neu": 150, "weg": 0, "gesamt": 150}
+    assert anime_katalog.bereit()
+    assert not (wurzel / "Da").exists()
+    strm = (wurzel / "Anime 7" / "Staffel 1" / "Anime 7 - S01E01.strm").read_text()
+    assert strm.startswith("http://h:8093/katalog/a-7/") and strm.strip().endswith(".mp4")
+    sig = strm.strip().rsplit("/", 1)[1][:-4]
+    assert anime_katalog.pruefen("a-7", sig) == "a-7"
+    assert "Katalog" in (wurzel / "Anime 7" / "tvshow.nfo").read_text()
+
+    # Anime wurde hinzugefügt (steht jetzt unter Serien) → Platzhalter verschwindet beim nächsten Abgleich
+    monkeypatch.setattr(anime_katalog, "_vorhanden", lambda: {"a-7", "schon-da"})
+    assert anime_katalog.aufbauen() == {"neu": 0, "weg": 1, "gesamt": 149}
+    assert not (wurzel / "Anime 7").exists()
+
+    # Infos nachtragen
+    monkeypatch.setattr(anime_katalog, "PAUSE", 0)
+    monkeypatch.setattr(aniworld, "_serie", lambda slug: {"slug": slug, "titel": "x", "beschreibung": "Beschreibung!", "jahr": 2001, "genres": ["Action"], "cover": ""})
+    assert anime_katalog.infos_nachtragen() == 149
+    nfo = (wurzel / "Anime 8" / "tvshow.nfo").read_text()
+    assert "Beschreibung!" in nfo and "<year>2001</year>" in nfo and anime_katalog.status()["mit_infos"] == 149

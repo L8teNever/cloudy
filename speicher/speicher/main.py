@@ -117,6 +117,8 @@ async def lifespan(app: FastAPI):
         if int(os.environ.get("ANIME_PORT", "8093") or 0):
             from . import anime_live
             anime_live.neue_folgen_start()
+            from . import anime_katalog
+            anime_katalog.start()
     yield
     _stop.set()
     if "PYTEST_CURRENT_TEST" not in os.environ:

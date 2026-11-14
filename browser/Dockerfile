@@ -4,13 +4,13 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends chromium fonts-liberation ca-certificates tini \
+    && apt-get install -y --no-install-recommends chromium fonts-liberation ca-certificates tini tinyproxy iproute2 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m -u 10001 browser \
     && mkdir /profil && chown browser /profil
 
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
+COPY start.sh proxy.sh /
+RUN chmod +x /start.sh /proxy.sh
 
 USER browser
 VOLUME /profil
