@@ -26,9 +26,10 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import Counter
 from pathlib import Path
 
-from . import anime_meta, aniworld, config, freigaben, mediathek, mediathek_db
+from . import anime_meta, aniworld, config, freigaben, jobs, mediathek, mediathek_db
 
 CACHE_TTL = 20 * 60  # so lange gilt eine gefundene Stream-Adresse
 SEG_EXT = {"ts", "m4s", "mp4", "m4v", "aac", "m4a", "mp3", "vtt", "m3u8", "mkv", "mpegts"}
@@ -197,7 +198,7 @@ def _serien_ordner() -> Path:
     return mediathek.safe_pool_path(f"{base}/{mediathek.SERIEN}")
 
 
-def anlegen(info: dict, folgen: list[dict], sprache: str) -> dict:
+def anlegen(info: dict, folgen: list[dict], sprache: str, einlesen: bool = True) -> dict:
     """info = aniworld.serie(); folgen = [{staffel, nr, titel, …}] → .strm je Folge (fertige Downloads bleiben)."""
     if str(sprache) not in aniworld.SPRACHEN:
         raise aniworld.AniFehler("Unbekannte Sprache")
@@ -220,8 +221,8 @@ def anlegen(info: dict, folgen: list[dict], sprache: str) -> dict:
         mediathek._besitzer(strm)
         anime_meta.fuer_folge(strm, info, j["staffel"], j["folge"], j["folgentitel"])
         neu += 1
-    if neu:
-        aniworld.jellyfin_spaeter()
+    if neu and einlesen:
+        aniworld.jellyfin_jetzt(_serien_ordner())
     return {"neu": neu, "vorhanden": vorhanden}
 
 
@@ -274,8 +275,101 @@ def entfernen(ordner: str) -> int:
         except OSError:
             pass
     if n:
-        aniworld.jellyfin_spaeter()
+        aniworld.jellyfin_jetzt(root)
     return n
+
+
+# ---------- Neue Folgen automatisch ----------
+
+NEU_ALLE = 6 * 3600  # so oft bei AniWorld nach neuen Folgen der Live-Serien schauen
+_neu_lock = threading.Lock()
+_neu_gestartet = False
+
+
+def _abos() -> dict[Path, dict]:
+    """Live-Serien aus den .strm lesen: Serienordner → {slug, sprachen, folgen: {staffel: höchste Folge}}.
+    Mehr braucht es nicht – in jeder .strm stehen Anime, Staffel, Folge und Sprache."""
+    out: dict[Path, dict] = {}
+    for root, p in _live_dateien():
+        try:
+            m = ZEILE_RE.match(p.read_text(errors="replace").strip())
+        except OSError:
+            continue
+        if not m:
+            continue
+        a = out.setdefault(root / p.relative_to(root).parts[0], {"slug": m.group(1), "sprachen": Counter(), "folgen": {}})
+        a["sprachen"][m.group(4)] += 1
+        s, f = int(m.group(2)), int(m.group(3))
+        a["folgen"][s] = max(a["folgen"].get(s, 0), f)
+    return out
+
+
+def _neue_fuer(ordner: Path, a: dict) -> list[dict]:
+    """Folgen nach der höchsten vorhandenen je Staffel, dazu neue Staffeln nach der höchsten. Ältere Staffeln, die
+    man nicht ausgewählt hat, und einzeln gelöschte Folgen kommen nicht wieder. Gibt es eine Folge noch nicht in der
+    Sprache (z. B. Synchro kommt später), hört die Staffel dort auf und wird beim nächsten Mal weiter geprüft."""
+    info = aniworld._serie(aniworld._check_slug(a["slug"]))  # frisch, nicht aus dem 15-Minuten-Merker
+    soll = Path(aniworld.ziel_rel({"titel": info["titel"], "jahr": info.get("jahr"), "staffel": 1, "folge": 1}))
+    if soll.parent.parent.name != ordner.name:
+        return []  # Titel/Jahr bei AniWorld geändert – lieber nichts in einen zweiten Ordner legen
+    sprache = a["sprachen"].most_common(1)[0][0]
+    hoechste = max(a["folgen"])
+    wahl = []
+    for st in info["staffeln"]:
+        if st["film"] or st["nr"] < 1:
+            continue
+        bis = a["folgen"].get(st["nr"])
+        if bis is None and st["nr"] < hoechste:
+            continue
+        for f in aniworld._staffel(info["slug"], st["nr"]):
+            if f["nr"] <= (bis or 0):
+                continue
+            if f.get("sprachen") and sprache not in f["sprachen"]:
+                break
+            wahl.append({**f, "staffel": st["nr"]})
+    return [{**f, "sprache": sprache, "info": info} for f in wahl]
+
+
+def neue_folgen() -> int:
+    """Bei allen Live-Serien neue Folgen von AniWorld anlegen. Gibt die Zahl neuer Folgen zurück."""
+    if not mediathek.pool_mounted():
+        return 0
+    with _neu_lock:
+        n = 0
+        for ordner, a in _abos().items():
+            try:
+                wahl = _neue_fuer(ordner, a)
+                if not wahl:
+                    continue
+                r = anlegen(wahl[0]["info"], wahl, wahl[0]["sprache"], einlesen=False)
+            except Exception as exc:  # noqa: BLE001 – eine Serie darf die anderen nicht aufhalten
+                jobs.log(None, f"Anime live: neue Folgen für „{ordner.name}“ nicht geprüft: {exc}"[:300])
+                continue
+            if r["neu"]:
+                n += r["neu"]
+                jobs.log(None, f"Anime live: {r['neu']} neue Folge{'' if r['neu'] == 1 else 'n'} von „{ordner.name}“")
+        if n:
+            aniworld.jellyfin_jetzt(_serien_ordner())
+        return n
+
+
+def neue_folgen_start() -> None:
+    """Hintergrund: kurz nach dem Start und dann alle NEU_ALLE Sekunden nach neuen Folgen schauen."""
+    global _neu_gestartet
+    if _neu_gestartet:
+        return
+    _neu_gestartet = True
+
+    def schleife() -> None:
+        time.sleep(10 * 60)  # erst einhängen und Jellyfin hochfahren lassen
+        while True:
+            try:
+                neue_folgen()
+            except Exception as exc:  # noqa: BLE001
+                jobs.log(None, f"Anime live: Suche nach neuen Folgen: {exc}"[:300])
+            time.sleep(NEU_ALLE)
+
+    threading.Thread(target=schleife, name="anime-neue-folgen", daemon=True).start()
 
 
 _repariert = False

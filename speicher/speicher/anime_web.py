@@ -222,6 +222,13 @@ async def api_live_liste(request: Request):
             "loeschen": getattr(request.state, "bereich_recht", "voll") == "voll"}
 
 
+@app.post("/api/anime/live/neu")
+async def api_live_neu(request: Request):
+    """Jetzt bei allen Live-Serien nach neuen Folgen schauen (sonst alle 6 Stunden von selbst)."""
+    dateien._csrf(request, request.headers.get("x-csrf", ""))
+    return await _anime(request, lambda: {"neu": anime_live.neue_folgen()}, write=True)
+
+
 @app.post("/api/anime/live/entfernen")
 async def api_live_entfernen(request: Request):
     """{ordner} – alle Live-Folgen dieser Serie löschen (heruntergeladene bleiben)."""

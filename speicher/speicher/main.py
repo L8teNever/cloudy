@@ -114,6 +114,9 @@ async def lifespan(app: FastAPI):
         threading.Thread(target=scheduler, name="planer", daemon=True).start()
         last.start()
         medien.start()
+        if int(os.environ.get("ANIME_PORT", "8093") or 0):
+            from . import anime_live
+            anime_live.neue_folgen_start()
     yield
     _stop.set()
     if "PYTEST_CURRENT_TEST" not in os.environ:

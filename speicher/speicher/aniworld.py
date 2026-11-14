@@ -479,6 +479,20 @@ def jellyfin_spaeter() -> None:
     _jellyfin_faellig = True
 
 
+def jellyfin_jetzt(pfad: Path) -> None:
+    """Live-Folgen sind sofort fertig: die Mediathek gleich einlesen, nicht erst wenn die Downloads durch sind."""
+    def los() -> None:
+        try:
+            from . import jellyfin
+            if jellyfin.mediathek_einlesen(str(pfad)):
+                jobs.log(None, "Jellyfin liest die neuen Anime ein")
+                return
+        except Exception:  # noqa: BLE001 – dann wie bisher nach den Downloads
+            pass
+        jellyfin_spaeter()
+    threading.Thread(target=los, name="jellyfin-einlesen", daemon=True).start()
+
+
 def _set(j: dict, **werte) -> None:
     with _lock:
         j.update(werte)
@@ -628,9 +642,20 @@ def _eintragen(j: dict, rel: str, dst: Path) -> None:
 
 
 def _jellyfin_neu_einlesen() -> None:
+    """Nur die Mediathek „Serien“ einlesen. Kein /Library/Refresh: Das bricht einen laufenden Scan ab und fängt von
+    vorn an – kamen Downloads nacheinander fertig, wurde Jellyfin so nie fertig (nur ein Teil der Folgen da)."""
+    global _jellyfin_faellig
     try:
         from . import jellyfin
-        jellyfin._req("POST", "/Library/Refresh", token=jellyfin._token())
+        base = (mediathek_db.Einstellungen.load().streaming_ordner or "Streaming").strip("/")
+        if jellyfin.mediathek_einlesen(str(mediathek.safe_pool_path(f"{base}/{mediathek.SERIEN}"))):
+            jobs.log(None, "Jellyfin liest die neuen Anime ein")
+            return
+        token = jellyfin._token()
+        if jellyfin.scan_laeuft(token):
+            _jellyfin_faellig = True  # der laufende Scan findet sie vielleicht schon; sonst gleich danach
+            return
+        jellyfin._req("POST", "/Library/Refresh", token=token)
         jobs.log(None, "Jellyfin liest die neuen Anime ein")
     except Exception:  # noqa: BLE001 – Jellyfin findet sie sonst beim nächsten Scan
         pass

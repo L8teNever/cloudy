@@ -142,6 +142,22 @@ def gewuenschte_mediatheken() -> list[dict]:
     return out
 
 
+def mediathek_einlesen(pfad: str) -> bool:
+    """Nur die Mediathek neu einlesen, in der `pfad` liegt (wie „Mediathek scannen“ im Menü) – geht viel
+    schneller als alle Mediatheken. False, wenn keine passt."""
+    pfad = pfad.rstrip("/")
+    token = _token()
+    for v in _req("GET", "/Library/VirtualFolders", token=token) or []:
+        orte = [str(o).rstrip("/") for o in v.get("Locations") or []]
+        if v.get("ItemId") and any(pfad == o or pfad.startswith(o + "/") for o in orte):
+            q = urllib.parse.urlencode({"Recursive": "true", "MetadataRefreshMode": "Default",
+                                        "ImageRefreshMode": "Default", "ReplaceAllMetadata": "false",
+                                        "ReplaceAllImages": "false"})
+            _req("POST", f"/Items/{v['ItemId']}/Refresh?{q}", token=token, timeout=30)
+            return True
+    return False
+
+
 def _im_streaming(ordner: str, base: str) -> bool:
     """Liegt der Ordner (relativ zum Pool) im Streaming-Ordner oder ist es dieser selbst?"""
     o, b = (ordner or "").strip("/").lower(), base.strip("/").lower()
@@ -170,11 +186,41 @@ def _doppelte_streaming_mediatheken(token: str, ordner: list[dict]) -> list[str]
     return weg
 
 
+def _nicht_schreiben(token: str, v: dict) -> None:
+    """Jellyfin sieht den Pool nur lesbar: .nfo-Speichern aus (bei älteren Mediatheken war es noch an –
+    „Read-only file system …season.nfo“ im Log). Nur einmal je Mediathek, damit es nicht alle 5 Minuten
+    wieder gesetzt wird, falls Jellyfin die leere Liste anders zurückgibt (oder man es von Hand wieder einschaltet)."""
+    opt = v.get("LibraryOptions")
+    erledigt = zugang().get("nfo_aus") or []
+    if not isinstance(opt, dict) or not v.get("ItemId") or v["ItemId"] in erledigt:
+        return
+    if opt.get("MetadataSavers") != [] or opt.get("SaveLocalMetadata") is not False:
+        try:
+            _req("POST", "/Library/VirtualFolders/LibraryOptions",
+                 {"Id": v["ItemId"], "LibraryOptions": {**opt, "MetadataSavers": [], "SaveLocalMetadata": False}},
+                 token=token, timeout=30)
+            jobs.log(None, f"Jellyfin: Mediathek „{v.get('Name')}“ schreibt keine .nfo mehr in den Pool")
+        except JellyfinFehler:
+            return
+    _zugang_speichern(nfo_aus=[*erledigt, v["ItemId"]])
+
+
+def scan_laeuft(token: str) -> bool:
+    """Läuft gerade „Medienbibliothek scannen“? Ein neues /Library/Refresh würde den laufenden Scan abbrechen."""
+    for t in _req("GET", "/ScheduledTasks?isHidden=false", token=token) or []:
+        if t.get("Key") == "RefreshLibrary" and t.get("State") in ("Running", "Cancelling"):
+            return True
+    return False
+
+
 def mediatheken_abgleichen(token: str) -> int:
     """Fehlende Mediatheken anlegen (vorhandene bleiben, auch selbst angelegte). Gibt die Zahl neuer zurück."""
     ordner = _req("GET", "/Library/VirtualFolders", token=token) or []
     weg = set(_doppelte_streaming_mediatheken(token, ordner))
     vorhanden = {(v.get("Name") or "").lower() for v in ordner} - weg
+    for v in ordner:
+        if (v.get("Name") or "").lower() not in weg:
+            _nicht_schreiben(token, v)
     neu = 0
     for m in gewuenschte_mediatheken():
         if m["name"].lower() in vorhanden:
@@ -190,6 +236,7 @@ def mediatheken_abgleichen(token: str) -> int:
             "PreferredMetadataLanguage": "de", "MetadataCountryCode": "DE", "EnableRealtimeMonitor": True,
             "EnableChapterImageExtraction": False, "ExtractChapterImagesDuringLibraryScan": False,
             "SaveLocalMetadata": False,  # nichts in die Ordner schreiben (Pool ist für Jellyfin ohnehin nur lesbar)
+            "MetadataSavers": [],  # auch keine .nfo – sonst bricht Jellyfin beim Speichern ab (nur lesbar)
         }}, token=token, timeout=60)
         jobs.log(None, f"Jellyfin: Mediathek „{m['name']}“ angelegt")
         neu += 1

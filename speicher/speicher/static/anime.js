@@ -343,6 +343,15 @@
   }
   $("#dl-retry").addEventListener("click", () => jobAktion("wiederholen"));
   $("#dl-clear").addEventListener("click", () => jobAktion("aufraeumen"));
+  $("#live-neu")?.addEventListener("click", async (ev) => {
+    const btn = ev.currentTarget;
+    btn.disabled = true;
+    try {
+      const r = await api("/api/anime/live/neu", { method: "POST", body: {} });
+      toast(r.neu ? `${r.neu} neue Folge${r.neu === 1 ? "" : "n"} – Jellyfin liest sie gleich ein` : "Keine neuen Folgen");
+      if (r.neu) ladeLib();
+    } catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
+  });
 
   let pollT;
   async function poll() {

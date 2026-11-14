@@ -42,8 +42,11 @@
   <div id="lib-status" class="body-m variant" style="margin:0 0 12px"></div>
   <div id="lib-list" style="display:grid;gap:12px"></div>
   <div id="live-box" hidden>
-    <h2 class="title-l" style="margin:24px 0 4px">Live in Jellyfin</h2>
-    <p class="body-m variant" style="margin:0 0 12px">Ohne Datei – Jellyfin holt die Folgen beim Abspielen von AniWorld.</p>
+    <div style="display:flex;align-items:center;gap:8px;margin:24px 0 4px">
+      <h2 class="title-l" style="flex:1;margin:0">Live in Jellyfin</h2>
+      {% if can_write %}<button type="button" class="btn text" id="live-neu"><span class="ms">refresh</span>Neue Folgen suchen</button>{% endif %}
+    </div>
+    <p class="body-m variant" style="margin:0 0 12px">Ohne Datei – Jellyfin holt die Folgen beim Abspielen von AniWorld. Neue Folgen kommen alle 6 Stunden von selbst dazu.</p>
     <div id="live-list" style="display:grid;gap:8px"></div>
   </div>
 </div>
