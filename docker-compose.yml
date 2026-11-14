@@ -124,8 +124,9 @@ services:
       # Live-Ansicht des digitalen Browsers (zugucken, klicken, tippen): eigene Seite auf diesem Port (0 = aus)
       ANIME_BROWSER_PORT: ${ANIME_BROWSER_PORT:-8095}
       BROWSER_CDP: http://127.0.0.1:9222
-      # Alles von AniWorld/Hostern (Seiten, Streams, Cover, Downloads) geht NUR durch den VPN-Proxy (anime-vpn).
-      ANIME_PROXY: http://127.0.0.1:8094
+      # Optional: AniWorld/Hoster (Seiten, Streams, Cover, Downloads) NUR durch einen VPN-Proxy (siehe anime-vpn unten).
+      # Leer = ganz normal direkt ins Internet. Einschalten in .env: ANIME_PROXY=http://127.0.0.1:8094
+      ANIME_PROXY: ${ANIME_PROXY:-}
       ANIME_PARALLEL: ${ANIME_PARALLEL:-2}
     volumes:
       - ./data/speicher:/data
@@ -154,19 +155,21 @@ services:
     shm_size: 256m
     environment:
       TZ: Europe/Berlin
-      ANIME_PROXY: http://127.0.0.1:8094
+      ANIME_PROXY: ${ANIME_PROXY:-}
     # Startet als root, damit der Profilordner dem Browser-Benutzer gegeben werden kann (start.sh), und läuft dann ohne Rechte.
     user: root
     volumes:
       - ./data/browser:/profil
 
-  # VPN-Proxy für die Anime-Seite: Browser, Streams, Cover und Downloads von AniWorld gehen immer hierüber und
-  # damit durch den VPN-Tunnel (Standard: vpn1). Ohne Tunnel kommt keine Verbindung zustande (Kill-Switch im VPN-Container).
+  # OPTIONAL (startet nur mit COMPOSE_PROFILES=vpn): VPN-Proxy für die Anime-Seite. Dann ANIME_PROXY=http://127.0.0.1:8094 setzen:
+  # Browser, Streams, Cover und Downloads von AniWorld gehen immer hierüber und damit durch den VPN-Tunnel (Standard: vpn1).
+  # Ohne Tunnel kommt keine Verbindung zustande (Kill-Switch im VPN-Container).
   # Anderes Profil: VPN_GATEWAY und VPN_SLOT in .env (z. B. 172.29.86.22 und vpn2). Nur auf 127.0.0.1:8094 erreichbar.
   anime-vpn:
     image: ghcr.io/l8tenever/cloudy:browser
     container_name: cloudy-anime-vpn
     restart: unless-stopped
+    profiles: ["vpn"]
     user: root
     entrypoint: ["/proxy.sh"]
     cap_add:
@@ -178,8 +181,6 @@ services:
       - ./data/warp:/vpnconf:ro
     ports:
       - "127.0.0.1:8094:8888"
-    depends_on:
-      - vpn1
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8888"]
       interval: 30s
