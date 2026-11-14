@@ -143,3 +143,14 @@ def test_katalog_aufbauen_und_hinzufuegen(tmp_path, monkeypatch):
     assert anime_katalog.infos_nachtragen() == 149
     nfo = (wurzel / "Anime 8" / "tvshow.nfo").read_text()
     assert "Beschreibung!" in nfo and "<year>2001</year>" in nfo and anime_katalog.status()["mit_infos"] == 149
+
+
+def test_live_browser_nur_erlaubte_befehle():
+    from speicher import anime_browser as b
+
+    assert b._erlaubt({"method": "Input.dispatchMouseEvent", "params": {"type": "mouseMoved"}})
+    assert b._erlaubt({"method": "Page.navigate", "params": {"url": "https://aniworld.to"}})
+    assert not b._erlaubt({"method": "Page.navigate", "params": {"url": "file:///etc/passwd"}})
+    assert not b._erlaubt({"method": "Network.getAllCookies", "params": {}})
+    assert not b._erlaubt({"method": "Runtime.evaluate", "params": {"expression": "document.cookie"}})
+    assert b._erlaubt({"method": "Runtime.evaluate", "params": {"expression": "location.href"}})

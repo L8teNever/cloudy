@@ -21,6 +21,12 @@ async def main() -> None:
         servers.append(uvicorn.Server(uvicorn.Config("speicher.anime_web:app", port=anime_port, host="0.0.0.0",
                                                      server_header=False, proxy_headers=True, forwarded_allow_ips="127.0.0.1",
                                                      lifespan="off")))
+    browser_port = int(os.environ.get("ANIME_BROWSER_PORT", "8095") or 0)
+    if anime_port and browser_port:
+        # Zweiter Port, gleiche Anime-App: „/“ zeigt dort gleich den Live-Browser (Seite zum Zugucken und Steuern).
+        servers.append(uvicorn.Server(uvicorn.Config("speicher.anime_web:app", port=browser_port, host="0.0.0.0",
+                                                     server_header=False, proxy_headers=True, forwarded_allow_ips="127.0.0.1",
+                                                     lifespan="off")))
     tasks = [asyncio.create_task(s.serve()) for s in servers]
     done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     for s in servers:  # endet einer (Fehler oder Stopp), beide sauber beenden

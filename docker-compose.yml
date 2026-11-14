@@ -121,6 +121,8 @@ services:
       CLOUDY_PASSWORD: ${DASHBOARD_PASSWORD:-}
       # Anime-Seite (eigene Webseite, Port 8093; 0 = aus): Seiten über den digitalen Browser holen, gleichzeitige Downloads
       ANIME_PORT: ${ANIME_PORT:-8093}
+      # Live-Ansicht des digitalen Browsers (zugucken, klicken, tippen): eigene Seite auf diesem Port (0 = aus)
+      ANIME_BROWSER_PORT: ${ANIME_BROWSER_PORT:-8095}
       BROWSER_CDP: http://127.0.0.1:9222
       # Alles von AniWorld/Hostern (Seiten, Streams, Cover, Downloads) geht NUR durch den VPN-Proxy (anime-vpn).
       ANIME_PROXY: http://127.0.0.1:8094

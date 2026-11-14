@@ -7,11 +7,12 @@ Nur im Heimnetz (cloudy reicht die eigene Domain nur lokal durch, kein Cloudflar
 
 /live/… ist für Jellyfin (Anime live ohne Download, siehe anime_live.py): ohne Anmeldung, aber jede Adresse signiert.
 """
+import os
 import urllib.error
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -63,7 +64,7 @@ async def security(request: Request, call_next):
         response.headers.setdefault("Cache-Control", "no-store")
     response.headers.setdefault("Content-Security-Policy", (
         "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; img-src 'self' data:; "
-        "form-action 'self'; base-uri 'none'; frame-ancestors 'self'"))
+        "form-action 'self'; base-uri 'none'; frame-ancestors 'self'; connect-src 'self' ws: wss:"))
     return response
 
 
@@ -99,6 +100,8 @@ async def healthz():
 
 @app.get("/", response_class=HTMLResponse)
 async def start(request: Request):
+    if request.scope.get("server", (None, 0))[1] == browser_port():
+        return RedirectResponse("/browser", 303)  # eigener Port: gleich die Browser-Ansicht
     try:
         can_write = await run_in_threadpool(_zugriff, request)
     except Fehler as exc:
@@ -388,3 +391,53 @@ def katalog_hinzufuegen(slug: str, sig: str):
 async def api_katalog(request: Request):
     await run_in_threadpool(_zugriff, request)
     return anime_katalog.status()
+
+
+# ---------- Live-Browser (eigener Port ANIME_BROWSER_PORT, auch unter /browser auf dem Anime-Port) ----------
+
+def browser_port() -> int:
+    return int(os.environ.get("ANIME_BROWSER_PORT", "8095") or 0)
+
+
+@app.get("/browser", response_class=HTMLResponse)
+async def browser_seite(request: Request):
+    try:
+        await run_in_threadpool(_browser_recht, request)
+    except Fehler as exc:
+        if exc.status == 401:
+            return RedirectResponse("/login", 303)
+        raise
+    return _page(request, "anime_browser.html", cdp=bool(aniworld._cdp_base()))
+
+
+def _browser_recht(conn) -> None:
+    """Der Browser hat Cookies und ein eigenes Profil: nur mit vollem Recht auf den Streaming-Ordner."""
+    _zugriff(conn, True)
+    if getattr(conn.state, "bereich_recht", "voll") != "voll":
+        raise Fehler(403, "Dafür brauchst du volles Recht auf den Streaming-Ordner")
+
+
+@app.websocket("/api/browser/ws")
+async def browser_ws(ws: WebSocket):
+    """Fernsteuerung des Browsers: Bilder (Screencast) zur Seite, Maus/Tastatur zurück – nur erlaubte CDP-Befehle."""
+    origin = ws.headers.get("origin") or ""
+    if origin and urlparse(origin).netloc != ws.headers.get("host", ""):
+        await ws.close(4403)
+        return
+    sess = dateien.read_session(ws.cookies.get(dateien.COOKIE))
+    ws.state.benutzer = sess[0] if sess else ""
+    e = freigaben.Einstellungen.load()
+    if e.geraet_login and not ws.state.benutzer:
+        key = await run_in_threadpool(freigaben.key_fuer_ip, dateien._ip(ws))
+        ws.state.benutzer = e.geraet_benutzer(key)
+    ws.state.recht = e.recht(ws.state.benutzer) if ws.state.benutzer else "voll"
+    try:
+        await run_in_threadpool(_browser_recht, ws)
+        if not aniworld._cdp_base():
+            raise Fehler(503, "Kein Browser eingerichtet")
+    except Fehler:
+        await ws.close(4401)
+        return
+    await ws.accept()
+    from . import anime_browser
+    await anime_browser.relay(ws)

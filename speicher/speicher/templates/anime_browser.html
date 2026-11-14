@@ -1,0 +1,37 @@
+{% extends "anime_base.html" %}
+
+{% block content %}
+<header class="appbar">
+  <div style="min-width:0">
+    <h1 class="display">Browser</h1>
+    <p class="variant">Der digitale Browser live: Schutzseiten lösen, auf AniWorld nachsehen, selbst tippen und klicken. Alles läuft über den VPN-Tunnel, gelöste Schutzseiten merkt sich der Browser auch für die automatischen Abrufe.</p>
+  </div>
+  <div class="files-actions">
+    <span class="chip" id="br-status"><span class="ms">hourglass_empty</span>Verbinde …</span>
+  </div>
+</header>
+
+{% if not cdp %}
+<div class="danger-box"><span class="ms">error</span><span class="body-m">Kein Browser eingerichtet (BROWSER_CDP).</span></div>
+{% else %}
+<div class="files-actions" style="gap:8px;flex-wrap:wrap;margin-bottom:8px">
+  <button type="button" class="icon-btn" id="br-back" title="Zurück" aria-label="Zurück"><span class="ms">arrow_back</span></button>
+  <button type="button" class="icon-btn" id="br-fwd" title="Vor" aria-label="Vor"><span class="ms">arrow_forward</span></button>
+  <button type="button" class="icon-btn" id="br-reload" title="Neu laden" aria-label="Neu laden"><span class="ms">refresh</span></button>
+  <form id="br-go" style="flex:1;min-width:200px;display:flex;gap:8px">
+    <input id="br-url" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://aniworld.to" style="flex:1;min-width:0">
+    <button class="btn tonal"><span class="ms">arrow_forward</span>Öffnen</button>
+  </form>
+</div>
+<div style="border:1px solid var(--outline-variant,#555);border-radius:12px;overflow:hidden;background:#000">
+  <img id="br-bild" alt="Live-Ansicht des Browsers" draggable="false" tabindex="0" style="display:block;width:100%;height:auto;min-height:200px;touch-action:none;user-select:none;outline:none">
+</div>
+<form id="br-text" style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+  <input id="br-eingabe" type="text" autocomplete="off" placeholder="Text eingeben (fürs Handy oder zum Einfügen) und senden" style="flex:1;min-width:200px">
+  <button class="btn tonal"><span class="ms">send</span>Text senden</button>
+  <button type="button" class="btn text" id="br-enter"><span class="ms">keyboard_return</span>Enter</button>
+</form>
+<p class="body-s variant" style="margin-top:6px">Klicken, scrollen (Mausrad oder wischen) und Tippen gehen direkt im Bild. Auf dem Handy: Text unten eintippen und senden.</p>
+{% endif %}
+<script src="/static/anime_browser.js?v={{ static_v }}" defer></script>
+{% endblock %}
