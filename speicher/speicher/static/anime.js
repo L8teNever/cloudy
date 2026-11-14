@@ -83,7 +83,8 @@
         art.replaceChildren(i);
       }
       const n = s.staffeln.filter((x) => !x.film).length;
-      sub.textContent = [s.jahr, n ? `${n} Staffel${n > 1 ? "n" : ""}` : "", s.staffeln.some((x) => x.film) ? "Filme" : ""].filter(Boolean).join(" · ");
+      sub.textContent = s.film === "einzeln" ? [s.jahr, "Film"].filter(Boolean).join(" · ")
+        : [s.jahr, n && !s.film ? `${n} Staffel${n > 1 ? "n" : ""}` : "", s.staffeln.some((x) => x.film) || s.film ? "Filme" : ""].filter(Boolean).join(" · ");
     };
     return btn;
   }
@@ -423,7 +424,7 @@
         ic.append(ms("live_tv"));
         const txt = el("div", "txt");
         txt.append(el("p", "body-m", g.ordner));
-        txt.append(el("p", "body-s variant", `${g.folgen} Folge${g.folgen === 1 ? "" : "n"}${g.staffeln.length ? " · " + g.staffeln.join(", ") : ""}`));
+        txt.append(el("p", "body-s variant", g.film ? "Film" : `${g.folgen} Folge${g.folgen === 1 ? "" : "n"}${g.staffeln.length ? " · " + g.staffeln.join(", ") : ""}`));
         row.append(ic, txt);
         if (r.loeschen) {
           const del = el("button", "icon-btn danger");

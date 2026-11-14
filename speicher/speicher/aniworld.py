@@ -252,7 +252,25 @@ def _serie(slug: str) -> dict:
         "beschreibung": html.unescape(besch.group(1)).strip() if besch else "",
         "hintergrund": urllib.parse.urljoin(BASE, hinten.group(1).strip()) if hinten else "",
         "genres": [g for g in dict.fromkeys(genres) if g and g.lower() not in ("ger", "gersub", "eng", "engsub")][:8], "staffeln": staffeln,
+        "film": _film_art(slug, staffeln),
     }
+
+
+def _film_art(slug: str, staffeln: list[dict]) -> str:
+    """Ist der Eintrag ein Film statt einer Serie? AniWorld führt Filme wie „Your Name.“ als Staffel 1 mit einer Folge
+    („… [Movie]“) oder nur mit „Filme“. "einzeln" = ein Film, "mehrere" = nur Filme (z. B. eine Filmreihe), "" = Serie.
+    Filme einer echten Serie (Serie + „Filme“) bleiben bei der Serie (Jellyfin: Specials/Staffel 0)."""
+    serie = [s for s in staffeln if not s["film"]]
+    try:
+        if not serie:
+            return "einzeln" if len(staffel(slug, 0)) <= 1 else "mehrere"
+        if len(staffeln) == 1:
+            folgen = staffel(slug, serie[0]["nr"])
+            if len(folgen) == 1 and folgen[0].get("movie"):
+                return "einzeln"
+    except Exception:  # noqa: BLE001 – im Zweifel wie bisher als Serie
+        pass
+    return ""
 
 
 SPRACHEN = {"1": "Deutsch", "2": "Eng-Sub", "3": "Ger-Sub"}
@@ -280,10 +298,12 @@ def _staffel(slug: str, nr: int) -> list[dict]:
         if any(f["nr"] == num for f in folgen):
             continue
         titel = _text(de.group(1)) if de else ""
-        titel_en = re.sub(r"\s*\[(Episode|Film)\s*\d+\]\s*$", "", _text(en.group(1)) if en else "")
+        roh_en = _text(en.group(1)) if en else ""
+        titel_en = re.sub(r"\s*\[(Episode|Film|Movie)\s*\d*\]\s*$", "", roh_en)
         folgen.append({
             "nr": num, "pfad": a.group(1), "titel": titel or titel_en,
             "sprachen": sorted({FLAGGEN[f] for f in flaggen if f in FLAGGEN}),
+            "movie": bool(re.search(r"\[(Movie|Film)\s*\d*\]\s*$", roh_en)),
         })
     return folgen
 
@@ -404,8 +424,20 @@ def liste() -> list[dict]:
         return [dict(j) for j in _jobs]
 
 
+def film_name(j: dict) -> str:
+    """Ordner-/Dateiname eines Films: „Titel (Jahr)“; bei Filmreihen der Filmtitel (ohne Jahr, das kennt AniWorld nur
+    für die Reihe)."""
+    if j.get("film") == "mehrere":
+        return mediathek_providers.sanitize_name(j.get("folgentitel") or f"{j['titel']} Film {int(j['folge'])}")
+    name = mediathek_providers.sanitize_name(j["titel"])
+    return f"{name} ({j['jahr']})" if j.get("jahr") else name
+
+
 def ziel_rel(j: dict) -> str:
     base = (mediathek_db.Einstellungen.load().streaming_ordner or "Streaming").strip("/")
+    if j.get("film"):
+        name = film_name(j)
+        return f"{base}/{mediathek.FILME}/{name}/{name}.mp4"
     name = mediathek_providers.sanitize_name(j["titel"])
     ordner = f"{name} ({j['jahr']})" if j.get("jahr") else name
     s, e = int(j["staffel"]), int(j["folge"])
@@ -432,7 +464,7 @@ def hinzufuegen(info: dict, folgen: list[dict], sprache: str) -> int:
                 "id": uuid.uuid4().hex[:12], "slug": info["slug"], "titel": info["titel"], "jahr": info.get("jahr"),
                 "cover": info.get("cover", ""), "hintergrund": info.get("hintergrund", ""), "beschreibung": (info.get("beschreibung") or "")[:1500],
                 "genres": info.get("genres") or [], "staffel": int(f.get("staffel") or 0), "folge": int(f.get("nr") or 0),
-                "folgentitel": str(f.get("titel") or "")[:150], "pfad": pfad, "sprache": sprache,
+                "folgentitel": str(f.get("titel") or "")[:150], "pfad": pfad, "sprache": sprache, "film": info.get("film") or "",
                 "status": "wartet", "fortschritt": 0, "bytes": 0, "meldung": "", "erstellt": time.time(),
             })
             neu += 1
@@ -625,30 +657,35 @@ def _meta(j: dict, dst: Path) -> None:
     info = {"slug": j["slug"], "titel": j["titel"], "jahr": j.get("jahr"), "cover": j.get("cover", ""),
             "hintergrund": j.get("hintergrund", ""),
             "beschreibung": j.get("beschreibung", ""), "genres": j.get("genres") or []}
-    anime_meta.fuer_folge(dst, info, int(j["staffel"]), int(j["folge"]), j.get("folgentitel", ""))
+    anime_meta.fuer_folge(dst, info, int(j["staffel"]), int(j["folge"]), j.get("folgentitel", ""), film=j.get("film") or "")
 
 
 def _eintragen(j: dict, rel: str, dst: Path) -> None:
     """In die Mediathek (Streaming-Seite) eintragen; Umwandeln nur, wenn das Format nicht passt."""
+    film = j.get("film") or ""
     titel_id = mediathek_db.upsert_title({
-        "ref": f"aniworld:{j['slug']}", "provider": "aniworld", "type": "show", "anime": True,
-        "name": j["titel"], "year": j.get("jahr"), "poster": j.get("cover", ""),
+        "ref": f"aniworld:{j['slug']}" + (f":film-{int(j['folge'])}" if film == "mehrere" else ""), "provider": "aniworld",
+        "type": "movie" if film else "show", "anime": True,
+        "name": (j.get("folgentitel") or j["titel"]) if film == "mehrere" else j["titel"],
+        "year": None if film == "mehrere" else j.get("jahr"), "poster": j.get("cover", ""),
         "summary": j.get("beschreibung", ""), "genres": j.get("genres") or [],
         "url": f"{BASE}/anime/stream/{j['slug']}",
     })
-    fid = mediathek_db.register_file(titel_id, rel, staffel=j["staffel"], folge=j["folge"],
-                                     folgentitel=j.get("folgentitel", ""), status="umwandlung", groesse=dst.stat().st_size)
+    fid = mediathek_db.register_file(titel_id, rel, staffel=None if film else j["staffel"], folge=None if film else j["folge"],
+                                     folgentitel="" if film else j.get("folgentitel", ""), status="umwandlung", groesse=dst.stat().st_size)
     mediathek.finalize_uploaded_streaming_file(fid)
 
 
 def _jellyfin_neu_einlesen() -> None:
-    """Nur die Mediathek „Serien“ einlesen. Kein /Library/Refresh: Das bricht einen laufenden Scan ab und fängt von
+    """Nur die Mediatheken „Serien“ und „Filme“ einlesen. Kein /Library/Refresh: Das bricht einen laufenden Scan ab und fängt von
     vorn an – kamen Downloads nacheinander fertig, wurde Jellyfin so nie fertig (nur ein Teil der Folgen da)."""
     global _jellyfin_faellig
     try:
         from . import jellyfin
         base = (mediathek_db.Einstellungen.load().streaming_ordner or "Streaming").strip("/")
-        if jellyfin.mediathek_einlesen(str(mediathek.safe_pool_path(f"{base}/{mediathek.SERIEN}"))):
+        gefunden = [jellyfin.mediathek_einlesen(str(mediathek.safe_pool_path(f"{base}/{unter}")))
+                    for unter in (mediathek.SERIEN, mediathek.FILME)]
+        if all(gefunden):
             jobs.log(None, "Jellyfin liest die neuen Anime ein")
             return
         token = jellyfin._token()

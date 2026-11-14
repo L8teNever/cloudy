@@ -5,6 +5,8 @@ Jellyfin liest von sich aus:
   <Serie>/backdrop.jpg                 → breites Hintergrundbild (AniWorld-Banner)
   <Serie>/Staffel N/season.nfo         → Staffelnummer/-name
   <Serie>/Staffel N/<Folge>.nfo        → Folgentitel, Staffel/Folge (gleicher Name wie .strm/.mp4)
+Filme (siehe aniworld._film_art) liegen unter Filme/<Titel (Jahr)>/:
+  <Titel (Jahr)>.nfo (<movie>) + poster.jpg + backdrop.jpg
 Ohne diese Dateien kennt Jellyfin bei .strm nichts außer dem Ordnernamen (und zeigt nur ein Ordner-Symbol).
 Bilder/Beschreibungen, die hier fehlen, ergänzt Jellyfin weiter aus dem Internet (TMDB), weil nichts gesperrt ist.
 """
@@ -74,6 +76,28 @@ def serie(ordner: Path, info: dict) -> None:
             _schreiben(ordner / "backdrop.jpg", bild)
 
 
+def film_infos(video: Path, info: dict, titel: str) -> None:
+    """<Film>.nfo + poster.jpg/backdrop.jpg im Filmordner (einmal; vorhandene bleiben)."""
+    ordner = video.parent
+    genres = "".join(f"  <genre>{_x(g)}</genre>\n" for g in info.get("genres") or [])
+    jahr = f"  <year>{int(info['jahr'])}</year>\n" if info.get("jahr") and not titel else ""
+    _schreiben(video.with_suffix(".nfo"), (
+        '<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<movie>\n'
+        f"  <title>{_x(titel or info.get('titel'))}</title>\n"
+        f"  <plot>{_x(info.get('beschreibung'))}</plot>\n{jahr}{genres}"
+        "  <tag>Anime</tag>\n"
+        f"  <uniqueid type=\"aniworld\">{_x(info.get('slug'))}</uniqueid>\n"
+        "</movie>\n").encode())
+    if not (ordner / "poster.jpg").exists() and info.get("cover"):
+        bild = _cover(info["cover"])
+        if bild:
+            _schreiben(ordner / "poster.jpg", bild)
+    if not (ordner / "backdrop.jpg").exists() and info.get("hintergrund"):
+        bild = _cover(info["hintergrund"], groesser=False)
+        if bild:
+            _schreiben(ordner / "backdrop.jpg", bild)
+
+
 def staffel(ordner: Path, nr: int) -> None:
     name = "Filme" if nr == 0 else f"Staffel {nr}"
     _schreiben(ordner / "season.nfo", (
@@ -89,9 +113,13 @@ def folge(video: Path, titel: str, nr_staffel: int, nr_folge: int) -> None:
         "</episodedetails>\n").encode())
 
 
-def fuer_folge(video: Path, info: dict, nr_staffel: int, nr_folge: int, titel: str) -> None:
-    """Alles für eine Folge (video = Pfad der .strm/.mp4 unter <Serie>/Staffel N/). Fehler sind egal."""
+def fuer_folge(video: Path, info: dict, nr_staffel: int, nr_folge: int, titel: str, film: str = "") -> None:
+    """Alles für eine Folge (video = Pfad der .strm/.mp4 unter <Serie>/Staffel N/) oder einen Film
+    (film = "einzeln"/"mehrere", video unter Filme/<Name>/). Fehler sind egal."""
     try:
+        if film:
+            film_infos(video, info, titel if film == "mehrere" else "")
+            return
         serie(video.parent.parent, info)
         staffel(video.parent, nr_staffel)
         folge(video, titel, nr_staffel, nr_folge)
@@ -119,7 +147,23 @@ def nachtragen(serien_ordner: Path, info: dict) -> int:
 
 def nach_loeschen(video: Path) -> None:
     """Nach dem Löschen einer Folge: ihre .nfo weg; Staffel- und Serienordner ohne Folgen samt Infodateien löschen.
-    Nur bei Anime-Ordnern (dort liegt eine tvshow.nfo von uns) – andere Serien fasst das nicht an."""
+    Nur bei Anime-Ordnern (dort liegt eine tvshow.nfo von uns) – andere Serien fasst das nicht an.
+    Bei Anime-Filmen: .nfo, Cover und den leeren Filmordner löschen."""
+    try:
+        nfo = video.with_suffix(".nfo").read_text(errors="replace")
+    except OSError:
+        nfo = ""
+    if "<movie>" in nfo and 'type="aniworld"' in nfo:
+        video.with_suffix(".nfo").unlink(missing_ok=True)
+        try:
+            if any(p.name not in META for p in video.parent.iterdir()):
+                return
+            for name in META:
+                (video.parent / name).unlink(missing_ok=True)
+            video.parent.rmdir()
+        except OSError:
+            pass
+        return
     try:
         if 'type="aniworld"' not in (video.parent.parent / "tvshow.nfo").read_text(errors="replace"):
             return

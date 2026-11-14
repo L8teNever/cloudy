@@ -21,6 +21,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import threading
 import time
 import urllib.error
@@ -198,6 +199,11 @@ def _serien_ordner() -> Path:
     return mediathek.safe_pool_path(f"{base}/{mediathek.SERIEN}")
 
 
+def _filme_ordner() -> Path:
+    base = (mediathek_db.Einstellungen.load().streaming_ordner or "Streaming").strip("/")
+    return mediathek.safe_pool_path(f"{base}/{mediathek.FILME}")
+
+
 def anlegen(info: dict, folgen: list[dict], sprache: str, einlesen: bool = True) -> dict:
     """info = aniworld.serie(); folgen = [{staffel, nr, titel, …}] → .strm je Folge (fertige Downloads bleiben)."""
     if str(sprache) not in aniworld.SPRACHEN:
@@ -207,45 +213,46 @@ def anlegen(info: dict, folgen: list[dict], sprache: str, einlesen: bool = True)
     neu = vorhanden = 0
     for f in folgen:
         j = {"titel": info["titel"], "jahr": info.get("jahr"), "staffel": int(f["staffel"]), "folge": int(f["nr"]),
-             "folgentitel": str(f.get("titel") or "")[:150]}
+             "folgentitel": str(f.get("titel") or "")[:150], "film": info.get("film") or ""}
         mp4 = mediathek.safe_pool_path(aniworld.ziel_rel(j))
         strm = mp4.with_suffix(".strm")
         inhalt = folge_url(info["slug"], j["staffel"], j["folge"], str(sprache)) + "\n"
         if mp4.is_file() or (strm.is_file() and strm.read_text(errors="replace") == inhalt):
-            anime_meta.fuer_folge(mp4 if mp4.is_file() else strm, info, j["staffel"], j["folge"], j["folgentitel"])
+            anime_meta.fuer_folge(mp4 if mp4.is_file() else strm, info, j["staffel"], j["folge"], j["folgentitel"], film=j["film"])
             vorhanden += 1
             continue
         strm.parent.mkdir(parents=True, exist_ok=True)
         mediathek._chown_tree(strm.parent, mediathek.pool_root())
         strm.write_text(inhalt)
         mediathek._besitzer(strm)
-        anime_meta.fuer_folge(strm, info, j["staffel"], j["folge"], j["folgentitel"])
+        anime_meta.fuer_folge(strm, info, j["staffel"], j["folge"], j["folgentitel"], film=j["film"])
         neu += 1
     if neu and einlesen:
-        aniworld.jellyfin_jetzt(_serien_ordner())
+        aniworld.jellyfin_jetzt(_filme_ordner() if info.get("film") else _serien_ordner())
     return {"neu": neu, "vorhanden": vorhanden}
 
 
-def _live_dateien():
-    root = _serien_ordner()
-    if not root.is_dir():
-        return
-    for p in root.rglob("*.strm"):
-        try:
-            if p.is_file() and p.stat().st_size < 1024 and "/live/" in p.read_text(errors="replace"):
-                yield root, p
-        except OSError:
+def _live_dateien(nur_serien: bool = False):
+    for root in [_serien_ordner()] if nur_serien else [_serien_ordner(), _filme_ordner()]:
+        if not root.is_dir():
             continue
+        for p in root.rglob("*.strm"):
+            try:
+                if p.is_file() and p.stat().st_size < 1024 and "/live/" in p.read_text(errors="replace"):
+                    yield root, p
+            except OSError:
+                continue
 
 
 def liste() -> list[dict]:
-    """Serien mit Live-Folgen: [{ordner, folgen, staffeln}]."""
+    """Serien und Filme mit Live-Folgen: [{ordner, folgen, staffeln, film}]."""
     if not mediathek.pool_mounted():
         return []
+    filme = _filme_ordner()
     gruppen: dict[str, dict] = {}
     for root, p in _live_dateien():
         rel = p.relative_to(root).parts
-        g = gruppen.setdefault(rel[0], {"ordner": rel[0], "folgen": 0, "staffeln": set()})
+        g = gruppen.setdefault(rel[0], {"ordner": rel[0], "folgen": 0, "staffeln": set(), "film": root == filme})
         g["folgen"] += 1
         if len(rel) > 2:
             g["staffeln"].add(rel[1])
@@ -259,7 +266,7 @@ def entfernen(ordner: str) -> int:
     """Alle Live-Folgen einer Serie löschen (heruntergeladene Dateien bleiben)."""
     if not ordner or "/" in ordner or "\\" in ordner or ordner in (".", ".."):
         raise aniworld.AniFehler("Ungültiger Ordner")
-    root = _serien_ordner()
+    root = next((r for r in (_serien_ordner(), _filme_ordner()) if (r / ordner).is_dir()), _serien_ordner())
     ziel = (root / ordner).resolve()
     if ziel.parent != root.resolve() or not ziel.is_dir():
         raise aniworld.AniFehler("Ordner nicht gefunden")
@@ -290,7 +297,7 @@ def _abos() -> dict[Path, dict]:
     """Live-Serien aus den .strm lesen: Serienordner → {slug, sprachen, folgen: {staffel: höchste Folge}}.
     Mehr braucht es nicht – in jeder .strm stehen Anime, Staffel, Folge und Sprache."""
     out: dict[Path, dict] = {}
-    for root, p in _live_dateien():
+    for root, p in _live_dateien(nur_serien=True):
         try:
             m = ZEILE_RE.match(p.read_text(errors="replace").strip())
         except OSError:
@@ -362,6 +369,10 @@ def neue_folgen_start() -> None:
 
     def schleife() -> None:
         time.sleep(10 * 60)  # erst einhängen und Jellyfin hochfahren lassen
+        try:
+            reparieren()
+        except Exception as exc:  # noqa: BLE001
+            jobs.log(None, f"Anime live: Aufräumen nach dem Start: {exc}"[:300])
         while True:
             try:
                 neue_folgen()
@@ -389,7 +400,7 @@ def reparieren() -> None:
             m = ZEILE_RE.match(alt)
             if m and not alt.startswith(jetzt + "/"):
                 p.write_text(jetzt + alt[alt.index("/live/"):] + "\n")
-            if m and not p.with_suffix(".nfo").exists():
+            if m and not p.with_suffix(".nfo").exists() and root == _serien_ordner():
                 ohne_infos.setdefault(root / p.relative_to(root).parts[0], m.group(1))
     except OSError:
         pass
@@ -400,8 +411,60 @@ def reparieren() -> None:
             n += anime_meta.nachtragen(ordner, aniworld.serie(slug))
         except Exception:  # noqa: BLE001 – beim nächsten Start wieder
             continue
+    try:
+        n += filme_umziehen()
+    except Exception as exc:  # noqa: BLE001
+        jobs.log(None, f"Anime: Filme umziehen: {exc}"[:300])
     if n:
         aniworld.jellyfin_spaeter()
+
+
+def filme_umziehen() -> int:
+    """Anime-Filme, die noch als Serie unter Serien/ liegen (vor der Film-Erkennung angelegt, z. B. „Your Name.“),
+    nach Filme/<Titel (Jahr)>/ verschieben – live (.strm) wie heruntergeladen. Nur Ordner mit genau einer Folge
+    und unserer tvshow.nfo; ob es ein Film ist, sagt AniWorld (aniworld._film_art)."""
+    root = _serien_ordner()
+    if not mediathek.pool_mounted() or not root.is_dir():
+        return 0
+    n = 0
+    for ordner in sorted(p for p in root.iterdir() if p.is_dir()):
+        try:
+            m = re.search(r'<uniqueid type="aniworld">([a-z0-9-]+)</uniqueid>', (ordner / "tvshow.nfo").read_text(errors="replace"))
+            videos = [p for p in ordner.rglob("*") if p.suffix.lower() in anime_meta.VIDEO and p.is_file()]
+        except OSError:
+            continue
+        if not m or len(videos) != 1:
+            continue
+        try:
+            info = aniworld.serie(m.group(1))
+        except Exception:  # noqa: BLE001 – beim nächsten Mal
+            continue
+        if not info.get("film"):
+            continue
+        alt = videos[0]
+        f = anime_meta.FOLGE_RE.search(alt.stem)
+        j = {"titel": info["titel"], "jahr": info.get("jahr"), "staffel": int(f.group(1)) if f else 1,
+             "folge": int(f.group(2)) if f else 1, "folgentitel": (f.group(3) or "").strip() if f else "", "film": info["film"]}
+        rel_neu = str(Path(aniworld.ziel_rel(j)).with_suffix(alt.suffix))
+        neu = mediathek.safe_pool_path(rel_neu)
+        if neu.exists():
+            continue
+        neu.parent.mkdir(parents=True, exist_ok=True)
+        mediathek._chown_tree(neu.parent, mediathek.pool_root())
+        try:
+            os.rename(alt, neu)
+        except OSError:
+            shutil.move(str(alt), str(neu))  # mergerfs: anderer Zweig
+        anime_meta.fuer_folge(neu, info, j["staffel"], j["folge"], j["folgentitel"], film=info["film"])
+        anime_meta.nach_loeschen(alt)  # alte Infodateien und leere Ordner weg
+        rel_alt = str(alt.relative_to(mediathek.pool_root()))
+        with mediathek_db.db() as conn:
+            conn.execute("UPDATE dateien SET rel_pfad = ?, staffel = NULL, folge = NULL, folgentitel = '' WHERE rel_pfad = ?",
+                         (rel_neu, rel_alt))
+            conn.execute("UPDATE titel SET typ = 'movie' WHERE ref = ?", (f"aniworld:{info['slug']}",))
+        jobs.log(None, f"Anime: „{ordner.name}“ ist ein Film – nach {mediathek.FILME} verschoben")
+        n += 1
+    return n
 
 
 def reparieren_im_hintergrund() -> None:

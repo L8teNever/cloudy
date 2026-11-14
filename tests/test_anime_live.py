@@ -42,3 +42,55 @@ def test_neue_folgen_nur_nach_der_hoechsten(tmp_path, monkeypatch):
     # Titel bei AniWorld geändert → kein zweiter Ordner
     monkeypatch.setattr(aniworld, "ziel_rel", lambda j: "S/Serien/Y (2020)/Staffel 1/a.mp4")
     assert anime_live._neue_fuer(root / "X (2020)", a) == []
+
+
+def test_film_erkennung(monkeypatch):
+    staffeln = {
+        "your-name": ([{"nr": 1, "film": False}], {1: [{"nr": 1, "movie": True}]}),
+        "ova": ([{"nr": 1, "film": False}], {1: [{"nr": 1, "movie": False}]}),
+        "reihe": ([{"nr": 0, "film": True}], {0: [{"nr": 1, "movie": False}, {"nr": 2, "movie": False}]}),
+        "ein-film": ([{"nr": 0, "film": True}], {0: [{"nr": 1, "movie": False}]}),
+        "serie-mit-film": ([{"nr": 1, "film": False}, {"nr": 0, "film": True}], {1: [{"nr": 1, "movie": True}]}),
+    }
+    for slug, (st, folgen) in staffeln.items():
+        monkeypatch.setattr(aniworld, "staffel", lambda s, nr, f=folgen: f[nr])
+        erwartet = {"your-name": "einzeln", "ova": "", "reihe": "mehrere", "ein-film": "einzeln", "serie-mit-film": ""}[slug]
+        assert aniworld._film_art(slug, st) == erwartet, slug
+
+
+def test_film_ziel_und_umzug(tmp_path, monkeypatch):
+    from speicher import anime_meta, mediathek, mediathek_db, mediathek_providers
+
+    monkeypatch.setattr(mediathek_db.Einstellungen, "load", classmethod(lambda cls: type("E", (), {"streaming_ordner": "Streaming"})()))
+    monkeypatch.setattr(mediathek_providers, "sanitize_name", lambda s, d="x": s)
+    j = {"titel": "Your Name.", "jahr": 2016, "staffel": 1, "folge": 1, "folgentitel": "Gestern", "film": "einzeln"}
+    assert aniworld.ziel_rel(j) == "Streaming/Filme/Your Name. (2016)/Your Name. (2016).mp4"
+    j.update(film="mehrere", folgentitel="Film Zwei", folge=2)
+    assert aniworld.ziel_rel(j) == "Streaming/Filme/Film Zwei/Film Zwei.mp4"
+
+    # Umzug einer alten Live-„Serie“, die eigentlich ein Film ist
+    pool = tmp_path / "pool"
+    alt_ordner = pool / "Streaming/Serien/Your Name. (2016)"
+    (alt_ordner / "Staffel 1").mkdir(parents=True)
+    (alt_ordner / "tvshow.nfo").write_text('<tvshow><uniqueid type="aniworld">your-name</uniqueid></tvshow>')
+    (alt_ordner / "poster.jpg").write_bytes(b"x")
+    strm = alt_ordner / "Staffel 1/Your Name. - S01E01 - Gestern.strm"
+    strm.write_text("http://h/live/your-name/1/1/1/" + "a" * 32 + ".m3u8\n")
+    (alt_ordner / "Staffel 1/season.nfo").write_text("<season/>")
+    strm.with_suffix(".nfo").write_text("<episodedetails/>")
+    monkeypatch.setattr(mediathek, "pool_mounted", lambda: True)
+    monkeypatch.setattr(mediathek, "pool_root", lambda: pool)
+    monkeypatch.setattr(mediathek, "safe_pool_path", lambda rel: pool / rel)
+    monkeypatch.setattr(mediathek, "_chown_tree", lambda *a: None)
+    monkeypatch.setattr(mediathek, "_besitzer", lambda *a: None)
+    monkeypatch.setattr(anime_meta, "_cover", lambda *a, **k: b"")
+    monkeypatch.setattr(aniworld, "serie", lambda slug: {"slug": slug, "titel": "Your Name.", "jahr": 2016, "film": "einzeln"})
+    monkeypatch.setattr(mediathek_db, "db", lambda: __import__("contextlib").nullcontext(type("C", (), {"execute": lambda *a: None})()))
+    monkeypatch.setattr(anime_live.jobs, "log", lambda *a: None)
+
+    assert anime_live.filme_umziehen() == 1
+    neu = pool / "Streaming/Filme/Your Name. (2016)/Your Name. (2016).strm"
+    assert neu.read_text().startswith("http://h/live/your-name/1/1/1/")
+    assert "<movie>" in neu.with_suffix(".nfo").read_text() and "<year>2016</year>" in neu.with_suffix(".nfo").read_text()
+    assert not alt_ordner.exists()
+    assert [g["film"] for g in anime_live.liste()] == [True]
